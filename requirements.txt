@@ -1,0 +1,9 @@
+numpy>=1.24.0
+soundfile>=0.12.0
+sounddevice>=0.4.6
+faster-whisper>=0.10.0
+kokoro>=0.3.0
+openai>=1.0.0
+keyboard>=0.13.5
+torch>=2.0.0
+llama-cpp-python>=0.2.0

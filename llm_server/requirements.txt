@@ -1,0 +1,11 @@
+# LLM Server dependencies
+# Install with: pip install -r requirements.txt
+#
+# For GPU support (CUDA), install llama-cpp-python with CUDA backend:
+#   pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
+# For CPU-only:
+#   pip install llama-cpp-python
+
+fastapi>=0.110.0
+uvicorn>=0.29.0
+llama-cpp-python>=0.2.0
