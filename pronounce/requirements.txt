@@ -15,7 +15,11 @@ librosa>=0.10.0
 scipy>=1.10.0
 scikit-learn>=1.2.0
 fastdtw>=0.3.4
-phonemizer>=3.2.0
+# Use phonemizer-fork, NOT the plain "phonemizer" package: Kokoro/misaki call
+# EspeakWrapper.set_data_path(), which exists only in the fork. Both packages share
+# the "phonemizer" import namespace and must not be installed together, so installing
+# plain phonemizer will break Kokoro. (from phonemizer import phonemize still works.)
+phonemizer-fork>=3.3.0
 python-Levenshtein>=0.21.0
 soundfile>=0.12.0
 numpy>=1.24.0

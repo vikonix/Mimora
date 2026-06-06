@@ -96,6 +96,37 @@ KOKORO_LANG_CODE = "a"        # 'a' = American English, 'b' = British English, e
 KOKORO_VOICE = "af_heart"     # Voice model identifier
 
 # =====================================================================
+# Pronunciation Analysis (Wav2Vec2) Settings
+# =====================================================================
+# Acoustic + transcription model used by the pronounce/ module.
+WAV2VEC2_MODEL_NAME = "facebook/wav2vec2-large-960h"
+# Device for Wav2Vec2. Defaults to the shared DEVICE; set to "cpu" explicitly to
+# avoid VRAM contention with llama_cpp / Kokoro on a single GPU.
+WAV2VEC2_DEVICE = DEVICE
+# Score (0-100) at or above which a repetition is accepted; below it the learner
+# is asked to repeat the same phrase.
+PRONUNCE_SCORE_THRESHOLD = 70.0
+
+# =====================================================================
+# Practice Text & Phrase Generation
+# =====================================================================
+# Source text shown in the input panel at startup. The LLM builds practice
+# phrases from whatever text the user has in that panel.
+PRACTICE_TEXT_FILE = str(BASE_DIR / "practice_text.txt")
+
+# One short phrase is generated per request (non-streaming).
+PHRASE_GEN_TEMPERATURE = 0.7
+PHRASE_GEN_MAX_TOKENS = 40
+PHRASE_GEN_SYSTEM_PROMPT = (
+    "You generate short English sentences for pronunciation practice. "
+    "Reply with exactly ONE natural spoken sentence of 4 to 8 words, easy to read aloud. "
+    "Use only plain words and a single final period — no quotation marks, no numbering, "
+    "no extra commentary. Base the sentence on the topic and vocabulary of the text the user provides."
+)
+# How many recently used phrases to send back to the model so it avoids repeats.
+PHRASE_GEN_RECENT_MEMORY = 5
+
+# =====================================================================
 # Shared Audio Device Settings
 # =====================================================================
 # Single lock coordinates PortAudio access between the mic (main.py) and

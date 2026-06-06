@@ -3,57 +3,79 @@
 This file provides guidance to agents when working with code in this repository.
 
 ## Project Overview
-SpeakLoop is a Python desktop voice tutor app (Tkinter GUI) for language learning using local AI models.
+
+EchoLoop is a local, offline **pronunciation trainer** (Python 3.11, Tkinter GUI). It speaks an LLM-generated phrase aloud (Kokoro TTS), records the user repeating it, then scores the attempt against the reference using Wav2Vec2 acoustic similarity, phoneme-level word errors, and prosody. The user repeats the same phrase until the score passes a configurable threshold, then generates the next one.
+
+The pronunciation-scoring core in `pronounce/` is adapted from [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) and reused as a GUI-agnostic library.
 
 ## Running the App
+
 ```bash
 pip install -r requirements.txt
 pip install -r llm_server/requirements.txt
+pip install -r pronounce/requirements.txt
 python main.py
 ```
 
-**Default backend**: `local_server` — `llm_server/server.py` is launched automatically as a subprocess.  
-**Alternative**: set `LLM_BACKEND = "lm-studio"` in `config.py` and start LM Studio on `http://localhost:1234`.
+Also requires the native **espeak-ng** binary on `PATH` (used by `phonemizer`) and a GGUF chat model at `config.EXTERNAL_MODEL_PATH`.
+
+**Default LLM backend**: `local_server` — `llm_server/server.py` is launched automatically as a subprocess.
+**Alternative**: set `LLM_BACKEND = "lm-studio"` in `config.py` and run LM Studio on `http://localhost:1234`.
 
 ## Architecture
 
-- [`main.py`](main.py) — `VoiceTutorGUI`: Tkinter GUI, audio recording, threading orchestration, LLM server subprocess management
-- [`stt.py`](stt.py) — `STTManager`: faster-whisper speech-to-text with VAD filtering
-- [`llm.py`](llm.py) — `LLMManager`: OpenAI-compatible streaming client; works with both `local_server` and `lm-studio` backends
-- [`tts.py`](tts.py) — `TTSManager`: Kokoro TTS with winsound playback on Windows
-- [`config.py`](config.py) — all configuration (languages, model settings, backend selection, API endpoints)
-- [`llm_server/server.py`](llm_server/server.py) — standalone FastAPI server that loads GGUF models via llama_cpp; runs as a separate process to avoid GPU contention with Kokoro
+- [`main.py`](main.py) — `PronunciationTrainerGUI`: Tkinter GUI, recording, the Prompt→Record→Analyze→Feedback→Loop state machine, threading orchestration, LLM-server subprocess management.
+- [`pronounce/speech.py`](pronounce/speech.py) — pronunciation analysis core. Single entry point `analyze(user_audio, expected_text, reference_audio) -> PronunciationResult`. Wav2Vec2 embeddings + DTW, phoneme comparison, prosody, heuristic scoring. No GUI/Tkinter dependency.
+- [`tts.py`](tts.py) — `TTSManager`: Kokoro TTS. `synthesize()` returns the waveform; `play_array(waveform, sample_rate)` plays any waveform; `play_stream()` is a convenience wrapper.
+- [`stt.py`](stt.py) — `STTManager`: faster-whisper STT with VAD. Loaded at startup and warmed up, but the practice loop transcribes via Wav2Vec2-CTC inside `pronounce/`.
+- [`llm.py`](llm.py) — `LLMManager`: OpenAI-compatible client. `generate_phrase()` produces one practice phrase per request (non-streaming).
+- [`config.py`](config.py) — all configuration (device, model names, score threshold, practice-text path, phrase-generation settings, audio settings).
+- [`llm_server/server.py`](llm_server/server.py) — standalone FastAPI server loading GGUF via `llama_cpp`; runs as a separate process to avoid GPU contention.
+- [`practice_text.txt`](practice_text.txt) — default source text loaded into the input panel at startup.
+
+## State Machine (pronunciation loop)
+
+1. **Prompt** — `llm_mgr.generate_phrase(source_text, recent_phrases)` → `tts_mgr.synthesize(phrase)`. The synthesized array is stored as `self.reference_audio` and played for the user. Phrase generation + synth + playback all run in one daemon thread (`_generate_and_prompt`).
+2. **Record** — shared recording path (`record_loop` → `get_recorded_audio`), 16 kHz mono. Gated by `_can_record()` (a phrase must be ready and nothing else busy).
+3. **Analyze** — `_finalize_recording` → `analyze_recording` (daemon thread) calls `pronounce.analyze(...)`.
+4. **Feedback** — `_show_feedback` (via `root.after`) shows score, transcription, problem words; enables replay buttons.
+5. **Loop** — if `result.passed` the user can generate the next phrase; otherwise the same phrase/reference are retained for another attempt.
 
 ## Key Patterns & Gotchas
 
-- **Threading**: Recording, TTS queue processing, and model loading run in separate daemon threads. Always use `root.after()` to update GUI from background threads.
+- **Threading**: Recording, analysis, model loading, phrase generation, and playback run in daemon threads. **Always update the GUI via `root.after()`**; never read/write Tk widgets from a background thread. Source text is read on the main thread and passed into the worker.
 
-- **TTS sentinel pattern** ([`main.py`](main.py)): LLM sentences are buffered in the TTS queue processor and only played after `_TTS_START_SENTINEL` arrives. This ensures llama_cpp releases the GPU before Kokoro synthesis begins, preventing CUDA contention. Do not remove this pattern when working with the `local_server` backend.
+- **Reference audio is synthesized once** ([`tts.py`](tts.py) `synthesize()`): the same Kokoro waveform is both played to the user and passed to `analyze()` as the reference. There is no second TTS engine.
 
-- **LLM history rollback** ([`llm.py`](llm.py)): user message is appended inside `try`; on exception the last message is popped to keep user/assistant pairs consistent.
+- **Sample rates**: recording and Whisper use 16 kHz; Kokoro outputs 24 kHz; Wav2Vec2 needs 16 kHz. `pronounce.analyze` takes `user_sr` and `reference_sr` and `_prepare_waveform` resamples to 16 kHz internally. `play_array` plays the reference at 24 kHz and the user recording at 16 kHz.
 
-- **Audio normalization** ([`main.py`](main.py)): peaks are normalized before STT; silence below `AUDIO_MIN_PEAK_THRESHOLD=0.01` is skipped.
+- **Pronunciation model lifecycle** ([`pronounce/speech.py`](pronounce/speech.py)): models load lazily; `load_models()` makes loading explicit (call in a background thread at startup) and `warm_up()` removes first-call latency — mirroring `stt.py` / `tts.py`. Device follows `config.WAV2VEC2_DEVICE` (defaults to `config.DEVICE`). `speech.py` reads config via `getattr(..., default)` so it stays usable without config edits.
 
-- **Sentence streaming**: LLM output is split by regex `(?<=[.!?])\s+` and pushed to the TTS queue as sentences complete. Remaining buffer is flushed at end of stream.
+- **GPU contention**: Wav2Vec2, Kokoro, and `llama_cpp` can compete for VRAM. Mitigations: the LLM runs in a **separate process** (`llm_server/`), and the loop's phases (LLM → Kokoro → Wav2Vec2) run **sequentially**. If VRAM is tight, set `WAV2VEC2_DEVICE = "cpu"` in `config.py`.
 
-- **Conversation history** ([`llm.py`](llm.py)): trimmed to `LLM_HISTORY_MAX_PAIRS=4` turns after each exchange (configurable in `config.py`).
+- **Phrase generation** ([`llm.py`](llm.py)): `generate_phrase()` is a single non-streaming completion with its own system prompt (`config.PHRASE_GEN_SYSTEM_PROMPT`); it does **not** touch the conversational `self.messages` history. `recent_phrases` are passed back to avoid repeats; `_clean_phrase` strips quotes/list markers.
 
-- **Device detection**: CUDA auto-detected via `torch.cuda.is_available()` — sets compute type to `float16` for CUDA, `int8` for CPU.
+- **Audio normalization** ([`main.py`](main.py)): peaks are normalized before analysis; silence below `AUDIO_MIN_PEAK_THRESHOLD = 0.01` skips gain adjustment.
 
-- **Windows audio**: TTS uses `winsound` to bypass PortAudio/MME driver issues on Windows. A 150ms silence lead-in (`WINSOUND_LEAD_IN_SAMPLES`) is prepended to each audio block to allow Windows Audio Session initialization. The `sound_lock` in `tts.py` serialises PortAudio init/teardown for the recording path.
+- **Windows audio**: TTS/playback uses `winsound` to bypass PortAudio/MME issues; a `sounddevice` fallback exists for other platforms. A ~150 ms silence lead-in is prepended to avoid clipping the first audio. `config.AUDIO_LOCK` serialises PortAudio init/teardown between the mic and speaker paths.
 
-- **LLM server subprocess**: started in `_start_llm_server()`, polled via `LLMManager.check_connection()` until ready. Terminated gracefully in `quit_app()` with a 5-second kill fallback.
+- **LLM server subprocess**: started in `_start_llm_server()`, polled via `LLMManager.check_connection()` until ready; terminated in `quit_app()` with a 5-second kill fallback.
 
-## LLM Backend Selection (`config.py`)
+- **Device detection** ([`config.py`](config.py)): CUDA auto-detected via `torch.cuda.is_available()`.
 
-| `LLM_BACKEND` | Description |
-|---|---|
-| `"local_server"` | Launches `llm_server/server.py` as a subprocess. Recommended for GGUF models. |
-| `"lm-studio"` | Connects to a running LM Studio instance at `LM_STUDIO_URL`. |
+- **espeak-ng** is a native binary dependency of `phonemizer` (separate install, not pip) — required for phoneme extraction and word-error analysis.
+
+## Testing
+
+```bash
+python -m unittest pronounce.test_speech -v          # fast unit tests, no model download
+python pronounce/test_speech.py user.wav [ref.wav]   # optional end-to-end (loads the model)
+```
 
 ## Code Style (Python)
+
 - No linting/formatting config — follow PEP 8.
-- Type hints used throughout (`from typing import Optional`).
-- Logging via `logging` module: `%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s`.
-- `assert` is not used for runtime validation — use explicit `RuntimeError` with a descriptive message.
-- Warnings filtered for library deprecation noise (see `main.py` top-level `warnings.filterwarnings`).
+- Type hints used throughout (`from typing import Optional, List`).
+- Logging via `logging`: `%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s`.
+- Use explicit `RuntimeError` with a descriptive message for runtime validation, not `assert`.
+- Library deprecation warnings are filtered at the top of `main.py`.
