@@ -54,6 +54,11 @@ RECORD_THREAD_JOIN_TIMEOUT_SEC = 1.5
 DEBUG_DUMP_RECORDINGS = True
 DEBUG_DUMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug")
 
+# Phrase-length selector labels. The label maps to generate_phrase's ``length``
+# mode: LENGTH_FULL → "full" sentence, LENGTH_FEW_WORDS → "fragment".
+LENGTH_FULL = "Full phrase"
+LENGTH_FEW_WORDS = "Few words"
+
 
 class PronunciationTrainerGUI:
     """Tkinter front-end for the EchoLoop pronunciation trainer.
@@ -259,9 +264,20 @@ class PronunciationTrainerGUI:
             width=5, values=("1.0×", "0.85×", "0.7×"))
         self.speed_selector.pack(side=tk.LEFT)
 
-        # Action row: the Reference replay and New phrase buttons.
+        # Action row: phrase-length selector alongside the Reference replay and
+        # New phrase buttons. "Few words" requests a short fragment instead of a
+        # full sentence; changing it regenerates the phrase (see on_length_changed).
         action_frame = tk.Frame(source_frame, bg="#121214")
         action_frame.pack(anchor=tk.E, pady=(4, 0))
+
+        tk.Label(action_frame, text="Phrase length:", font=("Segoe UI", 9),
+                 fg="#a0a0a5", bg="#121214").pack(side=tk.LEFT, padx=(0, 6))
+        self.length_var = tk.StringVar(value=LENGTH_FULL)
+        self.length_selector = ttk.Combobox(
+            action_frame, textvariable=self.length_var, state="readonly",
+            width=12, values=(LENGTH_FULL, LENGTH_FEW_WORDS))
+        self.length_selector.pack(side=tk.LEFT, padx=(0, 10))
+        self.length_selector.bind("<<ComboboxSelected>>", self.on_length_changed)
 
         self.ref_btn = self._make_button(action_frame, "▶ Reference", self.play_reference)
         self.ref_btn.pack(side=tk.LEFT, padx=(0, 6))
@@ -475,6 +491,21 @@ class PronunciationTrainerGUI:
         if self.app_ready and not self.is_generating:
             self.on_generate_phrase()
 
+    def _selected_length(self) -> str:
+        """Map the length selector label to generate_phrase's mode ('full'/'fragment')."""
+        try:
+            return "fragment" if self.length_var.get() == LENGTH_FEW_WORDS else "full"
+        except AttributeError:
+            return "full"
+
+    def on_length_changed(self, event=None):
+        """Regenerate the phrase when the desired length changes."""
+        logging.info(f"Phrase length changed to {self.length_var.get()!r}.")
+        # Return focus to the window so the spacebar push-to-talk keeps working.
+        self.root.focus_set()
+        if self.app_ready and not self.is_generating:
+            self.on_generate_phrase()
+
     def on_generate_phrase(self):
         if not self.app_ready or self.is_generating:
             return
@@ -503,7 +534,8 @@ class PronunciationTrainerGUI:
     def _generate_and_prompt(self, source_text: str):
         """Generate one phrase, synthesize the reference, and play it. (Background thread.)"""
         try:
-            phrase = self.llm_mgr.generate_phrase(source_text, self.recent_phrases)
+            phrase = self.llm_mgr.generate_phrase(
+                source_text, self.recent_phrases, length=self._selected_length())
             if not phrase:
                 self.root.after(0, self._phrase_generation_failed, "The model returned no phrase. Try again.")
                 return

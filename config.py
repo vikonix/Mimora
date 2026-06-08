@@ -135,6 +135,19 @@ PHRASE_GEN_SYSTEM_PROMPT = (
 # How many recently used phrases to send back to the model so it avoids repeats.
 PHRASE_GEN_RECENT_MEMORY = 5
 
+# "Few words" mode: generate a short 2-4 word fragment instead of a complete
+# sentence (e.g. "give me", "on the table", "where are you from"). Uses its own
+# system prompt and a tighter token budget.
+PHRASE_GEN_FRAGMENT_SYSTEM_PROMPT = (
+    "You generate very short English fragments for pronunciation practice. "
+    "Reply with exactly ONE natural fragment of 2 to 4 words that is NOT a complete "
+    "sentence — such as a sentence opening, a prepositional phrase, or the start of a "
+    "question. Examples: give me; on the table; where are you from. "
+    "Use only plain lowercase words — no final period, no quotation marks, no numbering, "
+    "no extra commentary. Base the fragment on the topic and vocabulary of the text the user provides."
+)
+PHRASE_GEN_FRAGMENT_MAX_TOKENS = 16
+
 # =====================================================================
 # Shared Audio Device Settings
 # =====================================================================

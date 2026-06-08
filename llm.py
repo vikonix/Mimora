@@ -138,28 +138,40 @@ class LLMManager:
             logging.exception("LLM Stream error:")
             return "Sorry, please try again."
 
-    def generate_phrase(self, source_text: str, recent_phrases: Optional[List[str]] = None) -> str:
+    def generate_phrase(self, source_text: str, recent_phrases: Optional[List[str]] = None,
+                        length: str = "full") -> str:
         """Generate one short practice phrase derived from ``source_text``.
 
         This is a single, non-streaming completion that is independent of the
         conversational ``self.messages`` history, so it never pollutes (or is
         polluted by) the chat state. ``recent_phrases`` are passed back to the
         model so it can avoid immediately repeating itself.
+
+        ``length`` selects the output style:
+          - "full"     → one complete sentence (the default).
+          - "fragment" → a short 2-4 word fragment, not a complete sentence.
         """
         if self.client is None:
             raise RuntimeError("LLM client not initialized. Call init_client() first.")
 
-        user_prompt = (
-            "Source text:\n"
-            f"{source_text.strip()}\n\n"
-            "Give me ONE short English sentence to practice pronunciation, based on this text."
-        )
+        is_fragment = (length == "fragment")
+        if is_fragment:
+            system_prompt = config.PHRASE_GEN_FRAGMENT_SYSTEM_PROMPT
+            max_tokens = config.PHRASE_GEN_FRAGMENT_MAX_TOKENS
+            ask = ("Give me ONE short English fragment of 2 to 4 words (NOT a complete "
+                   "sentence) to practice pronunciation, based on this text.")
+        else:
+            system_prompt = config.PHRASE_GEN_SYSTEM_PROMPT
+            max_tokens = config.PHRASE_GEN_MAX_TOKENS
+            ask = "Give me ONE short English sentence to practice pronunciation, based on this text."
+
+        user_prompt = f"Source text:\n{source_text.strip()}\n\n{ask}"
         if recent_phrases:
             avoid = "; ".join(recent_phrases)
             user_prompt += f"\nDo not reuse any of these recent phrases: {avoid}"
 
         messages = [
-            {"role": "system", "content": config.PHRASE_GEN_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ]
 
@@ -168,25 +180,32 @@ class LLMManager:
                 model=self.model,
                 messages=messages,
                 temperature=config.PHRASE_GEN_TEMPERATURE,
-                max_tokens=config.PHRASE_GEN_MAX_TOKENS,
+                max_tokens=max_tokens,
                 stream=False,
                 timeout=LLM_TIMEOUT,
             )
             raw = (response.choices[0].message.content or "").strip()
-            phrase = self._clean_phrase(raw)
-            logging.info(f"Generated practice phrase: {phrase!r}")
+            phrase = self._clean_phrase(raw, fragment=is_fragment)
+            logging.info(f"Generated practice phrase ({length}): {phrase!r}")
             return phrase
         except Exception:
             logging.exception("Phrase generation error:")
             return ""
 
     @staticmethod
-    def _clean_phrase(text: str) -> str:
-        """Strip wrapping quotes, list markers and stray whitespace from a phrase."""
+    def _clean_phrase(text: str, fragment: bool = False) -> str:
+        """Strip wrapping quotes, list markers and stray whitespace from a phrase.
+
+        When ``fragment`` is True the result is a sentence fragment, so any
+        trailing sentence-ending punctuation the model added is removed.
+        """
         text = text.strip().strip('"').strip("'").strip()
         # Drop a leading list marker like "1." or "- " if the model adds one.
         text = re.sub(r"^\s*(?:\d+[.)]|[-*])\s*", "", text)
-        return " ".join(text.split()).strip()
+        text = " ".join(text.split()).strip()
+        if fragment:
+            text = text.rstrip(".!?").strip()
+        return text
 
     def _trim_history(self):
         """Prunes conversation history to the most recent LLM_HISTORY_MAX_PAIRS turns.
