@@ -1,8 +1,7 @@
-Hello and welcome to EchoLoop, your friendly pronunciation trainer.
-
-Here is how it works. The app shows you a short phrase and reads it aloud. You repeat the phrase out loud, and EchoLoop compares your voice with the example. 
-Then it shows a score and points out the words you can improve.
-
-You can edit this text freely. The practice phrases are built from whatever you write here, so feel free to paste your own paragraph, a song, or a few sentences you want to master.
-
-Take your time, speak clearly, and have fun learning English.
+Hello! Welcome to your personal pronunciation trainer.
+How to practice:
+Listen to the phrase.
+Repeat it out loud.
+Get instant feedback to improve.
+Want to practice something specific? Just paste your own text, song lyrics, or sentences you want to master right here.
+Take your time, speak clearly, and have fun learning English!

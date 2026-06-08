@@ -760,6 +760,17 @@ class PronunciationTrainerGUI:
                 self.root.after(0, self._reset_to_retry)
                 return
 
+            # Play the just-recorded audio back to the user right away, before the
+            # (slower) pronunciation analysis runs. stop_playback() ran when recording
+            # started, so the stop event must be cleared to allow playback here.
+            self.playback_stop_event.clear()
+            self.root.after(0, self.draw_mic_button, "speaking")
+            self.root.after(0, self.update_status, "Playing your recording...", "#ff79c6")
+            self.tts_mgr.play_array(self.last_user_audio, WHISPER_SAMPLE_RATE,
+                                    self.playback_stop_event, self.shutdown_event)
+            self.root.after(0, self.draw_mic_button, "processing")
+            self.root.after(0, self.update_status, "Analyzing pronunciation...", "#ffb86c")
+
             analyze_start = time.perf_counter()
             result = pronounce.analyze(
                 user_audio=audio,
