@@ -73,8 +73,14 @@ class PronunciationTrainerGUI:
         # Core Tkinter setup
         self.root = tk.Tk()
         self.root.title("EchoLoop - Pronunciation Trainer")
-        self.root.geometry("520x820")
         self.root.configure(bg="#121214")
+
+        # Center the window on the screen. winfo_screen* are valid before the
+        # first mainloop iteration, so the window appears centered from the start.
+        window_width, window_height = 520, 820
+        x = (self.root.winfo_screenwidth() - window_width) // 2
+        y = (self.root.winfo_screenheight() - window_height) // 2
+        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
 
         # Thread management events
         self.shutdown_event = threading.Event()
@@ -228,21 +234,34 @@ class PronunciationTrainerGUI:
             padx=10, pady=8)
         self.source_text.pack(fill=tk.X, pady=4)
 
-        # Action row: reference-playback speed, the Reference replay button, and
-        # the New phrase button are grouped together on the right.
-        action_frame = tk.Frame(source_frame, bg="#121214")
-        action_frame.pack(anchor=tk.E, pady=(2, 0))
+        # Selector row: voice and reference-playback speed share a single line.
+        selectors_frame = tk.Frame(source_frame, bg="#121214")
+        selectors_frame.pack(anchor=tk.E, pady=(2, 0))
 
-        tk.Label(action_frame, text="Reference speed:", font=("Segoe UI", 9),
+        # Voice selector for the reference speech. Changing it regenerates the
+        # phrase (see on_voice_changed) so the new voice is heard right away.
+        tk.Label(selectors_frame, text="Voice:", font=("Segoe UI", 9),
                  fg="#a0a0a5", bg="#121214").pack(side=tk.LEFT, padx=(0, 6))
+        self.voice_var = tk.StringVar(value=config.KOKORO_VOICE)
+        self.voice_selector = ttk.Combobox(
+            selectors_frame, textvariable=self.voice_var, state="readonly",
+            width=12, values=tuple(config.KOKORO_VOICES))
+        self.voice_selector.pack(side=tk.LEFT, padx=(0, 12))
+        self.voice_selector.bind("<<ComboboxSelected>>", self.on_voice_changed)
 
         # Lower values slow the reference playback (see play_reference). Stored as
         # the displayed label and parsed back to a float by _selected_speed().
+        tk.Label(selectors_frame, text="Reference speed:", font=("Segoe UI", 9),
+                 fg="#a0a0a5", bg="#121214").pack(side=tk.LEFT, padx=(0, 6))
         self.playback_speed = tk.StringVar(value="1.0×")
         self.speed_selector = ttk.Combobox(
-            action_frame, textvariable=self.playback_speed, state="readonly",
+            selectors_frame, textvariable=self.playback_speed, state="readonly",
             width=5, values=("1.0×", "0.85×", "0.7×"))
-        self.speed_selector.pack(side=tk.LEFT, padx=(0, 10))
+        self.speed_selector.pack(side=tk.LEFT)
+
+        # Action row: the Reference replay and New phrase buttons.
+        action_frame = tk.Frame(source_frame, bg="#121214")
+        action_frame.pack(anchor=tk.E, pady=(4, 0))
 
         self.ref_btn = self._make_button(action_frame, "▶ Reference", self.play_reference)
         self.ref_btn.pack(side=tk.LEFT, padx=(0, 6))
@@ -436,6 +455,26 @@ class PronunciationTrainerGUI:
     # ------------------------------------------------------------------
     # Phrase generation + Prompt phase
     # ------------------------------------------------------------------
+    def _selected_voice(self) -> str:
+        """Return the currently selected Kokoro voice, falling back to the default."""
+        try:
+            return self.voice_var.get() or config.KOKORO_VOICE
+        except AttributeError:
+            return config.KOKORO_VOICE
+
+    def on_voice_changed(self, event=None):
+        """Regenerate the phrase with the newly chosen voice.
+
+        Re-using the standard generation path is simpler than re-synthesizing the
+        current reference, and it also refreshes the analysis reference. If the app
+        is busy the change is ignored here and simply applies to the next phrase.
+        """
+        logging.info(f"Reference voice changed to {self._selected_voice()}.")
+        # Return focus to the window so the spacebar push-to-talk keeps working.
+        self.root.focus_set()
+        if self.app_ready and not self.is_generating:
+            self.on_generate_phrase()
+
     def on_generate_phrase(self):
         if not self.app_ready or self.is_generating:
             return
@@ -470,7 +509,7 @@ class PronunciationTrainerGUI:
                 return
 
             # Synthesize the reference once; reused for playback and analysis.
-            reference_audio = self.tts_mgr.synthesize(phrase)
+            reference_audio = self.tts_mgr.synthesize(phrase, voice=self._selected_voice())
             if reference_audio.size == 0:
                 self.root.after(0, self._phrase_generation_failed, "Could not synthesize the reference audio.")
                 return

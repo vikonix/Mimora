@@ -1,5 +1,6 @@
 import logging
 from threading import Event
+from typing import Optional
 import numpy as np
 import sounddevice as sd
 from kokoro import KModel, KPipeline
@@ -63,8 +64,13 @@ class TTSManager:
         list(self.pipeline(warmup_word, voice=config.KOKORO_VOICE, model=self.model))
 
     def synthesize(self, text: str, stop_event: Event = _NULL_EVENT,
-                   shutdown_event: Event = _NULL_EVENT) -> np.ndarray:
+                   shutdown_event: Event = _NULL_EVENT,
+                   voice: Optional[str] = None) -> np.ndarray:
         """Synthesize ``text`` and return the raw waveform (mono float32, 24 kHz).
+
+        ``voice`` selects the Kokoro voice; when omitted it falls back to the
+        configured default. Any voice of the loaded pipeline's language works
+        without reloading the model.
 
         Returns an empty array if there is nothing to say or playback was
         interrupted. The returned array is reused both for playback and as the
@@ -77,7 +83,8 @@ class TTSManager:
         if not text:
             return np.zeros(0, dtype=np.float32)
 
-        generator = self.pipeline(text, voice=config.KOKORO_VOICE, model=self.model)
+        voice = voice or config.KOKORO_VOICE
+        generator = self.pipeline(text, voice=voice, model=self.model)
 
         audio_chunks = []
         for _, _, audio in generator:

@@ -93,7 +93,16 @@ WHISPER_INITIAL_PROMPT = (
 # Text-to-Speech (Kokoro) Settings
 # =====================================================================
 KOKORO_LANG_CODE = "a"        # 'a' = American English, 'b' = British English, etc.
-KOKORO_VOICE = "af_heart"     # Voice model identifier
+KOKORO_VOICE = "af_heart"     # Default voice model identifier
+
+# Voices the user can pick from in the UI. All belong to lang_code 'a'
+# (American English), so switching between them needs no pipeline reload.
+# Prefix convention: 'af_' = American female, 'am_' = American male.
+# A voice's data is downloaded on first use and then cached locally.
+KOKORO_VOICES = [
+    "af_heart", "af_bella", "af_nicole", "af_sarah", "af_sky",
+    "am_adam", "am_michael", "am_echo", "am_eric", "am_liam",
+]
 
 # =====================================================================
 # Pronunciation Analysis (Wav2Vec2) Settings
