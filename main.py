@@ -37,7 +37,9 @@ logging.basicConfig(
 )
 
 # Technical recording & signal processing parameters
-RECORDING_BLOCKSIZE = 1024  # Small block sizes maintain responsive streaming frame intervals
+RECORDING_BLOCKSIZE = 0  # 0 → PortAudio picks an optimal block size. A small fixed
+                         # size combined with low-latency buffers caused capture
+                         # underruns (driver-inserted silence gaps) on Windows MME.
 
 # Signal gain normalization parameters
 AUDIO_MIN_PEAK_THRESHOLD = 0.01      # Prevents boosting pure background noise floor during silence
@@ -45,6 +47,12 @@ AUDIO_NORMALIZATION_CEILING = 0.9    # Scales the peak target output level direc
 
 # How long to wait for the recording thread to finish after stopping.
 RECORD_THREAD_JOIN_TIMEOUT_SEC = 1.5
+
+# Debug: when True, every analyzed take is written to disk as WAV (raw capture
+# before normalization, and the normalized signal) so the captured audio can be
+# inspected independently of playback. Set back to False once diagnosed.
+DEBUG_DUMP_RECORDINGS = True
+DEBUG_DUMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug")
 
 
 class PronunciationTrainerGUI:
@@ -78,6 +86,10 @@ class PronunciationTrainerGUI:
         self.record_lock = threading.Lock()
         self.recorded_chunks: List[np.ndarray] = []
         self.record_thread: Optional[threading.Thread] = None
+        # Sample rate the microphone is actually captured at. We record at the
+        # device's native rate (via WASAPI on Windows) to avoid the driver's
+        # low-quality on-the-fly resampling, then downsample to 16 kHz ourselves.
+        self.capture_sr: int = WHISPER_SAMPLE_RATE
 
         # Audio processing guard — prevents concurrent analysis runs
         self.is_processing_audio = False
@@ -541,17 +553,49 @@ class PronunciationTrainerGUI:
             with self.processing_lock:
                 self.is_processing_audio = False
 
+    def _select_capture_device(self):
+        """Choose the input device and capture sample rate.
+
+        On Windows the default PortAudio host API is MME, which drops samples
+        (driver-inserted silence gaps -> clicks). WASAPI is glitch-free, so we
+        prefer its default input device and capture at that device's native rate.
+        Returns (device_index, sample_rate); falls back to the configured device
+        at 16 kHz if WASAPI or its device cannot be resolved.
+        """
+        # An explicit device override always wins.
+        if config.AUDIO_INPUT_DEVICE is not None:
+            return config.AUDIO_INPUT_DEVICE, WHISPER_SAMPLE_RATE
+        try:
+            for api in sd.query_hostapis():
+                if "wasapi" not in api["name"].lower():
+                    continue
+                dev_index = api.get("default_input_device", -1)
+                if dev_index is None or dev_index < 0:
+                    break
+                native_sr = int(round(sd.query_devices(dev_index)["default_samplerate"]))
+                logging.info(f"Capturing via WASAPI device #{dev_index} at {native_sr} Hz.")
+                return dev_index, native_sr
+        except Exception:
+            logging.exception("WASAPI device selection failed; using defaults.")
+        return config.AUDIO_INPUT_DEVICE, WHISPER_SAMPLE_RATE
+
     def record_loop(self):
         start_time = time.time()
         logging.info("sd.InputStream thread started.")
         callback_warnings: List[str] = []
+        capture_device, self.capture_sr = self._select_capture_device()
 
         def callback(indata, frames, time_info, status):
+            # Runs on PortAudio's realtime audio thread, which has a hard deadline.
+            # It must never block, so we take no locks here: list.append is atomic
+            # under the GIL, and recorded_chunks is only read after the stream is
+            # closed and this thread is joined (see _finalize_recording), so there
+            # is no concurrent reader to guard against. Holding record_lock here was
+            # the cause of dropped samples (audible clicks/crackle) when the GUI
+            # thread held the same lock during start/stop.
             if status:
                 callback_warnings.append(str(status))
-            with self.record_lock:
-                if self.is_recording:
-                    self.recorded_chunks.append(indata.copy())
+            self.recorded_chunks.append(indata.copy())
 
         try:
             with config.AUDIO_LOCK:
@@ -562,12 +606,14 @@ class PronunciationTrainerGUI:
                     logging.debug(f"PortAudio reinitialization error: {init_err}")
 
                 stream = sd.InputStream(
-                        samplerate=WHISPER_SAMPLE_RATE,
+                        samplerate=self.capture_sr,
                         channels=config.AUDIO_CHANNELS,
                         dtype="float32",
                         blocksize=RECORDING_BLOCKSIZE,
-                        latency=config.AUDIO_LATENCY,
-                        device=config.AUDIO_INPUT_DEVICE,
+                        # "high" requests the host API's larger, safer buffers to
+                        # stop input underruns (the source of the silence-gap clicks).
+                        latency="high",
+                        device=capture_device,
                         callback=callback,
                 )
                 stream.start()
@@ -613,13 +659,43 @@ class PronunciationTrainerGUI:
         audio = audio / peak * AUDIO_NORMALIZATION_CEILING
         return np.nan_to_num(audio).astype(np.float32)
 
+    def _dump_debug_wav(self, audio: np.ndarray, label: str, sample_rate: int):
+        """Write a mono float32 waveform to debug/<timestamp>_<label>.wav as 16-bit PCM.
+
+        Diagnostic only (guarded by DEBUG_DUMP_RECORDINGS). Lets the raw capture be
+        inspected on disk, isolating recording artifacts from the playback path.
+        """
+        try:
+            import wave
+            os.makedirs(DEBUG_DUMP_DIR, exist_ok=True)
+            stamp = time.strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(DEBUG_DUMP_DIR, f"{stamp}_{label}.wav")
+            pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
+            with wave.open(path, "wb") as wav_file:
+                wav_file.setnchannels(1)
+                wav_file.setsampwidth(2)
+                wav_file.setframerate(sample_rate)
+                wav_file.writeframes(pcm.tobytes())
+            logging.info(f"[debug] Dumped {label} capture -> {path} "
+                         f"(peak={np.max(np.abs(audio)):.4f}, n={len(audio)})")
+        except Exception:
+            logging.exception("Failed to dump debug WAV:")
+
     def get_recorded_audio(self) -> Optional[np.ndarray]:
         with self.record_lock:
             if not self.recorded_chunks:
                 return None
             chunks = list(self.recorded_chunks)
             self.recorded_chunks = []
-        return np.concatenate(chunks, axis=0).flatten().astype(np.float32, copy=False)
+        audio = np.concatenate(chunks, axis=0).flatten().astype(np.float32, copy=False)
+
+        # Audio was captured at the device's native rate; downsample to the 16 kHz
+        # the rest of the pipeline (playback, analysis, debug dump) expects.
+        if self.capture_sr != WHISPER_SAMPLE_RATE:
+            import librosa
+            audio = librosa.resample(audio, orig_sr=self.capture_sr,
+                                     target_sr=WHISPER_SAMPLE_RATE)
+        return np.ascontiguousarray(audio, dtype=np.float32)
 
     # ------------------------------------------------------------------
     # Analyze phase
@@ -633,8 +709,14 @@ class PronunciationTrainerGUI:
                 self.root.after(0, self._reset_to_retry)
                 return
 
+            if DEBUG_DUMP_RECORDINGS:
+                self._dump_debug_wav(audio, "raw", WHISPER_SAMPLE_RATE)
+
             audio = self.normalize_audio(audio)
             self.last_user_audio = audio
+
+            if DEBUG_DUMP_RECORDINGS:
+                self._dump_debug_wav(audio, "normalized", WHISPER_SAMPLE_RATE)
 
             if self.current_phrase is None or self.reference_audio is None:
                 self.root.after(0, self.append_system_msg, "No active phrase to compare against.")

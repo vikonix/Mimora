@@ -1,0 +1,5 @@
+# Dependencies for the standalone audio_capture mic-test tool.
+# Everything else it uses (wave, argparse, dataclasses, pathlib) is in the
+# Python standard library. Versions match the project's root requirements.txt.
+numpy>=1.24.0
+sounddevice>=0.4.6
