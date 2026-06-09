@@ -27,6 +27,10 @@ Thumbs.db
 
 # Logs
 *.log
+logs/
+
+# Local HuggingFace model cache (Whisper / Kokoro / Wav2Vec2 weights)
+model_cache/
 
 # Environment
 .env

@@ -1,8 +1,52 @@
+import os
 import threading
 from pathlib import Path
 
 # Base directory — always absolute, regardless of working directory at launch.
 BASE_DIR = Path(__file__).parent
+
+# =====================================================================
+# Local model cache (HuggingFace) — download once, then load offline
+# =====================================================================
+# Whisper, Kokoro and Wav2Vec2 are all pulled from the HuggingFace Hub. We pin
+# their cache to a project-local folder so the weights live next to the code and
+# survive a cleared home-directory cache. Once every model is present we flip the
+# Hub into offline mode, which skips the per-start network round-trip HF normally
+# makes to re-validate file revisions — that check is what makes startup feel like
+# it "re-downloads" on every launch.
+#
+# IMPORTANT: huggingface_hub / transformers read these env vars at *import* time,
+# so this block must run before those libraries are imported. config is the first
+# project module imported by main.py (before stt/tts/pronounce), so it is early
+# enough. We use setdefault() so an externally set HF_HOME is respected.
+MODEL_CACHE_DIR = BASE_DIR / "model_cache"
+MODEL_CACHE_DIR.mkdir(exist_ok=True)
+os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
+
+# Repo IDs whose presence in the cache means "fully downloaded".
+_CACHED_REPOS = (
+    "Systran/faster-whisper-small",   # faster-whisper "small"
+    "hexgrad/Kokoro-82M",             # Kokoro TTS (model + voice files)
+    "facebook/wav2vec2-large-960h",   # Wav2Vec2 pronunciation model
+)
+
+
+def _all_models_cached() -> bool:
+    """True only when every networked model already exists in the local cache."""
+    hub_dir = Path(os.environ["HF_HOME"]) / "hub"
+    for repo in _CACHED_REPOS:
+        snapshots = hub_dir / ("models--" + repo.replace("/", "--")) / "snapshots"
+        if not snapshots.is_dir() or not any(snapshots.iterdir()):
+            return False
+    return True
+
+
+# Auto offline: the first run downloads online; once everything is cached, every
+# later run loads straight from disk with no network access. Delete model_cache/
+# to force a fresh download.
+if _all_models_cached():
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 # =====================================================================
 # Language Pair & Persona Configuration
@@ -164,4 +208,10 @@ AUDIO_OUTPUT_DEVICE = None   # None → OS default speaker
 # =====================================================================
 # Logging Settings
 # =====================================================================
-LOG_FILE = str(BASE_DIR / "voice_tutor.log")
+# All log files live in a dedicated logs/ directory (created on import so the
+# handlers can open their files immediately).
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = str(LOG_DIR / "voice_tutor.log")
+# Log file for the auto-started local LLM server subprocess (see main.py).
+LLM_SERVER_LOG_FILE = str(LOG_DIR / "llm_server.log")

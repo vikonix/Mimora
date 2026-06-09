@@ -1,4 +1,5 @@
 import logging
+import os
 from threading import Event
 from typing import Optional
 import numpy as np
@@ -55,6 +56,23 @@ class TTSManager:
         """Instantiates Kokoro TTS network into memory."""
         self.model = KModel(repo_id="hexgrad/Kokoro-82M").to(config.DEVICE)
         self.pipeline = KPipeline(lang_code=config.KOKORO_LANG_CODE)
+        self._prefetch_voices()
+
+    def _prefetch_voices(self):
+        """Download every selectable voice once, while the Hub is still online.
+
+        Kokoro fetches a voice's data lazily on first use. In offline mode that
+        lazy download fails, so switching to a voice the user never tried would
+        break. We pre-pull all configured voices during the first (online) run;
+        on later offline runs they are already cached and this is skipped.
+        """
+        if os.environ.get("HF_HUB_OFFLINE") == "1":
+            return  # offline: anything not already cached can't be fetched anyway
+        for voice in config.KOKORO_VOICES:
+            try:
+                self.pipeline.load_voice(voice)
+            except Exception as error:
+                logging.debug(f"Could not prefetch Kokoro voice {voice!r}: {error}")
 
     def warm_up(self):
         """Runs a mock synthesis pass to eliminate initial latency."""

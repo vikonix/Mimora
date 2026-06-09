@@ -164,7 +164,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             "--n-gpu-layers", str(config.EXTERNAL_N_GPU_LAYERS),
             "--n-ctx", str(config.EXTERNAL_N_CTX),
         ]
-        log_path = os.path.join(os.path.dirname(__file__), "llm_server.log")
+        log_path = config.LLM_SERVER_LOG_FILE
         logging.info(f"Starting LLM server: {' '.join(cmd)}")
         self._llm_server_log_file = open(log_path, "w", encoding="utf-8", buffering=1)
         self._llm_server_process = subprocess.Popen(
