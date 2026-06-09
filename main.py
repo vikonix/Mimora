@@ -113,6 +113,8 @@ class PronunciationTrainerGUI:
         self.reference_audio: Optional[np.ndarray] = None   # 24 kHz Kokoro output
         self.last_user_audio: Optional[np.ndarray] = None   # 16 kHz recorded attempt
         self.recent_phrases: List[str] = []
+        # Last analysis prosody, kept so the canvases can redraw on window resize.
+        self._last_prosody: Optional[dict] = None
 
         # Initialize core modular sub-managers
         self.stt_mgr = STTManager()
@@ -221,6 +223,16 @@ class PronunciationTrainerGUI:
 
         replay_frame = tk.Frame(control_frame, bg="#121214")
         replay_frame.pack(pady=5)
+        # Small diagnostic button (leftmost): run the reference through analysis
+        # instead of a recording (it should score near 100 against itself).
+        self.test_btn = tk.Button(replay_frame, text="Test", command=self.on_test_reference,
+                                  font=("Segoe UI", 8), bg="#1a1a1e", fg="#6272a4",
+                                  activebackground="#25252a", activeforeground="#8be9fd",
+                                  bd=0, padx=8, pady=3, cursor="hand2",
+                                  disabledforeground="#3a3a40")
+        self.test_btn.pack(side=tk.LEFT, padx=5)
+        self.test_btn.config(state=tk.DISABLED)
+
         self.user_btn = self._make_button(replay_frame, "▶ My recording", self.play_user_recording)
         self.user_btn.pack(side=tk.LEFT, padx=5)
         self.user_btn.config(state=tk.DISABLED)
@@ -291,11 +303,45 @@ class PronunciationTrainerGUI:
         phrase_frame = tk.Frame(self.root, bg="#1a1a1e")
         phrase_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=5)
 
-        tk.Label(phrase_frame, text="Say this:", font=("Segoe UI", 9),
-                 fg="#6272a4", bg="#1a1a1e").pack(anchor=tk.W, padx=12, pady=(8, 0))
         self.phrase_label = tk.Label(phrase_frame, text="—", font=("Segoe UI", 15, "bold"),
                                      fg="#8be9fd", bg="#1a1a1e", wraplength=440, justify=tk.LEFT)
-        self.phrase_label.pack(anchor=tk.W, padx=12, pady=(2, 10))
+        self.phrase_label.pack(anchor=tk.W, padx=12, pady=(10, 10))
+
+        # 5b. Prosody panel — pitch (F0) and energy sparklines, you vs reference.
+        prosody_frame = tk.Frame(self.root, bg="#121214")
+        prosody_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 5))
+
+        prosody_header = tk.Frame(prosody_frame, bg="#121214")
+        prosody_header.pack(fill=tk.X)
+        tk.Label(prosody_header, text="Prosody", font=("Segoe UI", 9, "bold"),
+                 fg="#8a2be2", bg="#121214").pack(side=tk.LEFT)
+        tk.Label(prosody_header, text="● reference", font=("Segoe UI", 8),
+                 fg="#ff79c6", bg="#121214").pack(side=tk.RIGHT, padx=(8, 0))
+        tk.Label(prosody_header, text="● you", font=("Segoe UI", 8),
+                 fg="#8be9fd", bg="#121214").pack(side=tk.RIGHT)
+
+        tk.Label(prosody_frame, text="Pitch (F0) — intonation, low ↔ high", font=("Segoe UI", 8),
+                 fg="#6272a4", bg="#121214").pack(anchor=tk.W)
+        self.f0_canvas = tk.Canvas(prosody_frame, height=46, bg="#1a1a1e",
+                                   highlightthickness=1, highlightbackground="#25252a")
+        self.f0_canvas.pack(fill=tk.X, pady=(0, 4))
+
+        tk.Label(prosody_frame, text="Energy — loudness / stress", font=("Segoe UI", 8),
+                 fg="#6272a4", bg="#121214").pack(anchor=tk.W)
+        self.en_canvas = tk.Canvas(prosody_frame, height=46, bg="#1a1a1e",
+                                   highlightthickness=1, highlightbackground="#25252a")
+        self.en_canvas.pack(fill=tk.X)
+
+        # Reading hint: horizontal axis is time (stretched to equal width for both),
+        # so the goal is matching the *shape* of the reference, not exact overlap.
+        tk.Label(prosody_frame,
+                 text="Time runs left→right (stretched to equal width). Aim to match the reference shape.",
+                 font=("Segoe UI", 8), fg="#6272a4", bg="#121214",
+                 wraplength=460, justify=tk.LEFT).pack(anchor=tk.W, pady=(3, 0))
+
+        # fill=X canvases change width on resize, so redraw from the cached prosody.
+        self.f0_canvas.bind("<Configure>", lambda e: self._redraw_prosody())
+        self.en_canvas.bind("<Configure>", lambda e: self._redraw_prosody())
 
         # 6. Feedback log (fills remaining space)
         feedback_frame = tk.Frame(self.root, bg="#121214")
@@ -314,6 +360,10 @@ class PronunciationTrainerGUI:
         self.feedback_display.tag_configure("bad", foreground="#ff5555", font=("Segoe UI", 11, "bold"))
         self.feedback_display.tag_configure("label", foreground="#a0a0a5", font=("Segoe UI", 10))
         self.feedback_display.tag_configure("text", foreground="#f1f1f6", font=("Segoe UI", 11))
+        # Monospace tag for phoneme strings so they align and read clearly.
+        self.feedback_display.tag_configure("mono", foreground="#a0a0a5", font=("Consolas", 10))
+        # Amber tag for "no word errors but score still low" guidance.
+        self.feedback_display.tag_configure("warn", foreground="#ffb86c", font=("Segoe UI", 11))
 
     def draw_mic_button(self, state):
         self.btn_canvas.delete("all")
@@ -465,7 +515,7 @@ class PronunciationTrainerGUI:
         self.generate_btn.config(state=tk.NORMAL)
         self.append_system_msg("Ready. Generate a phrase, listen, then hold SPACE to repeat it.")
         # Auto-generate the first phrase so the user isn't met with an empty
-        # "Say this:" card; afterwards generation is driven by the New phrase button.
+        # empty phrase card; afterwards generation is driven by the New phrase button.
         self.on_generate_phrase()
 
     # ------------------------------------------------------------------
@@ -524,6 +574,7 @@ class PronunciationTrainerGUI:
         self.generate_btn.config(state=tk.DISABLED)
         self.ref_btn.config(state=tk.DISABLED)
         self.user_btn.config(state=tk.DISABLED)
+        self.test_btn.config(state=tk.DISABLED)
         self.last_user_audio = None
         self.draw_mic_button("processing")
         self.update_status("Generating phrase (LLM)...", "#8be9fd")
@@ -578,6 +629,7 @@ class PronunciationTrainerGUI:
         self.update_instruction("Hold SPACE or click the mic, then repeat the phrase.")
         self.generate_btn.config(state=tk.NORMAL)
         self.ref_btn.config(state=tk.NORMAL)  # reference can be replayed any time now
+        self.test_btn.config(state=tk.NORMAL)  # reference self-test available now
 
     def _phrase_generation_failed(self, message: str):
         self.is_generating = False
@@ -808,6 +860,53 @@ class PronunciationTrainerGUI:
     # ------------------------------------------------------------------
     # Analyze phase
     # ------------------------------------------------------------------
+    def on_test_reference(self):
+        """Diagnostic: feed the reference audio through analysis instead of a
+        recording. Since the reference is compared against itself it should score
+        near 100 — a quick way to sanity-check the pipeline without speaking.
+        """
+        if not self.app_ready or self.is_generating:
+            return
+        if self.current_phrase is None or self.reference_audio is None:
+            return
+        with self.processing_lock:
+            if self.is_processing_audio:
+                return
+            self.is_processing_audio = True
+
+        self.stop_playback()  # silence any current playback first
+        threading.Thread(target=self._run_reference_test, daemon=True).start()
+
+    def _run_reference_test(self):
+        """Play the reference, then analyze it against itself (off the main thread)."""
+        try:
+            # Play the reference back first. stop_playback() set the stop event when
+            # the test started, so clear it to allow playback here.
+            self.playback_stop_event.clear()
+            self.root.after(0, self.draw_mic_button, "speaking")
+            self.root.after(0, self.update_status, "Playing reference...", "#ff79c6")
+            self.tts_mgr.play_array(self.reference_audio, KOKORO_SAMPLE_RATE,
+                                    self.playback_stop_event, self.shutdown_event)
+
+            # Then run analysis with the reference as both inputs.
+            self.root.after(0, self.draw_mic_button, "processing")
+            self.root.after(0, self.update_status, "Testing with reference...", "#ffb86c")
+            result = pronounce.analyze(
+                user_audio=self.reference_audio,
+                expected_text=self.current_phrase,
+                reference_audio=self.reference_audio,
+                user_sr=KOKORO_SAMPLE_RATE,       # reference is Kokoro's 24 kHz output
+                reference_sr=KOKORO_SAMPLE_RATE,
+            )
+            self.root.after(0, self._show_feedback, result)
+        except Exception:
+            logging.exception("Reference self-test error:")
+            self.root.after(0, self.append_system_msg, "Reference test failed.")
+            self.root.after(0, self._reset_to_retry)
+        finally:
+            with self.processing_lock:
+                self.is_processing_audio = False
+
     def analyze_recording(self):
         try:
             audio = self.get_recorded_audio()
@@ -860,19 +959,95 @@ class PronunciationTrainerGUI:
             self.root.after(0, self.append_system_msg, "Analysis error. Please try again.")
             self.root.after(0, self._reset_to_retry)
 
+    @staticmethod
+    def _resample_series(values, target: int = 160):
+        """Evenly resample a 1-D sequence down to ``target`` points for plotting.
+
+        Prosody contours can be hundreds of frames long; thinning keeps the
+        sparkline light without changing its shape.
+        """
+        n = len(values)
+        if n <= target:
+            return list(values)
+        step = (n - 1) / (target - 1)
+        return [values[int(round(i * step))] for i in range(target)]
+
+    def _draw_prosody(self, canvas, series):
+        """Draw contours onto ``canvas``. ``series`` is a list of (values, color).
+
+        All series share one vertical scale so they are directly comparable.
+        No-op until the canvas has been laid out (winfo_width > 1).
+        """
+        canvas.delete("all")
+        width, height = canvas.winfo_width(), canvas.winfo_height()
+        if width <= 1 or height <= 1:
+            return
+        pad_x, pad_y = 4, 4
+        plot_w = max(1, width - 2 * pad_x)
+        plot_h = max(1, height - 2 * pad_y)
+
+        all_values = [v for values, _ in series for v in values]
+        if not all_values:
+            return
+        lo, hi = min(all_values), max(all_values)
+        span = (hi - lo) or 1.0
+
+        for values, color in series:
+            points = self._resample_series(values)
+            if len(points) < 2:
+                continue
+            coords = []
+            for i, value in enumerate(points):
+                x = pad_x + (i / (len(points) - 1)) * plot_w
+                y = pad_y + (1 - (value - lo) / span) * plot_h
+                coords.extend((x, y))
+            canvas.create_line(*coords, fill=color, width=2, smooth=True)
+
+    def _redraw_prosody(self):
+        """Redraw both prosody canvases from the cached result (e.g. after resize)."""
+        prosody = self._last_prosody
+        if not prosody:
+            return
+        self._draw_prosody(self.f0_canvas, [
+            (prosody.get("ref_f0", []), "#ff79c6"),   # reference
+            (prosody.get("f0", []), "#8be9fd"),        # you
+        ])
+        self._draw_prosody(self.en_canvas, [
+            (prosody.get("ref_energy", []), "#ff79c6"),
+            (prosody.get("energy", []), "#8be9fd"),
+        ])
+
     def _show_feedback(self, result: "pronounce.PronunciationResult"):
         self.feedback_display.configure(state=tk.NORMAL)
         tag = "good" if result.passed else "bad"
         self.feedback_display.insert(tk.END, f"Score: {result.score:.0f}/100 ", tag)
         self.feedback_display.insert(tk.END, "(passed)\n" if result.passed else "(try again)\n", tag)
+        # First line: the expected phrase, with mispronounced words shown in red.
+        error_words = {w.lower() for w in result.words_with_errors}
+        self.feedback_display.insert(tk.END, "Phrase: ", "label")
+        for token in (self.current_phrase or "—").split():
+            is_error = token.lower().strip(".,!?;:\"") in error_words
+            self.feedback_display.insert(tk.END, token + " ", "bad" if is_error else "text")
+        self.feedback_display.insert(tk.END, "\n")
+
+        # Second line: what the recognizer actually heard.
         self.feedback_display.insert(tk.END, "Heard: ", "label")
         self.feedback_display.insert(tk.END, f"{result.transcription or '—'}\n", "text")
-        if result.words_with_errors:
-            self.feedback_display.insert(tk.END, "Work on: ", "label")
-            self.feedback_display.insert(tk.END, ", ".join(result.words_with_errors) + "\n", "text")
+
+        # When the words are right but the score still failed, the gap is prosodic.
+        if not result.word_errors and not result.passed:
+            self.feedback_display.insert(
+                tk.END, "Words are correct, but your rhythm/intonation differ from the "
+                "reference — match the curves above.\n", "warn")
+
         self.feedback_display.insert(tk.END, "\n")
         self.feedback_display.configure(state=tk.DISABLED)
         self.feedback_display.see(tk.END)
+
+        # Cache prosody and draw the sparklines (you vs reference).
+        self._last_prosody = result.prosody or {}
+        self.root.update_idletasks()  # ensure the canvases have a real width/height
+        self._redraw_prosody()
 
         self.update_score_stats(result.score)
 
@@ -886,7 +1061,7 @@ class PronunciationTrainerGUI:
             self.update_instruction("Nice! Click 'New phrase' to continue, or repeat to refine.")
         else:
             self.update_status("Keep practicing", "#ffb86c")
-            self.update_instruction("Hold SPACE to repeat, or replay the reference to compare.")
+            self.update_instruction("Try again: hold SPACE or click the mic to repeat. ▶ Reference replays the example.")
 
     def _reset_to_retry(self):
         """Return to a state where the user can record the current phrase again."""

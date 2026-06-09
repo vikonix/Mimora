@@ -461,14 +461,20 @@ def analyze(user_audio: np.ndarray,
         differences["word_distance"],
     )
 
-    # Prosody contours from the user's audio.
+    # Prosody contours from the user's audio, plus the reference for overlay so
+    # the GUI can show "you vs reference" pitch and energy on the same axes.
     energy = extract_energy(user_wav)
     f0 = interpolate_f0(extract_f0(user_wav, TARGET_SAMPLE_RATE))
+    ref_energy = extract_energy(reference_wav)
+    ref_f0 = interpolate_f0(extract_f0(reference_wav, TARGET_SAMPLE_RATE))
 
     return PronunciationResult(
         score=score,
         word_errors=differences["errors"],
-        prosody={"f0": f0.tolist(), "energy": energy.tolist()},
+        prosody={
+            "f0": f0.tolist(), "energy": energy.tolist(),
+            "ref_f0": ref_f0.tolist(), "ref_energy": ref_energy.tolist(),
+        },
         transcription=transcription,
         passed=score >= SCORE_THRESHOLD,
         feedback=differences["feedback"],
