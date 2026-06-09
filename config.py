@@ -212,6 +212,6 @@ AUDIO_OUTPUT_DEVICE = None   # None → OS default speaker
 # handlers can open their files immediately).
 LOG_DIR = BASE_DIR / "logs"
 LOG_DIR.mkdir(exist_ok=True)
-LOG_FILE = str(LOG_DIR / "voice_tutor.log")
+LOG_FILE = str(LOG_DIR / "main.log")
 # Log file for the auto-started local LLM server subprocess (see main.py).
 LLM_SERVER_LOG_FILE = str(LOG_DIR / "llm_server.log")

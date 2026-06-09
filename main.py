@@ -47,11 +47,17 @@ AUDIO_NORMALIZATION_CEILING = 0.9    # Scales the peak target output level direc
 # How long to wait for the recording thread to finish after stopping.
 RECORD_THREAD_JOIN_TIMEOUT_SEC = 1.5
 
-# Debug: when True, every analyzed take is written to disk as WAV (raw capture
-# before normalization, and the normalized signal) so the captured audio can be
-# inspected independently of playback. Set back to False once diagnosed.
+# When True, every take is written to disk as WAV so the audio can be inspected
+# independently of playback. Only three fixed files are kept, each overwritten on
+# every take (no history): the model's spoken reference, the raw mic capture, and
+# the normalized signal. Set to False to disable the dumps entirely.
 DEBUG_DUMP_RECORDINGS = True
-DEBUG_DUMP_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug")
+RECORDS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "records")
+
+# Fixed file names for the three dumped recordings (overwritten each take).
+RECORD_MODEL_FILE = "model.wav"        # what the model said (Kokoro reference)
+RECORD_RAW_FILE = "raw.wav"            # raw microphone capture
+RECORD_NORMALIZED_FILE = "normalized.wav"  # normalized capture
 
 
 class PronunciationTrainerGUI(PronunciationTrainerUI):
@@ -336,6 +342,8 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
 
             self.current_phrase = phrase
             self.reference_audio = reference_audio
+            if DEBUG_DUMP_RECORDINGS:
+                self._dump_record_wav(reference_audio, RECORD_MODEL_FILE, KOKORO_SAMPLE_RATE)
             self.recent_phrases.append(phrase)
             if len(self.recent_phrases) > config.PHRASE_GEN_RECENT_MEMORY:
                 self.recent_phrases.pop(0)
@@ -556,27 +564,27 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         audio = audio / peak * AUDIO_NORMALIZATION_CEILING
         return np.nan_to_num(audio).astype(np.float32)
 
-    def _dump_debug_wav(self, audio: np.ndarray, label: str, sample_rate: int):
-        """Write a mono float32 waveform to debug/<timestamp>_<label>.wav as 16-bit PCM.
+    def _dump_record_wav(self, audio: np.ndarray, file_name: str, sample_rate: int):
+        """Write a mono float32 waveform to records/<file_name> as 16-bit PCM.
 
-        Diagnostic only (guarded by DEBUG_DUMP_RECORDINGS). Lets the raw capture be
-        inspected on disk, isolating recording artifacts from the playback path.
+        Diagnostic only (guarded by DEBUG_DUMP_RECORDINGS). The file name is fixed
+        (model.wav / raw.wav / normalized.wav), so each take overwrites the previous
+        one and only the latest recording is kept on disk.
         """
         try:
             import wave
-            os.makedirs(DEBUG_DUMP_DIR, exist_ok=True)
-            stamp = time.strftime("%Y%m%d_%H%M%S")
-            path = os.path.join(DEBUG_DUMP_DIR, f"{stamp}_{label}.wav")
+            os.makedirs(RECORDS_DIR, exist_ok=True)
+            path = os.path.join(RECORDS_DIR, file_name)
             pcm = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
             with wave.open(path, "wb") as wav_file:
                 wav_file.setnchannels(1)
                 wav_file.setsampwidth(2)
                 wav_file.setframerate(sample_rate)
                 wav_file.writeframes(pcm.tobytes())
-            logging.info(f"[debug] Dumped {label} capture -> {path} "
+            logging.info(f"[record] Saved {file_name} -> {path} "
                          f"(peak={np.max(np.abs(audio)):.4f}, n={len(audio)})")
         except Exception:
-            logging.exception("Failed to dump debug WAV:")
+            logging.exception("Failed to save record WAV:")
 
     def get_recorded_audio(self) -> Optional[np.ndarray]:
         with self.record_lock:
@@ -654,13 +662,13 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
                 return
 
             if DEBUG_DUMP_RECORDINGS:
-                self._dump_debug_wav(audio, "raw", WHISPER_SAMPLE_RATE)
+                self._dump_record_wav(audio, RECORD_RAW_FILE, WHISPER_SAMPLE_RATE)
 
             audio = self.normalize_audio(audio)
             self.last_user_audio = audio
 
             if DEBUG_DUMP_RECORDINGS:
-                self._dump_debug_wav(audio, "normalized", WHISPER_SAMPLE_RATE)
+                self._dump_record_wav(audio, RECORD_NORMALIZED_FILE, WHISPER_SAMPLE_RATE)
 
             if self.current_phrase is None or self.reference_audio is None:
                 self.root.after(0, self.append_system_msg, "No active phrase to compare against.")
