@@ -19,16 +19,38 @@ import argparse
 import json
 import logging
 import os
+import site
 import sys
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Iterator, Optional
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+
+
+def _register_nvidia_dll_dirs() -> None:
+    """Make CUDA runtime DLLs from pip-installed nvidia-* packages findable.
+
+    The CUDA wheel of llama-cpp-python needs cudart64_12.dll / cublas64_12.dll
+    but only searches its own lib/ dir and CUDA_PATH. With no system CUDA
+    Toolkit those DLLs come from the nvidia-cuda-runtime-cu12 /
+    nvidia-cublas-cu12 pip packages, which place them under
+    site-packages/nvidia/*/bin — register those dirs before importing
+    llama_cpp. No-op on non-Windows or when the packages are absent.
+    """
+    if sys.platform != "win32":
+        return
+    for site_dir in site.getsitepackages():
+        for bin_dir in Path(site_dir).glob("nvidia/*/bin"):
+            os.add_dll_directory(str(bin_dir))
+
+
+_register_nvidia_dll_dirs()
 
 try:
     from llama_cpp import Llama

@@ -6,4 +6,6 @@ kokoro>=0.3.0
 openai>=1.0.0
 keyboard>=0.13.5
 torch>=2.0.0
+# CPU-only build by default; for the CUDA build (GPU offload for the LLM)
+# see "llama-cpp-python with CUDA Support" in llm_server/README.md.
 llama-cpp-python>=0.2.0
