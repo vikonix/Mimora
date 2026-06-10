@@ -25,21 +25,49 @@ class TestPureLogic(unittest.TestCase):
     """Tests that need no model weights."""
 
     def test_score_is_perfect_for_zero_distances(self):
+        # Self-comparison (the Test button): zero acoustic distance, no errors.
         self.assertEqual(speech.compute_pronunciation_score(0, 0, 0), 100.0)
 
-    def test_score_is_clamped_to_zero_for_huge_distances(self):
-        score = speech.compute_pronunciation_score(10_000, 10_000, 10_000)
+    def test_score_is_clamped_to_zero_for_terrible_attempt(self):
+        score = speech.compute_pronunciation_score(2.0, 1.0, 1.0)
         self.assertEqual(score, 0.0)
 
     def test_score_stays_within_bounds(self):
-        score = speech.compute_pronunciation_score(250, 150, 15)
+        score = speech.compute_pronunciation_score(0.3, 0.2, 0.1)
         self.assertGreaterEqual(score, 0.0)
         self.assertLessEqual(score, 100.0)
 
     def test_score_decreases_as_distance_grows(self):
-        better = speech.compute_pronunciation_score(50, 30, 3)
-        worse = speech.compute_pronunciation_score(400, 200, 25)
+        # Explicit floor/ceiling keep the test independent of calibration.json.
+        better = speech.compute_pronunciation_score(
+            0.25, 0.05, 0.02, acoustic_bad=0.6, acoustic_good=0.2)
+        worse = speech.compute_pronunciation_score(
+            0.50, 0.50, 0.40, acoustic_bad=0.6, acoustic_good=0.2)
         self.assertGreater(better, worse)
+
+    def test_acoustic_floor_yields_full_acoustic_component(self):
+        # At the floor the acoustic component is 100 -> its 40% weight survives
+        # even when the other components are zeroed out.
+        score = speech.compute_pronunciation_score(
+            0.2, 1.0, 1.0, acoustic_bad=0.6, acoustic_good=0.2)
+        self.assertEqual(score, 40.0)
+
+    def test_acoustic_ceiling_adapts_to_baseline(self):
+        low = speech.acoustic_bad_for(0.3, acoustic_good=0.2)
+        high = speech.acoustic_bad_for(0.8, acoustic_good=0.2)
+        self.assertGreater(high, low)
+        # The ceiling never collapses onto the floor.
+        degenerate = speech.acoustic_bad_for(0.0, acoustic_good=0.2)
+        self.assertGreaterEqual(degenerate, 0.2 + speech.ACOUSTIC_MIN_SPAN)
+
+    def test_score_is_length_invariant(self):
+        # The same error *rates* must give the same score regardless of the
+        # phrase length they came from (the original bug: absolute distances).
+        short = speech.compute_pronunciation_score(
+            0.3, 2 / 10, 3 / 15, acoustic_bad=0.6, acoustic_good=0.2)
+        long = speech.compute_pronunciation_score(
+            0.3, 8 / 40, 12 / 60, acoustic_bad=0.6, acoustic_good=0.2)
+        self.assertEqual(short, long)
 
     def test_phoneme_embeddings_shape_and_values(self):
         emb = speech.get_phoneme_embeddings("ab")
@@ -116,7 +144,8 @@ def _run_end_to_end(user_path: str, reference_path: Optional[str]) -> None:
     print(f"\nScore:         {result.score} (passed={result.passed})")
     print(f"Transcription: {result.transcription!r}")
     print(f"Problem words: {result.words_with_errors}")
-    print(f"Acoustic DTW:  {result.acoustic_distance}")
+    print(f"Acoustic DTW:  {result.acoustic_distance} total, "
+          f"{result.acoustic_per_step:.4f}/step (baseline {result.acoustic_baseline:.4f})")
     print(result.feedback)
 
 

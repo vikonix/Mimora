@@ -21,9 +21,12 @@ Design notes:
       recording path; the Kokoro reference is 24 kHz, so it is resampled here.
 """
 
+import json
+import logging
 import re
 import sys
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -32,7 +35,7 @@ import torch
 import librosa
 import Levenshtein
 from fastdtw import fastdtw
-from scipy.spatial.distance import euclidean
+from scipy.spatial.distance import cosine, euclidean
 from sklearn.preprocessing import MinMaxScaler
 from transformers import Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2ForCTC
 from phonemizer import phonemize
@@ -64,6 +67,63 @@ SCORE_THRESHOLD = getattr(config, "PRONUNCE_SCORE_THRESHOLD", 70.0)
 # phonemes (and American against American), not always en-us.
 ESPEAK_LANGUAGE = getattr(config, "ESPEAK_LANGUAGE", "en-us")
 
+# ---------------------------------------------------------------------
+# Acoustic score calibration.
+#
+# The acoustic component compares per-step cosine DTW distance between the two
+# Wav2Vec2 embedding sequences. Two anchors map it to 0-100:
+#   * floor (ACOUSTIC_GOOD)  — typical per-step distance of a *good* attempt by a
+#     different speaker (the user vs the TTS voice never reach 0). Calibrated
+#     per voice/microphone; ``python pronounce/calibrate.py`` writes it to
+#     calibration.json from collected session samples.
+#   * ceiling — per-step distance when content does not match. Derived
+#     automatically per utterance from the random-pair baseline (the mean
+#     distance between unaligned frames of the two recordings), so it adapts to
+#     each phrase without manual tuning.
+# ---------------------------------------------------------------------
+ACOUSTIC_GOOD_DEFAULT = float(getattr(config, "PRONUNCE_ACOUSTIC_GOOD", 0.20))
+ACOUSTIC_BAD_DEFAULT = 0.60      # fixed ceiling when no per-utterance baseline exists
+ACOUSTIC_BAD_FRACTION = 0.9      # ceiling = this fraction of the random-pair baseline
+ACOUSTIC_MIN_SPAN = 0.05         # minimal floor-to-ceiling span (avoids degenerate scale)
+TRIM_TOP_DB = 30                 # silence trim threshold relative to peak, in dB
+
+# Persisted calibration (floor override) and the per-attempt sample log used by
+# pronounce/calibrate.py to compute that override on request.
+CALIBRATION_FILE = Path(__file__).resolve().parent / "calibration.json"
+SAMPLES_FILE = Path(getattr(config, "LOG_DIR", _ROOT / "logs")) / "pronounce_samples.jsonl"
+
+
+def _load_calibration() -> float:
+    """Return the calibrated acoustic floor, or the default when not calibrated."""
+    try:
+        if CALIBRATION_FILE.exists():
+            data = json.loads(CALIBRATION_FILE.read_text(encoding="utf-8"))
+            value = float(data["acoustic_good"])
+            logging.info(f"[pronounce] Loaded calibration: acoustic_good={value:.4f} "
+                         f"({CALIBRATION_FILE})")
+            return value
+    except Exception:
+        logging.exception("Failed to read calibration file; using defaults:")
+    return ACOUSTIC_GOOD_DEFAULT
+
+
+ACOUSTIC_GOOD = _load_calibration()
+
+
+def save_calibration(acoustic_good: float, extra: Optional[Dict[str, Any]] = None) -> None:
+    """Persist a new acoustic floor (and apply it to the running process)."""
+    global ACOUSTIC_GOOD
+    payload: Dict[str, Any] = {
+        "acoustic_good": round(float(acoustic_good), 5),
+        "created": datetime.now().isoformat(timespec="seconds"),
+    }
+    if extra:
+        payload.update(extra)
+    CALIBRATION_FILE.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    ACOUSTIC_GOOD = float(acoustic_good)
+    logging.info(f"[pronounce] Saved calibration acoustic_good={acoustic_good:.4f} "
+                 f"-> {CALIBRATION_FILE}")
+
 # Lazily-initialised model singletons (loaded once, reused for every analysis).
 _processor: Optional[Wav2Vec2Processor] = None
 _model: Optional[Wav2Vec2Model] = None          # embeddings (acoustic similarity)
@@ -88,7 +148,9 @@ class PronunciationResult:
     transcription: str                            # what the ASR recognised
     passed: bool = False                          # score >= SCORE_THRESHOLD
     feedback: str = ""                            # human-readable summary
-    acoustic_distance: int = 0                    # Wav2Vec2-embedding DTW distance
+    acoustic_distance: int = 0                    # total Wav2Vec2-embedding DTW distance
+    acoustic_per_step: float = 0.0                # DTW distance per alignment step (scored)
+    acoustic_baseline: float = 0.0                # random-pair distance (per-utterance ceiling)
     words_with_errors: List[str] = field(default_factory=list)
     expected_phonemes: List[str] = field(default_factory=list)
     transcribed_phonemes: List[str] = field(default_factory=list)
@@ -146,6 +208,22 @@ def _prepare_waveform(waveform: np.ndarray, orig_sr: int) -> np.ndarray:
         wav = librosa.resample(wav, orig_sr=orig_sr, target_sr=TARGET_SAMPLE_RATE)
 
     return np.ascontiguousarray(wav, dtype=np.float32)
+
+
+def _trim_silence(wav: np.ndarray) -> np.ndarray:
+    """Cut leading/trailing silence so pauses don't inflate the DTW distance.
+
+    Matters especially for the user recording: peak normalization in the capture
+    path boosts the noise floor of quiet takes, turning silent padding into loud
+    noise that has no counterpart in the clean TTS reference. Keeps the original
+    audio when trimming would leave less than 0.1 s (i.e. near-silent input).
+    """
+    if wav.size == 0:
+        return wav
+    trimmed, _ = librosa.effects.trim(wav, top_db=TRIM_TOP_DB)
+    if trimmed.size < int(0.1 * TARGET_SAMPLE_RATE):
+        return wav
+    return np.ascontiguousarray(trimmed, dtype=np.float32)
 
 
 # =====================================================================
@@ -235,11 +313,14 @@ def compare_transcriptions(transcription: str, text_reference: str) -> Dict[str,
     expected_phonemes, expected_map = get_phonemes_with_word_mapping(text_reference)
     transcribed_phonemes, transcribed_map = get_phonemes_with_word_mapping(transcription_clean)
 
-    # Numerical phoneme sequences for the global DTW distance.
+    # Global phoneme distance: edit distance over the phoneme sequences. Unlike
+    # the old DTW over character codes, this counts actual phoneme substitutions/
+    # insertions/deletions and can be normalized by the expected length.
+    distance = Levenshtein.distance(expected_phonemes, transcribed_phonemes)
+
+    # Numerical phoneme sequences, used below to build comparable contours.
     expected_seq = get_phoneme_embeddings(" ".join(expected_phonemes))
     transcribed_seq = get_phoneme_embeddings(" ".join(transcribed_phonemes))
-
-    distance, _ = fastdtw(expected_seq, transcribed_seq, dist=euclidean)
 
     errors: List[Dict[str, Any]] = []
     words_with_errors = set()
@@ -350,6 +431,7 @@ def compare_transcriptions(transcription: str, text_reference: str) -> Dict[str,
 
     return {
         "word_distance": word_distance,
+        "reference_length": len(reference_clean),
         "phoneme_distance": distance,
         "errors": errors,
         "feedback": feedback,
@@ -378,12 +460,50 @@ def align_sequences_dtw(seq1, seq2):
     return np.array(aligned_seq1), np.array(aligned_seq2)
 
 
-def compute_pronunciation_score(distance_dtw, phoneme_distance, word_distance,
-                                max_dtw=500, max_lev=30) -> float:
-    """Combine the three distances into a 0-100 score (heuristic, tunable)."""
-    dtw_score = max(0, 100 - (distance_dtw / max_dtw) * 100)
-    phoneme_score = max(0, 100 - (phoneme_distance / max_dtw) * 100)
-    word_score = max(0, 100 - (word_distance / max_lev) * 100)
+def _random_pair_baseline(emb_a: np.ndarray, emb_b: np.ndarray,
+                          n_pairs: int = 2000, seed: int = 0) -> float:
+    """Mean cosine distance between randomly paired frames of two embeddings.
+
+    Approximates the per-step DTW distance of *unrelated* content, giving each
+    utterance its own automatic "completely wrong" ceiling for the acoustic score.
+    """
+    rng = np.random.default_rng(seed)
+    i = rng.integers(0, len(emb_a), n_pairs)
+    j = rng.integers(0, len(emb_b), n_pairs)
+    a, b = emb_a[i], emb_b[j]
+    num = np.sum(a * b, axis=1)
+    den = np.linalg.norm(a, axis=1) * np.linalg.norm(b, axis=1) + 1e-9
+    return float(np.mean(1.0 - num / den))
+
+
+def acoustic_bad_for(baseline: float, acoustic_good: Optional[float] = None) -> float:
+    """Per-utterance acoustic ceiling derived from the random-pair baseline."""
+    good = ACOUSTIC_GOOD if acoustic_good is None else acoustic_good
+    return max(ACOUSTIC_BAD_FRACTION * baseline, good + ACOUSTIC_MIN_SPAN)
+
+
+def compute_pronunciation_score(acoustic_per_step: float,
+                                phoneme_error_rate: float,
+                                word_error_rate: float,
+                                acoustic_bad: Optional[float] = None,
+                                acoustic_good: Optional[float] = None) -> float:
+    """Combine the three normalized components into a 0-100 score.
+
+    Args:
+        acoustic_per_step: cosine DTW distance per alignment step (length-invariant).
+        phoneme_error_rate: phoneme edit distance / expected phoneme count.
+        word_error_rate: character edit distance / reference text length.
+        acoustic_bad: per-utterance ceiling (see ``acoustic_bad_for``); falls back
+            to a fixed default when no baseline is available.
+        acoustic_good: floor override; defaults to the calibrated ACOUSTIC_GOOD.
+    """
+    good = ACOUSTIC_GOOD if acoustic_good is None else acoustic_good
+    bad = ACOUSTIC_BAD_DEFAULT if acoustic_bad is None else acoustic_bad
+    bad = max(bad, good + ACOUSTIC_MIN_SPAN)
+
+    dtw_score = 100.0 * min(1.0, max(0.0, 1.0 - (acoustic_per_step - good) / (bad - good)))
+    phoneme_score = 100.0 * min(1.0, max(0.0, 1.0 - phoneme_error_rate))
+    word_score = 100.0 * min(1.0, max(0.0, 1.0 - word_error_rate))
 
     # Weighting: acoustic DTW 40%, phonemes 30%, words 30%.
     final_score = 0.4 * dtw_score + 0.3 * phoneme_score + 0.3 * word_score
@@ -427,6 +547,20 @@ def clean_transcription(text: str) -> str:
 # =====================================================================
 # Single entry point
 # =====================================================================
+def _append_calibration_sample(record: Dict[str, Any]) -> None:
+    """Append one analysis record to the calibration sample log (best effort).
+
+    The file feeds ``pronounce/calibrate.py``; a write failure must never break
+    the analysis itself.
+    """
+    try:
+        SAMPLES_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with SAMPLES_FILE.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        logging.exception("Failed to append calibration sample:")
+
+
 def analyze(user_audio: np.ndarray,
             expected_text: str,
             reference_audio: np.ndarray,
@@ -446,24 +580,62 @@ def analyze(user_audio: np.ndarray,
     """
     _ensure_loaded()
 
-    user_wav = _prepare_waveform(user_audio, user_sr)
-    reference_wav = _prepare_waveform(reference_audio, reference_sr)
+    # Trim silent padding: user takes have button-press pauses (with the noise
+    # floor boosted by peak normalization), the TTS reference has almost none.
+    user_wav = _trim_silence(_prepare_waveform(user_audio, user_sr))
+    reference_wav = _trim_silence(_prepare_waveform(reference_audio, reference_sr))
 
-    # Acoustic similarity: DTW distance between the two embedding sequences.
+    # Acoustic similarity: cosine DTW between the two embedding sequences,
+    # normalized by the alignment path length so it does not grow with phrase
+    # duration. Cosine (vs euclidean) also ignores embedding magnitude, which
+    # drifts with loudness/voice rather than pronunciation.
     emb_user = extract_embeddings(user_wav)
     emb_reference = extract_embeddings(reference_wav)
-    acoustic_distance, _ = fastdtw(emb_user, emb_reference, dist=euclidean)
-    acoustic_distance = int(acoustic_distance)
+    acoustic_total, path = fastdtw(emb_user, emb_reference, dist=cosine)
+    acoustic_per_step = float(acoustic_total) / max(1, len(path))
+    acoustic_baseline = _random_pair_baseline(emb_user, emb_reference)
+    acoustic_bad = acoustic_bad_for(acoustic_baseline)
 
     # Transcription + per-word phoneme comparison.
     transcription = clean_transcription(transcribe(user_wav))
     differences = compare_transcriptions(transcription, expected_text)
 
+    phoneme_count = max(1, len(differences["expected_phonemes"]))
+    phoneme_error_rate = differences["phoneme_distance"] / phoneme_count
+    reference_length = max(1, differences["reference_length"])
+    word_error_rate = differences["word_distance"] / reference_length
+
     score = compute_pronunciation_score(
-        acoustic_distance,
-        differences["phoneme_distance"],
-        differences["word_distance"],
+        acoustic_per_step,
+        phoneme_error_rate,
+        word_error_rate,
+        acoustic_bad=acoustic_bad,
     )
+
+    # Calibration log: raw components in one greppable line. ``calibrate.py``
+    # consumes the structured copy appended to SAMPLES_FILE below.
+    logging.info(
+        "[pronounce] score=%.1f | acoustic/step=%.4f (good=%.3f bad=%.3f baseline=%.4f) | "
+        "phonemes=%d/%d (err=%.2f) | words_lev=%d/%d (err=%.2f) | asr=%r",
+        score, acoustic_per_step, ACOUSTIC_GOOD, acoustic_bad, acoustic_baseline,
+        differences["phoneme_distance"], phoneme_count, phoneme_error_rate,
+        differences["word_distance"], reference_length, word_error_rate,
+        transcription,
+    )
+    _append_calibration_sample({
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "text": expected_text,
+        "asr": transcription,
+        "acoustic_per_step": round(acoustic_per_step, 5),
+        "acoustic_baseline": round(acoustic_baseline, 5),
+        "phoneme_distance": int(differences["phoneme_distance"]),
+        "phoneme_count": int(phoneme_count),
+        "word_distance": int(differences["word_distance"]),
+        "reference_length": int(reference_length),
+        "phoneme_error_rate": round(phoneme_error_rate, 4),
+        "word_error_rate": round(word_error_rate, 4),
+        "score": score,
+    })
 
     # Prosody contours from the user's audio, plus the reference for overlay so
     # the GUI can show "you vs reference" pitch and energy on the same axes.
@@ -482,7 +654,9 @@ def analyze(user_audio: np.ndarray,
         transcription=transcription,
         passed=score >= SCORE_THRESHOLD,
         feedback=differences["feedback"],
-        acoustic_distance=acoustic_distance,
+        acoustic_distance=int(acoustic_total),
+        acoustic_per_step=acoustic_per_step,
+        acoustic_baseline=acoustic_baseline,
         words_with_errors=differences["words_with_errors"],
         expected_phonemes=differences["expected_phonemes"],
         transcribed_phonemes=differences["transcribed_phonemes"],

@@ -202,6 +202,12 @@ WAV2VEC2_DEVICE = DEVICE
 # Score (0-100) at or above which a repetition is accepted; below it the learner
 # is asked to repeat the same phrase.
 PRONUNCE_SCORE_THRESHOLD = 70.0
+# Acoustic floor: typical per-step cosine DTW distance of a *good* attempt
+# (the user's voice never matches the TTS voice exactly, so this is > 0). This
+# is only the pre-calibration default — after a practice session run
+# ``python pronounce/calibrate.py`` and the value it writes to
+# pronounce/calibration.json takes precedence (tuned to your voice and mic).
+PRONUNCE_ACOUSTIC_GOOD = 0.20
 
 # =====================================================================
 # Practice Text & Phrase Generation

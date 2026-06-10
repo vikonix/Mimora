@@ -25,7 +25,7 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 - 🎙️ **Push-to-talk recording** with peak normalization and silence gating.
 - 🗣️ **Single voice everywhere** — the reference phrase is synthesized by Kokoro, the same engine used for prompts (no second TTS).
 - 🧠 **LLM-generated phrases** built from an editable *practice text* panel — paste your own paragraph, song, or sentences to drill.
-- 📊 **Pronunciation scoring** combining acoustic DTW (40%), phoneme distance (30%), and word distance (30%).
+- 📊 **Pronunciation scoring** combining acoustic similarity — per-step cosine DTW over Wav2Vec2 embeddings (40%) — with phoneme error rate (30%) and word error rate (30%). All components are length-invariant; the acoustic floor is calibrated to your voice with `python pronounce/calibrate.py`.
 - 🔁 **Replay reference vs. your recording** to compare.
 - 🧵 **Responsive UI** — analysis and model loading run in daemon threads; the GUI is updated only via `root.after()`.
 - 💻 **Fully local & offline** after the models are downloaded.
@@ -38,6 +38,7 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 |---|---|
 | `main.py` | `PronunciationTrainerGUI` — Tkinter GUI, recording, the Prompt→Record→Analyze→Feedback→Loop state machine, threading orchestration, LLM-server subprocess management. |
 | `pronounce/speech.py` | Pronunciation analysis core (adapted from OpenPronounce). Single entry point `analyze(...)`; Wav2Vec2 embeddings + DTW, phoneme comparison, prosody, scoring. No GUI dependency. |
+| `pronounce/calibrate.py` | On-request scoring calibration: reads the per-attempt samples from `logs/pronounce_samples.jsonl` and writes the acoustic floor to `pronounce/calibration.json`. |
 | `tts.py` | `TTSManager` — Kokoro TTS. `synthesize()` returns the waveform; `play_array()` plays any waveform (reference at 24 kHz, your recording at 16 kHz). |
 | `stt.py` | `STTManager` — faster-whisper speech-to-text (loaded at startup; kept available for future use). |
 | `llm.py` | `LLMManager` — OpenAI-compatible client. `generate_phrase()` produces one practice phrase per request. |
@@ -190,7 +191,7 @@ Three torch models (Wav2Vec2, Kokoro) plus `llama_cpp` can compete for VRAM on a
 
 - **English only** (phonemizer `en-us`).
 - The transcription-based word errors only surface mistakes the ASR actually "hears"; subtle distortions where the word is still recognized may not appear in the word list (the acoustic DTW + prosody partially compensate).
-- Scoring is **heuristic** — the normalization constants in `compute_pronunciation_score` are tunable and may need adjusting for your voice and microphone.
+- Scoring is **heuristic** — the acoustic floor depends on your voice and microphone. After a practice session run `python pronounce/calibrate.py` to fit it to your data (`--dry-run` previews the change); every attempt's raw components are logged to `logs/pronounce_samples.jsonl` and `logs/main.log` for inspection.
 
 ---
 

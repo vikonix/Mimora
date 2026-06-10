@@ -29,6 +29,9 @@ Thumbs.db
 *.log
 logs/
 
+# Per-machine pronunciation calibration (voice/mic specific)
+pronounce/calibration.json
+
 # Local HuggingFace model cache (Whisper / Kokoro / Wav2Vec2 weights)
 model_cache/
 
