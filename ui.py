@@ -207,7 +207,7 @@ class PronunciationTrainerUI:
                                    highlightthickness=1, highlightbackground="#25252a")
         self.f0_canvas.pack(fill=tk.X, pady=(0, 4))
 
-        tk.Label(prosody_frame, text="Energy — loudness / stress", font=("Segoe UI", 8),
+        tk.Label(prosody_frame, text="Energy — stress pattern", font=("Segoe UI", 8),
                  fg="#6272a4", bg="#121214").pack(anchor=tk.W)
         self.en_canvas = tk.Canvas(prosody_frame, height=46, bg="#1a1a1e",
                                    highlightthickness=1, highlightbackground="#25252a")

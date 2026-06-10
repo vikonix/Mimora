@@ -517,15 +517,25 @@ def compute_pronunciation_score(acoustic_per_step: float,
 # Prosody (pitch & energy contours)
 # =====================================================================
 def extract_f0(audio_waveform: np.ndarray, sr: int = TARGET_SAMPLE_RATE) -> np.ndarray:
-    """Extract the fundamental frequency (F0) contour; NaNs -> 0."""
-    f0, _voiced_flag, _voiced_probs = librosa.pyin(audio_waveform, fmin=50, fmax=300, sr=sr)
+    """Extract the fundamental frequency (F0) contour; NaNs -> 0.
+
+    fmax must cover the intonation peaks of female reference voices (Kokoro
+    af_*/bf_*: median ~200-220 Hz, expressive peaks 300-400 Hz) — anything above
+    fmax is marked unvoiced and would be flattened by interpolation.
+    """
+    f0, _voiced_flag, _voiced_probs = librosa.pyin(audio_waveform, fmin=50, fmax=450, sr=sr)
     return np.nan_to_num(f0)
 
 
 def extract_energy(audio_waveform: np.ndarray) -> np.ndarray:
-    """Extract and scale the RMS energy contour to roughly match the F0 range."""
+    """Extract the RMS energy contour, MinMax-scaled per utterance.
+
+    Scaling each signal to its own full range erases the level difference
+    between user and reference on purpose: the capture path peak-normalizes the
+    recording anyway, so only the stress/rhythm *shape* is comparable.
+    """
     energy = librosa.feature.rms(y=audio_waveform)
-    scaler = MinMaxScaler(feature_range=(0, 250))  # 0-250 to align with F0 scale
+    scaler = MinMaxScaler(feature_range=(0, 250))
     return scaler.fit_transform(energy.T).flatten()
 
 
