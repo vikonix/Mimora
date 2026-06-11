@@ -1,6 +1,9 @@
 {
   "_readme": "EchoLoop user settings. Edit by hand; restart the app to apply. Delete a key (or this whole file) to fall back to the built-in default. Keys starting with '_' are ignored and may be used as comments.",
 
+  "_color_theme": "UI color theme: 'dark' or 'light'. Loads themes/<name>_schema.json; restart the app to apply.",
+  "color_theme": "dark",
+
   "_english_accent": "Target accent: 'american' or 'british'. Drives the TTS voices and the espeak dialect used for pronunciation scoring.",
   "english_accent": "american",
 

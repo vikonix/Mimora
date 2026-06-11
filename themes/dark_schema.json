@@ -1,0 +1,36 @@
+{
+  "_readme": "EchoLoop dark color scheme. Selected via 'color_theme': 'dark' in settings.json; restart to apply. Keys starting with '_' are ignored. A missing key falls back to the built-in dark palette in config.py.",
+
+  "_surfaces": "Backgrounds and borders. bg_main = window, bg_panel = panels/inputs/status bar, bg_accent = accent-tinted controls (buttons, combobox).",
+  "bg_main": "#121214",
+  "bg_panel": "#1a1a1e",
+  "bg_accent": "#1f1430",
+  "bg_accent_active": "#2a1a45",
+  "border": "#25252a",
+  "accent": "#8a2be2",
+
+  "_text": "text = body, text_emph = emphasized feedback, text_bright = selection fg / text cursor, text_dim = secondary labels, text_muted = tertiary/system, text_accent = text on accent-tinted controls.",
+  "text": "#f8f8f2",
+  "text_emph": "#f1f1f6",
+  "text_bright": "#ffffff",
+  "text_dim": "#a0a0a5",
+  "text_muted": "#6272a4",
+  "text_accent": "#d6c2ff",
+  "text_disabled": "#555560",
+  "text_disabled_dim": "#3a3a40",
+
+  "_status": "Status and feedback colors. 'reference' marks everything related to the reference audio (status texts, prosody curve).",
+  "good": "#50fa7b",
+  "ready": "#00e676",
+  "bad": "#ff5555",
+  "warn": "#ffb86c",
+  "info": "#8be9fd",
+  "reference": "#ff79c6",
+
+  "_mic": "Mic button per-state inner fill; outlines reuse accent/bad/warn/good.",
+  "mic_loading_bg": "#1e1e24",
+  "mic_loading_outline": "#44475a",
+  "mic_recording_bg": "#3a0c10",
+  "mic_processing_bg": "#36220f",
+  "mic_speaking_bg": "#0f2c1d"
+}

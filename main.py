@@ -26,6 +26,10 @@ from tts import TTSManager, KOKORO_SAMPLE_RATE, reset_portaudio
 import pronounce
 from ui import PronunciationTrainerUI, LENGTH_FEW_WORDS
 
+# Resolved UI color palette (semantic name -> hex), selected by the
+# "color_theme" setting in settings.json; see config.py.
+THEME = config.THEME
+
 # Configure comprehensive events logging (console + file). force=True replaces
 # any handlers auto-installed by logging calls during the imports above (e.g.
 # pronounce loads calibration.json at import and logs it), which would otherwise
@@ -87,7 +91,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         # Core Tkinter setup
         self.root = tk.Tk()
         self.root.title("EchoLoop - Pronunciation Trainer")
-        self.root.configure(bg="#121214")
+        self.root.configure(bg=THEME["bg_main"])
 
         # Fixed width; the window spans the full usable screen height. We query the
         # Windows desktop work area (screen minus the taskbar) so the window fits
@@ -231,7 +235,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
 
     def load_components(self):
         logging.info("Starting model loading thread...")
-        self.root.after(0, self.update_status, "Loading models...", "#ffb86c")
+        self.root.after(0, self.update_status, "Loading models...", THEME["warn"])
         self.root.after(0, self.append_system_msg, "Loading TTS and pronunciation models...")
 
         try:
@@ -245,10 +249,10 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             if self.llm_backend == "local_server":
                 model_name = os.path.basename(config.EXTERNAL_MODEL_PATH)
                 self.root.after(0, self.append_system_msg, f"Starting LLM server with {model_name}...")
-                self.root.after(0, self.update_status, "Starting LLM server...", "#ffb86c")
+                self.root.after(0, self.update_status, "Starting LLM server...", THEME["warn"])
                 if not self._start_llm_server():
                     self.root.after(0, self.append_error_msg, "Error: LLM server failed to start. Check model path and GPU memory.")
-                    self.root.after(0, self.update_status, "LLM Server Error", "#ff5555")
+                    self.root.after(0, self.update_status, "LLM Server Error", THEME["bad"])
                     self.root.after(0, self.update_instruction, "LLM server failed to start. Check the log and restart.")
                     return
                 self.root.after(0, self.append_system_msg, "LLM server is ready.")
@@ -257,7 +261,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
                 if not self.llm_mgr.check_connection():
                     self.root.after(0, self.append_error_msg, "Warning: LM Studio is offline. Start it to generate phrases!")
 
-            self.root.after(0, self.update_status, "Warming up models...", "#ffb86c")
+            self.root.after(0, self.update_status, "Warming up models...", THEME["warn"])
             self.tts_mgr.warm_up()
             pronounce.warm_up()
             logging.info("Models warmed up.")
@@ -269,7 +273,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         except Exception as e:
             logging.exception("Error during initialization thread:")
             self.root.after(0, self.append_error_msg, f"Initialization Error: {e}")
-            self.root.after(0, self.update_status, "Initialization Failed", "#ff5555")
+            self.root.after(0, self.update_status, "Initialization Failed", THEME["bad"])
 
     def load_practice_text(self):
         """Pre-fill the source panel from the practice text file (main thread)."""
@@ -287,7 +291,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
     def make_app_ready(self):
         self.app_ready = True
         self.draw_mic_button("idle")
-        self.update_status("Ready", "#00e676")
+        self.update_status("Ready", THEME["ready"])
         self.update_instruction("Edit the text, then click 'New phrase' to begin.")
         self.generate_btn.config(state=tk.NORMAL)
         self.append_system_msg("Ready. Generate a phrase, listen, then hold SPACE to repeat it.")
@@ -354,7 +358,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         self.test_btn.config(state=tk.DISABLED)
         self.last_user_audio = None
         self.draw_mic_button("processing")
-        self.update_status("Generating phrase (LLM)...", "#8be9fd")
+        self.update_status("Generating phrase (LLM)...", THEME["info"])
         self.update_instruction("Generating a new phrase...")
 
         threading.Thread(target=self._generate_and_prompt, args=(source_text,), daemon=True).start()
@@ -401,14 +405,14 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
     def _show_new_phrase(self, phrase: str):
         self.phrase_label.config(text=phrase)
         self.append_system_msg(f"New phrase: {phrase}")
-        self.update_status("Listen to the reference...", "#ff79c6")
+        self.update_status("Listen to the reference...", THEME["reference"])
         self.draw_mic_button("speaking")
         self.update_instruction("Listening to the example...")
 
     def _phrase_ready(self):
         self.is_generating = False
         self.draw_mic_button("idle")
-        self.update_status("Your turn", "#00e676")
+        self.update_status("Your turn", THEME["ready"])
         self.update_instruction("Hold SPACE or click the mic, then repeat the phrase.")
         self.generate_btn.config(state=tk.NORMAL)
         self.ref_btn.config(state=tk.NORMAL)  # reference can be replayed any time now
@@ -418,7 +422,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         self.is_generating = False
         self.append_error_msg(message)
         self.draw_mic_button("idle")
-        self.update_status("Ready", "#00e676")
+        self.update_status("Ready", THEME["ready"])
         self.update_instruction("Click 'New phrase' to try again.")
         self.generate_btn.config(state=tk.NORMAL)
 
@@ -471,7 +475,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             self.user_btn.config(state=tk.DISABLED)
             self.test_btn.config(state=tk.DISABLED)
             self.root.after(0, self.draw_mic_button, "recording")
-            self.root.after(0, self.update_status, "Recording...", "#ff5555")
+            self.root.after(0, self.update_status, "Recording...", THEME["bad"])
             self.root.after(0, self.update_instruction, "Release when finished speaking.")
             self.record_thread = threading.Thread(target=self.record_loop, daemon=True)
             self.record_thread.start()
@@ -494,7 +498,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             self.is_processing_audio = True
 
         self.root.after(0, self.draw_mic_button, "processing")
-        self.root.after(0, self.update_status, "Analyzing pronunciation...", "#ffb86c")
+        self.root.after(0, self.update_status, "Analyzing pronunciation...", THEME["warn"])
         threading.Thread(target=self._finalize_recording, daemon=True).start()
 
     def _finalize_recording(self):
@@ -623,7 +627,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             # failed stream open would leave the whole UI locked), then show the
             # error status on top of the reset's default "Ready".
             self.root.after(0, self._reset_to_retry)
-            self.root.after(0, self.update_status, "Recording Error", "#ff5555")
+            self.root.after(0, self.update_status, "Recording Error", THEME["bad"])
 
     def normalize_audio(self, audio: np.ndarray) -> np.ndarray:
         peak = np.max(np.abs(audio))
@@ -702,13 +706,13 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             # the test started, so clear it to allow playback here.
             self.playback_stop_event.clear()
             self.root.after(0, self.draw_mic_button, "speaking")
-            self.root.after(0, self.update_status, "Playing reference...", "#ff79c6")
+            self.root.after(0, self.update_status, "Playing reference...", THEME["reference"])
             self.tts_mgr.play_array(self.reference_audio, KOKORO_SAMPLE_RATE,
                                     self.playback_stop_event, self.shutdown_event)
 
             # Then run analysis with the reference as both inputs.
             self.root.after(0, self.draw_mic_button, "processing")
-            self.root.after(0, self.update_status, "Testing with reference...", "#ffb86c")
+            self.root.after(0, self.update_status, "Testing with reference...", THEME["warn"])
             result = pronounce.analyze(
                 user_audio=self.reference_audio,
                 expected_text=self.current_phrase,
@@ -754,11 +758,11 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             # started, so the stop event must be cleared to allow playback here.
             self.playback_stop_event.clear()
             self.root.after(0, self.draw_mic_button, "speaking")
-            self.root.after(0, self.update_status, "Playing your recording...", "#ff79c6")
+            self.root.after(0, self.update_status, "Playing your recording...", THEME["reference"])
             self.tts_mgr.play_array(self.last_user_audio, config.AUDIO_SAMPLE_RATE,
                                     self.playback_stop_event, self.shutdown_event)
             self.root.after(0, self.draw_mic_button, "processing")
-            self.root.after(0, self.update_status, "Analyzing pronunciation...", "#ffb86c")
+            self.root.after(0, self.update_status, "Analyzing pronunciation...", THEME["warn"])
 
             analyze_start = time.perf_counter()
             result = pronounce.analyze(
@@ -786,7 +790,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         is actually available (phrase / last recording).
         """
         self.draw_mic_button("idle")
-        self.update_status("Ready", "#00e676")
+        self.update_status("Ready", THEME["ready"])
         self.generate_btn.config(state=tk.NORMAL)
         if self.current_phrase:
             self.ref_btn.config(state=tk.NORMAL)
@@ -830,11 +834,11 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         """Play a waveform in a background thread, stopping any current playback first."""
         self.stop_playback()
         self.playback_stop_event.clear()
-        self.update_status(status, "#ff79c6")
+        self.update_status(status, THEME["reference"])
 
         def _worker():
             self.tts_mgr.play_array(waveform, sample_rate, self.playback_stop_event, self.shutdown_event)
-            self.root.after(0, self.update_status, "Ready", "#00e676")
+            self.root.after(0, self.update_status, "Ready", THEME["ready"])
 
         threading.Thread(target=_worker, daemon=True).start()
 

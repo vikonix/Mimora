@@ -51,6 +51,7 @@ _USER = _read_json(BASE_DIR / "settings.json")
 _KNOWN_USER_KEYS = {
     "english_accent",
     "voice",
+    "color_theme",
     "pronunciation_score_threshold",
     "max_record_seconds",
     "llm_backend",
@@ -357,6 +358,83 @@ PHRASE_GEN_FRAGMENT_SYSTEM_PROMPT = (
     "no extra commentary. Base the fragment on the topic and vocabulary of the text the user provides."
 )
 PHRASE_GEN_FRAGMENT_MAX_TOKENS = 16
+
+# =====================================================================
+# Color Theme (UI palette)
+# =====================================================================
+# UI colors, read from settings.json ("color_theme") at startup; changing the
+# theme requires a restart. Each theme lives in themes/<name>_schema.json as a
+# flat map of semantic color names to hex values, so adding a theme is just
+# adding a file. The built-in palette below doubles as the complete list of
+# valid keys and as the fallback: a missing or broken schema file, or a missing
+# key inside one, falls back to these values, so the app always starts with a
+# usable (dark) palette.
+_DARK_THEME = {
+    # Surfaces
+    "bg_main": "#121214",           # window background
+    "bg_panel": "#1a1a1e",          # panels, text inputs, status bar
+    "bg_accent": "#1f1430",         # accent-tinted controls (buttons, combobox)
+    "bg_accent_active": "#2a1a45",  # hovered/active accent controls
+    "border": "#25252a",
+    "accent": "#8a2be2",            # brand purple: titles, focus highlights
+    # Text
+    "text": "#f8f8f2",
+    "text_emph": "#f1f1f6",         # emphasized feedback text
+    "text_bright": "#ffffff",       # selection fg, text cursor
+    "text_dim": "#a0a0a5",          # secondary labels
+    "text_muted": "#6272a4",        # tertiary/system text
+    "text_accent": "#d6c2ff",       # text on accent-tinted controls
+    "text_disabled": "#555560",
+    "text_disabled_dim": "#3a3a40",
+    # Status / feedback ("reference" marks everything tied to the reference
+    # audio: status texts and the reference prosody curve)
+    "good": "#50fa7b",
+    "ready": "#00e676",
+    "bad": "#ff5555",
+    "warn": "#ffb86c",
+    "info": "#8be9fd",
+    "reference": "#ff79c6",
+    # Mic button per-state inner fill (outlines reuse accent/bad/warn/good)
+    "mic_loading_bg": "#1e1e24",
+    "mic_loading_outline": "#44475a",
+    "mic_recording_bg": "#3a0c10",
+    "mic_processing_bg": "#36220f",
+    "mic_speaking_bg": "#0f2c1d",
+}
+
+COLOR_THEME = _USER.get("color_theme", "dark")
+if not isinstance(COLOR_THEME, str) or not COLOR_THEME.strip():
+    print(f"[config] settings.json: color_theme must be a non-empty string, "
+          f"got {COLOR_THEME!r}; using 'dark'", file=sys.stderr)
+    COLOR_THEME = "dark"
+
+# Resolved palette consumed by ui.py / main.py. Starts as a copy of the
+# built-in dark palette so every key is always present.
+THEME = dict(_DARK_THEME)
+
+_THEME_FILE = BASE_DIR / "themes" / f"{COLOR_THEME}_schema.json"
+_SCHEMA = _read_json(_THEME_FILE)
+if not _SCHEMA:
+    # For "dark" a missing file is fine — the built-in palette IS dark.
+    if COLOR_THEME != "dark":
+        print(f"[config] theme file {_THEME_FILE.name} is missing or invalid; "
+              f"using the built-in dark palette", file=sys.stderr)
+else:
+    for _key, _value in _SCHEMA.items():
+        if _key.startswith("_"):
+            continue  # comment keys, same convention as settings.json
+        if _key not in _DARK_THEME:
+            print(f"[config] {_THEME_FILE.name}: unknown color {_key!r} ignored",
+                  file=sys.stderr)
+        elif isinstance(_value, str) and _value.strip():
+            THEME[_key] = _value
+        else:
+            print(f"[config] {_THEME_FILE.name}: {_key} must be a color string, "
+                  f"got {_value!r}; using {_DARK_THEME[_key]!r}", file=sys.stderr)
+    _missing = sorted(set(_DARK_THEME) - set(_SCHEMA))
+    if _missing:
+        print(f"[config] {_THEME_FILE.name}: missing colors filled from the "
+              f"built-in dark palette: {', '.join(_missing)}", file=sys.stderr)
 
 # =====================================================================
 # Shared Audio Device Settings
