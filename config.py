@@ -1,9 +1,74 @@
+import json
 import os
+import sys
 import threading
 from pathlib import Path
 
 # Base directory — always absolute, regardless of working directory at launch.
 BASE_DIR = Path(__file__).parent
+
+# =====================================================================
+# Settings files (optional overrides)
+# =====================================================================
+# Values in this module are layered, lowest priority first:
+#   1. built-in defaults — the literals in this file;
+#   2. hwconfig/hardware_config.json, "config" section — machine-derived
+#      values written by `python hwconfig/detect_hardware.py`;
+#   3. settings.json — hand-edited user preferences.
+# A missing or broken file simply leaves the lower layers in effect: problems
+# are reported to stderr instead of crashing startup, because both files are
+# optional and settings.json is edited by hand.
+
+
+def _read_json(path: Path) -> dict:
+    """Parse a JSON object from *path*; returns {} when absent or invalid."""
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[config] cannot read {path.name} ({exc}); using defaults",
+              file=sys.stderr)
+        return {}
+    if not isinstance(data, dict):
+        print(f"[config] {path.name} must contain a JSON object; using defaults",
+              file=sys.stderr)
+        return {}
+    return data
+
+
+# Machine-derived overrides. Only the "config" section is consumed here;
+# the "hardware" section is diagnostics for humans.
+_HW = _read_json(BASE_DIR / "hwconfig" / "hardware_config.json").get("config")
+if not isinstance(_HW, dict):
+    _HW = {}
+
+# User preferences. Keys starting with "_" are skipped so they can serve as
+# comments (plain JSON has no comment syntax).
+_USER = _read_json(BASE_DIR / "settings.json")
+
+_KNOWN_USER_KEYS = {
+    "english_accent",
+    "voice",
+    "pronunciation_score_threshold",
+    "max_record_seconds",
+}
+for _key in _USER:
+    if not _key.startswith("_") and _key not in _KNOWN_USER_KEYS:
+        print(f"[config] settings.json: unknown key {_key!r} ignored",
+              file=sys.stderr)
+
+
+def _user_number(key: str, default):
+    """Numeric setting from settings.json; *default* on a non-numeric value."""
+    value = _USER.get(key, default)
+    # bool is a subclass of int — exclude it so `true` is not accepted silently.
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value
+    print(f"[config] settings.json: {key} must be a number, got {value!r}; "
+          f"using {default}", file=sys.stderr)
+    return default
 
 # =====================================================================
 # Local model cache (HuggingFace) — download once, then load offline
@@ -68,14 +133,17 @@ TARGET_LANG_CODE = "en"  # ISO code used for Whisper transcription routing
 # Controls
 # =====================================================================
 # Safety threshold to prevent infinite recording loops if a key gets physically stuck
-MAX_RECORD_SECONDS = 20
+MAX_RECORD_SECONDS = _user_number("max_record_seconds", 20)
 
-# Hardware Acceleration setup — wrapped so startup does not crash if torch is absent
-try:
-    import torch
-    DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-except ImportError:
-    DEVICE = "cpu"
+# Hardware Acceleration setup — the value detected by hwconfig wins; otherwise
+# probe torch directly (wrapped so startup does not crash if torch is absent).
+DEVICE = _HW.get("DEVICE")
+if DEVICE not in ("cuda", "cpu"):
+    try:
+        import torch
+        DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+    except ImportError:
+        DEVICE = "cpu"
 
 # =====================================================================
 # LLM Backend Settings
@@ -109,8 +177,10 @@ LOCAL_SERVER_STARTUP_TIMEOUT = 60
 # =====================================================================
 # Absolute path — safe regardless of the working directory at launch
 EXTERNAL_MODEL_PATH = str(BASE_DIR / "models" / "llama-3.2-3b-instruct-q4_k_m.gguf")
-EXTERNAL_N_GPU_LAYERS = 20  # Number of layers to offload to GPU
-EXTERNAL_N_CTX = 2048       # Context window size
+# GPU offload and context size: hwconfig picks values matched to the detected
+# VRAM/RAM; the literals here are conservative fallbacks for unknown hardware.
+EXTERNAL_N_GPU_LAYERS = _HW.get("EXTERNAL_N_GPU_LAYERS", 20)  # layers on GPU (-1 = all)
+EXTERNAL_N_CTX = _HW.get("EXTERNAL_N_CTX", 2048)              # context window size
 
 # =====================================================================
 # Speech-to-Text (Whisper) Settings
@@ -121,7 +191,7 @@ EXTERNAL_N_CTX = 2048       # Context window size
 WHISPER_MODEL = "small"
 WHISPER_BEAM_SIZE = 1         # Beam size 1 provides optimal speed at temperature 0.0
 WHISPER_NO_SPEECH_THRESHOLD = 0.45
-WHISPER_CPU_THREADS = 4       # CPU inference threads (tune to available core count)
+WHISPER_CPU_THREADS = _HW.get("WHISPER_CPU_THREADS", 4)  # CPU inference threads
 
 # Context conditioning instruction guiding Whisper's spelling logic
 WHISPER_INITIAL_PROMPT = (
@@ -132,13 +202,14 @@ WHISPER_INITIAL_PROMPT = (
 # =====================================================================
 # English Accent
 # =====================================================================
-# Target English accent, selected at startup. Changing it requires a restart:
-# the Kokoro pipeline language, the default/selectable voices, and the espeak
-# language used to build the reference phonemes are all wired from this profile
-# at load time (there is no runtime switch).
+# Target English accent, read from settings.json ("english_accent") at startup.
+# Changing it requires a restart: the Kokoro pipeline language, the
+# default/selectable voices, and the espeak language used to build the
+# reference phonemes are all wired from this profile at load time (there is no
+# runtime switch).
 #   "american" — General American
 #   "british"  — British (Received Pronunciation)
-ENGLISH_ACCENT = "american"
+ENGLISH_ACCENT = _USER.get("english_accent", "american")
 
 # Per-accent settings. Voice prefixes: 'af_'/'bf_' = female, 'am_'/'bm_' = male
 # (a = American, b = British). A voice's data is downloaded on first use and
@@ -165,11 +236,15 @@ _ACCENT_PROFILES = {
     },
 }
 
-if ENGLISH_ACCENT not in _ACCENT_PROFILES:
-    raise ValueError(
-        f"Unknown ENGLISH_ACCENT {ENGLISH_ACCENT!r}; "
-        f"expected one of {sorted(_ACCENT_PROFILES)}"
-    )
+# A typo in the hand-edited settings.json must not crash startup — warn and
+# fall back to the default accent instead.
+# (isinstance guards the dict lookup: an unhashable value such as a list
+# would otherwise raise TypeError instead of falling back.)
+if not isinstance(ENGLISH_ACCENT, str) or ENGLISH_ACCENT not in _ACCENT_PROFILES:
+    print(f"[config] settings.json: unknown english_accent {ENGLISH_ACCENT!r} "
+          f"(expected one of {sorted(_ACCENT_PROFILES)}); using 'american'",
+          file=sys.stderr)
+    ENGLISH_ACCENT = "american"
 _ACCENT = _ACCENT_PROFILES[ENGLISH_ACCENT]
 
 # espeak language code ("en-us"/"en-gb") used by the pronunciation analyzer to
@@ -181,7 +256,18 @@ ESPEAK_LANGUAGE = _ACCENT["espeak_language"]
 # =====================================================================
 # Derived from the selected accent above ('a' = American, 'b' = British).
 KOKORO_LANG_CODE = _ACCENT["kokoro_lang_code"]
-KOKORO_VOICE = _ACCENT["default_voice"]   # Default voice model identifier
+
+# Default voice: the accent's default, unless settings.json names another voice
+# of the same accent ("voice": null keeps the accent default). A voice from the
+# other accent is rejected — it would not match KOKORO_LANG_CODE.
+KOKORO_VOICE = _ACCENT["default_voice"]
+_user_voice = _USER.get("voice")
+if _user_voice is not None:
+    if _user_voice in _ACCENT["voices"]:
+        KOKORO_VOICE = _user_voice
+    else:
+        print(f"[config] settings.json: voice {_user_voice!r} is not a known "
+              f"{ENGLISH_ACCENT} voice; using {KOKORO_VOICE!r}", file=sys.stderr)
 
 # Voices the user can pick from in the UI. All belong to the same lang_code, so
 # switching between them needs no pipeline reload.
@@ -192,12 +278,14 @@ KOKORO_VOICES = _ACCENT["voices"]
 # =====================================================================
 # Acoustic + transcription model used by the pronounce/ module.
 WAV2VEC2_MODEL_NAME = "facebook/wav2vec2-large-960h"
-# Device for Wav2Vec2. Defaults to the shared DEVICE; set to "cpu" explicitly to
-# avoid VRAM contention with llama_cpp / Kokoro on a single GPU.
-WAV2VEC2_DEVICE = DEVICE
+# Device for Wav2Vec2. Defaults to the shared DEVICE; hwconfig may pin it to
+# "cpu" to avoid VRAM contention with llama_cpp / Kokoro on a single GPU.
+WAV2VEC2_DEVICE = _HW.get("WAV2VEC2_DEVICE") or DEVICE
 # Score (0-100) at or above which a repetition is accepted; below it the learner
 # is asked to repeat the same phrase.
-PRONUNCIATION_SCORE_THRESHOLD = 70.0
+PRONUNCIATION_SCORE_THRESHOLD = float(
+    _user_number("pronunciation_score_threshold", 70.0)
+)
 # Acoustic floor: typical per-step cosine DTW distance of a *good* attempt
 # (the user's voice never matches the TTS voice exactly, so this is > 0). This
 # is only the pre-calibration default — after a practice session run
@@ -252,8 +340,9 @@ AUDIO_SAMPLE_RATE = 16_000
 
 AUDIO_CHANNELS = 1           # Mono for both recording and playback
 AUDIO_LATENCY = None         # None → OS default shared-mode latency
-AUDIO_INPUT_DEVICE = None    # None → OS default microphone
-AUDIO_OUTPUT_DEVICE = None   # None → OS default speaker
+# Device indices come from hwconfig; None → OS default microphone/speaker.
+AUDIO_INPUT_DEVICE = _HW.get("AUDIO_INPUT_DEVICE")
+AUDIO_OUTPUT_DEVICE = _HW.get("AUDIO_OUTPUT_DEVICE")
 
 # =====================================================================
 # Logging Settings

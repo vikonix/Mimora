@@ -1,0 +1,15 @@
+{
+  "_readme": "EchoLoop user settings. Edit by hand; restart the app to apply. Delete a key (or this whole file) to fall back to the built-in default. Keys starting with '_' are ignored and may be used as comments.",
+
+  "_english_accent": "Target accent: 'american' or 'british'. Drives the TTS voices and the espeak dialect used for pronunciation scoring.",
+  "english_accent": "american",
+
+  "_voice": "Default TTS voice; null means the accent's default (af_heart / bf_emma). Must belong to the selected accent. American: af_heart, af_bella, af_nicole, af_sarah, af_sky, am_adam, am_michael, am_echo, am_eric, am_liam. British: bf_emma, bf_alice, bf_isabella, bf_lily, bm_george, bm_daniel, bm_fable, bm_lewis.",
+  "voice": null,
+
+  "_pronunciation_score_threshold": "Score (0-100) at or above which an attempt is accepted; lower = more forgiving.",
+  "pronunciation_score_threshold": 70.0,
+
+  "_max_record_seconds": "Hard limit on a single recording, in seconds (safety stop for a stuck key).",
+  "max_record_seconds": 20
+}
