@@ -214,14 +214,21 @@ class PronunciationTrainerUI:
         tk.Label(prosody_header, text="● you", font=("Segoe UI", 8),
                  fg=THEME["info"], bg=THEME["bg_main"]).pack(side=tk.RIGHT)
 
-        tk.Label(prosody_frame, text="Pitch (F0) — intonation, low ↔ high", font=("Segoe UI", 8),
-                 fg=THEME["text_muted"], bg=THEME["bg_main"]).pack(anchor=tk.W)
+        # Each chart title doubles as a checkbox: unchecking hides that chart's
+        # canvas to free vertical space; checking restores it in place
+        # (see _toggle_prosody_charts).
+        self.show_f0 = tk.BooleanVar(value=True)
+        self.f0_check = self._make_chart_checkbox(
+            prosody_frame, "Pitch (F0) — intonation, low ↔ high", self.show_f0)
+        self.f0_check.pack(anchor=tk.W)
         self.f0_canvas = tk.Canvas(prosody_frame, height=46, bg=THEME["bg_panel"],
                                    highlightthickness=1, highlightbackground=THEME["border"])
         self.f0_canvas.pack(fill=tk.X, pady=(0, 4))
 
-        tk.Label(prosody_frame, text="Energy — stress pattern", font=("Segoe UI", 8),
-                 fg=THEME["text_muted"], bg=THEME["bg_main"]).pack(anchor=tk.W)
+        self.show_energy = tk.BooleanVar(value=True)
+        self.en_check = self._make_chart_checkbox(
+            prosody_frame, "Energy — stress pattern", self.show_energy)
+        self.en_check.pack(anchor=tk.W)
         self.en_canvas = tk.Canvas(prosody_frame, height=46, bg=THEME["bg_panel"],
                                    highlightthickness=1, highlightbackground=THEME["border"])
         self.en_canvas.pack(fill=tk.X)
@@ -361,6 +368,30 @@ class PronunciationTrainerUI:
                 y = pad_y + (1 - (value - lo) / span) * plot_h
                 coords.extend((x, y))
             canvas.create_line(*coords, fill=color, width=2, smooth=True)
+
+    def _make_chart_checkbox(self, parent, text, variable):
+        """Create a themed chart-title checkbox that toggles its chart's visibility."""
+        return tk.Checkbutton(parent, text=text, variable=variable,
+                              command=self._toggle_prosody_charts,
+                              font=("Segoe UI", 8), fg=THEME["text_muted"], bg=THEME["bg_main"],
+                              activebackground=THEME["bg_main"], activeforeground=THEME["text_dim"],
+                              selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
+                              cursor="hand2")
+
+    def _toggle_prosody_charts(self):
+        """Show/hide each prosody canvas to match its title checkbox."""
+        # Return focus to the window so the spacebar push-to-talk keeps working
+        # (a focused checkbox would otherwise capture the spacebar and toggle).
+        self.root.focus_set()
+        for var, canvas, title, pady in (
+                (self.show_f0, self.f0_canvas, self.f0_check, (0, 4)),
+                (self.show_energy, self.en_canvas, self.en_check, 0)):
+            shown = canvas.winfo_manager() == "pack"
+            if var.get() and not shown:
+                # Re-pack right below the chart's own title to keep the order.
+                canvas.pack(fill=tk.X, pady=pady, after=title)
+            elif not var.get() and shown:
+                canvas.pack_forget()
 
     def _redraw_prosody(self):
         """Redraw both prosody canvases from the cached result (e.g. after resize)."""
