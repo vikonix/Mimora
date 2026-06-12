@@ -6,6 +6,8 @@ import sys
 import warnings
 import logging
 import tkinter as tk
+from tkinter import filedialog
+from pathlib import Path
 import numpy as np
 
 # Disable Hugging Face hub symlinks warning for a cleaner console output
@@ -237,6 +239,49 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
 
         self.source_text.delete("1.0", tk.END)
         self.source_text.insert("1.0", text.strip())
+
+    def on_open_practice_text(self):
+        """Pick a practice text file via File → Open practice text… (main thread).
+
+        The chosen file is loaded into the source panel right away and the path
+        is persisted to settings.json ("practice_text_file"), so the same file
+        is loaded again on the next launch.
+        """
+        path = filedialog.askopenfilename(
+            parent=self.root,
+            title="Open practice text",
+            initialdir=os.path.dirname(config.PRACTICE_TEXT_FILE),
+            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
+        )
+        # Return focus to the window so the spacebar push-to-talk keeps working.
+        self.root.focus_set()
+        if not path:
+            return  # dialog cancelled
+
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read().strip()
+        except (OSError, UnicodeDecodeError) as e:
+            logging.warning(f"Could not read practice text file {path!r}: {e}")
+            self.append_error_msg(f"Could not read {os.path.basename(path)}: {e}")
+            return
+        if not text:
+            self.append_error_msg(f"{os.path.basename(path)} is empty — nothing to load.")
+            return
+
+        self.source_text.delete("1.0", tk.END)
+        self.source_text.insert("1.0", text)
+        self.append_system_msg(f"Loaded practice text: {os.path.basename(path)}")
+        logging.info(f"Practice text loaded from {path!r}.")
+
+        # Persist for the next launch. Files inside the project are stored
+        # relative to the root (the settings.json convention — see _user_path);
+        # as_posix() keeps the JSON free of escaped backslashes on Windows.
+        try:
+            saved = Path(path).relative_to(config.BASE_DIR).as_posix()
+        except ValueError:
+            saved = path  # outside the project — keep the absolute path
+        self._persist_setting("practice_text_file", saved)
 
     def make_app_ready(self):
         self.app_ready = True

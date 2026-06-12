@@ -71,6 +71,18 @@ class PronunciationTrainerUI:
                          disabledforeground=THEME["text_disabled"])
 
     def build_ui(self):
+        # 0. Menu bar. On Windows the menu bar is drawn by the OS, so it does
+        # not follow the app's dark theme — that is expected. The handler
+        # (on_open_practice_text) lives in the controller (main.py).
+        menubar = tk.Menu(self.root)
+        file_menu = tk.Menu(menubar, tearoff=0)
+        file_menu.add_command(label="Open practice text…",
+                              command=self.on_open_practice_text)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.quit_app)
+        menubar.add_cascade(label="File", menu=file_menu)
+        self.root.config(menu=menubar)
+
         # 1. Header
         header_frame = tk.Frame(self.root, bg=THEME["bg_main"], height=60)
         header_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=10)
