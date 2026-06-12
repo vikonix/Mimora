@@ -9,12 +9,13 @@ LLM_TIMEOUT = 30.0
 
 
 class LLMManager:
-    def __init__(self, model: str = None):
+    def __init__(self, model: Optional[str] = None):
         self.client = None
         # Model name sent in API requests; defaults to LM Studio value from config
         self.model = model or config.LM_STUDIO_MODEL
 
-    def init_client(self, base_url: str = None, api_key: str = None):
+    def init_client(self, base_url: Optional[str] = None,
+                    api_key: Optional[str] = None):
         """
         Configure OpenAI-compatible client.
 
@@ -37,9 +38,11 @@ class LLMManager:
         Pass silent=True during startup polling to suppress per-attempt error logs
         and avoid flooding the log with dozens of identical connection errors.
         """
+        # A missing client is a programming error, not a connectivity problem —
+        # raise it out instead of logging it as "server not available".
+        if self.client is None:
+            raise RuntimeError("LLM client not initialized. Call init_client() first.")
         try:
-            if self.client is None:
-                raise RuntimeError("LLM client not initialized. Call init_client() first.")
             self.client.models.list()
             logging.info("Successfully connected to LLM server.")
             return True

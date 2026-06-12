@@ -321,8 +321,10 @@ def compare_transcriptions(transcription: str, text_reference: str) -> Dict[str,
     transcription_clean = clean_transcription(transcription)
     reference_clean = clean_transcription(text_reference)
 
-    # Edit distance between transcription and reference text (global word-level signal).
-    word_distance = Levenshtein.distance(transcription_clean, reference_clean)
+    # Edit distance between transcription and reference text. *Character*-level
+    # on purpose (named accordingly): it gives partial credit for near-misses,
+    # which a word-token distance would count as whole-word errors.
+    char_distance = Levenshtein.distance(transcription_clean, reference_clean)
 
     # Extract phonemes from both versions. The reference keeps its per-word
     # grouping so the word-boundary walk below reuses it instead of running
@@ -435,7 +437,7 @@ def compare_transcriptions(transcription: str, text_reference: str) -> Dict[str,
         feedback += "✅ Your pronunciation is excellent! 🎉\n"
 
     return {
-        "word_distance": word_distance,
+        "char_distance": char_distance,
         "reference_length": len(reference_clean),
         "phoneme_distance": phoneme_distance,
         "phoneme_length": len(expected_join),
@@ -641,7 +643,9 @@ def analyze(user_audio: np.ndarray,
     phoneme_length = max(1, differences["phoneme_length"])
     phoneme_error_rate = differences["phoneme_distance"] / phoneme_length
     reference_length = max(1, differences["reference_length"])
-    word_error_rate = differences["word_distance"] / reference_length
+    # The rate keeps its historical "word_error_rate" name: it is part of the
+    # scoring API and the calibration-log schema read by calibrate.py.
+    word_error_rate = differences["char_distance"] / reference_length
 
     score = compute_pronunciation_score(
         acoustic_per_step,
@@ -654,10 +658,10 @@ def analyze(user_audio: np.ndarray,
     # consumes the structured copy appended to SAMPLES_FILE below.
     logging.info(
         "[pronounce] score=%.1f | acoustic/step=%.4f (good=%.3f bad=%.3f baseline=%.4f) | "
-        "phonemes=%d/%d (err=%.2f) | words_lev=%d/%d (err=%.2f) | voice=%s | asr=%r",
+        "phonemes=%d/%d (err=%.2f) | chars_lev=%d/%d (err=%.2f) | voice=%s | asr=%r",
         score, acoustic_per_step, ACOUSTIC_GOOD, acoustic_bad, acoustic_baseline,
         differences["phoneme_distance"], phoneme_length, phoneme_error_rate,
-        differences["word_distance"], reference_length, word_error_rate,
+        differences["char_distance"], reference_length, word_error_rate,
         voice, transcription,
     )
     _append_calibration_sample({
@@ -669,7 +673,9 @@ def analyze(user_audio: np.ndarray,
         "acoustic_baseline": round(acoustic_baseline, 5),
         "phoneme_distance": int(differences["phoneme_distance"]),
         "phoneme_length": int(phoneme_length),
-        "word_distance": int(differences["word_distance"]),
+        # Renamed from "word_distance" (it is character-level); calibrate.py
+        # only reads the *_error_rate fields, so old sample lines stay usable.
+        "char_distance": int(differences["char_distance"]),
         "reference_length": int(reference_length),
         "phoneme_error_rate": round(phoneme_error_rate, 4),
         "word_error_rate": round(word_error_rate, 4),

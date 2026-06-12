@@ -138,18 +138,20 @@ def _load_model(model_path: str, n_gpu_layers: int, n_ctx: int, verbose: bool = 
 
 # ── SSE helpers ───────────────────────────────────────────────────────────────
 
-def _make_sse_chunk(chunk_id: str, content: str, finish_reason: Optional[str] = None) -> str:
+def _make_sse_chunk(chunk_id: str, delta: dict, finish_reason: Optional[str] = None) -> str:
     """Format a single SSE data line in OpenAI streaming format.
 
     ``chunk_id`` is generated once per stream — OpenAI clients expect every
-    chunk of one completion to share the same id.
+    chunk of one completion to share the same id. ``delta`` is passed through
+    as-is so non-content deltas (the leading ``{"role": "assistant"}`` chunk)
+    are not lost; rebuilding it from the content alone used to drop them.
     """
     payload = {
         "id": chunk_id,
         "object": "chat.completion.chunk",
         "choices": [{
             "index": 0,
-            "delta": {"content": content} if content else {},
+            "delta": delta,
             "finish_reason": finish_reason,
         }],
     }
@@ -166,7 +168,7 @@ def _stream_chat(request: ChatCompletionRequest) -> Iterator[str]:
 
     with _inference_lock:
         if _model is None:
-            yield _make_sse_chunk(chunk_id, "", finish_reason="stop")
+            yield _make_sse_chunk(chunk_id, {}, finish_reason="stop")
             yield "data: [DONE]\n\n"
             return
 
@@ -180,10 +182,9 @@ def _stream_chat(request: ChatCompletionRequest) -> Iterator[str]:
 
         for chunk in stream:
             try:
-                delta = chunk["choices"][0]["delta"]
-                content = delta.get("content", "")
-                finish_reason = chunk["choices"][0].get("finish_reason")
-                yield _make_sse_chunk(chunk_id, content, finish_reason)
+                choice = chunk["choices"][0]
+                yield _make_sse_chunk(chunk_id, choice.get("delta") or {},
+                                      choice.get("finish_reason"))
             except (KeyError, IndexError):
                 continue
 

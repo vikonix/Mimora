@@ -604,7 +604,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
     # Playback (reference / own recording)
     # ------------------------------------------------------------------
     def _selected_speed(self) -> float:
-        """Parse the reference-speed selector (e.g. '0.75×') into a float.
+        """Parse the reference-speed selector (e.g. '0.9×') into a float.
 
         Falls back to normal speed (1.0) if the value is missing or malformed.
         """

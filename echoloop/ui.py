@@ -162,7 +162,7 @@ class PronunciationTrainerUI:
         self.playback_speed = tk.StringVar(value="1.0×")
         self.speed_selector = ttk.Combobox(
             selectors_frame, textvariable=self.playback_speed, state="readonly",
-            width=5, values=("1.0×", "0.85×", "0.7×"))
+            width=5, values=("1.0×", "0.9×", "0.8×"))
         self.speed_selector.pack(side=tk.LEFT)
 
         # Action row: phrase-length selector alongside the Reference replay and
