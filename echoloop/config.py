@@ -63,6 +63,10 @@ _KNOWN_USER_KEYS = {
     "practice_text_file",
     "phrase_gen_recent_memory",
     "user_name",
+    "phrase_length",
+    "reference_speed",
+    "show_pitch_chart",
+    "show_energy_chart",
 }
 for _key in _USER:
     if not _key.startswith("_") and _key not in _KNOWN_USER_KEYS:
@@ -108,6 +112,16 @@ def _user_path(key: str, default: Path) -> str:
     print(f"[config] settings.json: {key} must be a non-empty string, got "
           f"{value!r}; using {default}", file=sys.stderr)
     return str(default)
+
+
+def _user_bool(key: str, default: bool) -> bool:
+    """Boolean setting from settings.json; *default* on a non-boolean value."""
+    value = _USER.get(key, default)
+    if not isinstance(value, bool):
+        print(f"[config] settings.json: {key} must be true or false, got "
+              f"{value!r}; using {default}", file=sys.stderr)
+        return default
+    return value
 
 
 def save_user_setting(key: str, value) -> bool:
@@ -358,6 +372,17 @@ if _user_voice is not None:
 # switching between them needs no pipeline reload.
 KOKORO_VOICES = _ACCENT["voices"]
 
+# Reference playback speed ("reference_speed"), selected in the UI and
+# persisted on change. The UI selector is built from these choices, so the
+# valid values and the visible options can never drift apart.
+REFERENCE_SPEED_CHOICES = (1.0, 0.9, 0.8)
+REFERENCE_SPEED = float(_user_number("reference_speed", 1.0))
+if REFERENCE_SPEED not in REFERENCE_SPEED_CHOICES:
+    print(f"[config] settings.json: reference_speed must be one of "
+          f"{REFERENCE_SPEED_CHOICES}, got {REFERENCE_SPEED!r}; using 1.0",
+          file=sys.stderr)
+    REFERENCE_SPEED = 1.0
+
 # =====================================================================
 # Pronunciation Analysis (Wav2Vec2) Settings
 # =====================================================================
@@ -414,6 +439,23 @@ PHRASE_GEN_FRAGMENT_SYSTEM_PROMPT = (
     "no extra commentary. Base the fragment on the topic and vocabulary of the text the user provides."
 )
 PHRASE_GEN_FRAGMENT_MAX_TOKENS = 16
+
+# Phrase length selected in the UI ("phrase_length"), persisted on change:
+# "full" → complete sentence, "fragment" → 2-4 word fragment (see
+# LLMManager.generate_phrase).
+PHRASE_LENGTH = _USER.get("phrase_length", "full")
+if PHRASE_LENGTH not in ("full", "fragment"):
+    print(f"[config] settings.json: phrase_length must be 'full' or "
+          f"'fragment', got {PHRASE_LENGTH!r}; using 'full'", file=sys.stderr)
+    PHRASE_LENGTH = "full"
+
+# =====================================================================
+# Prosody panel (UI state)
+# =====================================================================
+# Visibility of the two prosody charts, toggled by their title checkboxes in
+# the app window and persisted on change.
+SHOW_PITCH_CHART = _user_bool("show_pitch_chart", True)
+SHOW_ENERGY_CHART = _user_bool("show_energy_chart", True)
 
 # =====================================================================
 # Color Theme (UI palette)

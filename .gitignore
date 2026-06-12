@@ -45,3 +45,5 @@ model_cache/
 
 # Models
 *.gguf
+# User settings (machine-local; copy config/settings.example.json to start)
+config/settings.json

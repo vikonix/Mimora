@@ -283,6 +283,11 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         except AttributeError:
             return config.KOKORO_VOICE
 
+    def _persist_setting(self, key: str, value):
+        """Save one UI setting to settings.json, reporting failure in the UI."""
+        if not config.save_user_setting(key, value):
+            self.append_error_msg(f"Could not save {key} to settings.json.")
+
     def on_voice_changed(self, event=None):
         """Regenerate the phrase with the newly chosen voice.
 
@@ -291,6 +296,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         is busy the change is ignored here and simply applies to the next phrase.
         """
         logging.info(f"Reference voice changed to {self._selected_voice()}.")
+        self._persist_setting("voice", self._selected_voice())
         # Return focus to the window so the spacebar push-to-talk keeps working.
         self.root.focus_set()
         if self.app_ready and not self.is_generating:
@@ -306,6 +312,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
     def on_speed_changed(self, event=None):
         """Replay the reference at the newly selected speed so it is heard right away."""
         logging.info(f"Reference speed changed to {self.playback_speed.get()!r}.")
+        self._persist_setting("reference_speed", self._selected_speed())
         # Return focus to the window so the spacebar push-to-talk keeps working.
         self.root.focus_set()
         # Replay only when the Reference button is also allowed (a phrase is
@@ -327,10 +334,21 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
     def on_length_changed(self, event=None):
         """Regenerate the phrase when the desired length changes."""
         logging.info(f"Phrase length changed to {self.length_var.get()!r}.")
+        self._persist_setting("phrase_length", self._selected_length())
         # Return focus to the window so the spacebar push-to-talk keeps working.
         self.root.focus_set()
         if self.app_ready and not self.is_generating:
             self.on_generate_phrase()
+
+    def on_prosody_charts_toggled(self):
+        """Apply a prosody-chart checkbox change and persist both flags.
+
+        Saving both keys on either toggle keeps this trivially simple; the
+        extra write of an unchanged value is harmless.
+        """
+        self._toggle_prosody_charts()
+        self._persist_setting("show_pitch_chart", bool(self.show_f0.get()))
+        self._persist_setting("show_energy_chart", bool(self.show_energy.get()))
 
     def on_generate_phrase(self):
         if not self.app_ready or self.is_generating:

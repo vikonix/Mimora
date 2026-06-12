@@ -159,7 +159,8 @@ class PronunciationTrainerUI:
         # on_length_changed).
         tk.Label(selectors_frame, text="Phrase length:", font=("Segoe UI", 9),
                  fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.LEFT, padx=(0, 6))
-        self.length_var = tk.StringVar(value=LENGTH_FULL)
+        self.length_var = tk.StringVar(
+            value=LENGTH_FEW_WORDS if config.PHRASE_LENGTH == "fragment" else LENGTH_FULL)
         self.length_selector = ttk.Combobox(
             selectors_frame, textvariable=self.length_var, state="readonly",
             width=12, values=(LENGTH_FULL, LENGTH_FEW_WORDS))
@@ -181,10 +182,11 @@ class PronunciationTrainerUI:
         # the displayed label and parsed back to a float by _selected_speed().
         tk.Label(selectors_frame, text="Reference speed:", font=("Segoe UI", 9),
                  fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.LEFT, padx=(0, 6))
-        self.playback_speed = tk.StringVar(value="1.0×")
+        # Options come from config so the persisted value is always one of them.
+        self.playback_speed = tk.StringVar(value=f"{config.REFERENCE_SPEED:.1f}×")
         self.speed_selector = ttk.Combobox(
             selectors_frame, textvariable=self.playback_speed, state="readonly",
-            width=5, values=("1.0×", "0.9×", "0.8×"))
+            width=5, values=tuple(f"{s:.1f}×" for s in config.REFERENCE_SPEED_CHOICES))
         self.speed_selector.pack(side=tk.LEFT)
         # Changing the speed replays the reference so the difference is heard
         # immediately (see on_speed_changed).
@@ -235,8 +237,8 @@ class PronunciationTrainerUI:
 
         # Each chart title doubles as a checkbox: unchecking hides that chart's
         # canvas to free vertical space; checking restores it in place
-        # (see _toggle_prosody_charts).
-        self.show_f0 = tk.BooleanVar(value=True)
+        # (see _toggle_prosody_charts). Initial state is the persisted setting.
+        self.show_f0 = tk.BooleanVar(value=config.SHOW_PITCH_CHART)
         self.f0_check = self._make_chart_checkbox(
             prosody_frame, "Pitch (F0) — intonation, low ↔ high", self.show_f0)
         self.f0_check.pack(anchor=tk.W)
@@ -244,7 +246,7 @@ class PronunciationTrainerUI:
                                    highlightthickness=1, highlightbackground=THEME["border"])
         self.f0_canvas.pack(fill=tk.X, pady=(0, 4))
 
-        self.show_energy = tk.BooleanVar(value=True)
+        self.show_energy = tk.BooleanVar(value=config.SHOW_ENERGY_CHART)
         self.en_check = self._make_chart_checkbox(
             prosody_frame, "Energy — stress pattern", self.show_energy)
         self.en_check.pack(anchor=tk.W)
@@ -262,6 +264,10 @@ class PronunciationTrainerUI:
         # fill=X canvases change width on resize, so redraw from the cached prosody.
         self.f0_canvas.bind("<Configure>", lambda e: self._redraw_prosody())
         self.en_canvas.bind("<Configure>", lambda e: self._redraw_prosody())
+
+        # Both canvases are packed above by default; hide whichever chart the
+        # persisted checkbox state says is off.
+        self._toggle_prosody_charts()
 
         # 6. Feedback log (fills remaining space)
         feedback_frame = tk.Frame(self.root, bg=THEME["bg_main"])
@@ -389,9 +395,13 @@ class PronunciationTrainerUI:
             canvas.create_line(*coords, fill=color, width=2, smooth=True)
 
     def _make_chart_checkbox(self, parent, text, variable):
-        """Create a themed chart-title checkbox that toggles its chart's visibility."""
+        """Create a themed chart-title checkbox that toggles its chart's visibility.
+
+        The command goes through the controller (on_prosody_charts_toggled in
+        main.py) so the new state is also persisted to settings.json.
+        """
         return tk.Checkbutton(parent, text=text, variable=variable,
-                              command=self._toggle_prosody_charts,
+                              command=self.on_prosody_charts_toggled,
                               font=("Segoe UI", 8), fg=THEME["text_muted"], bg=THEME["bg_main"],
                               activebackground=THEME["bg_main"], activeforeground=THEME["text_dim"],
                               selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
