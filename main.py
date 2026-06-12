@@ -245,9 +245,33 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         self.update_instruction("Edit the text, then click 'New phrase' to begin.")
         self.generate_btn.config(state=tk.NORMAL)
         self.append_system_msg("Ready. Generate a phrase, listen, then hold SPACE to repeat it.")
-        # Auto-generate the first phrase so the user isn't met with an empty
-        # empty phrase card; afterwards generation is driven by the New phrase button.
-        self.on_generate_phrase()
+        # Speak a personal greeting first, then auto-generate the first phrase.
+        # The name is read here, on the main thread (Tk is not thread-safe).
+        name = self.user_name_var.get().strip()
+        threading.Thread(target=self._greet_and_start, args=(name,), daemon=True).start()
+
+    def _greet_and_start(self, name: str):
+        """Speak a greeting, then start the first phrase. (Background thread.)
+
+        The greeting uses the same Kokoro voice as the reference phrases. Any
+        failure here is non-fatal — the first phrase is generated regardless,
+        so a TTS hiccup cannot leave the app stuck without a phrase.
+        """
+        try:
+            greeting = f"Hello {name}, listen and repeat." if name else "Hello, listen and repeat."
+            self.root.after(0, self.append_system_msg, greeting)
+            audio = self.tts_mgr.synthesize(greeting, voice=self._selected_voice())
+            if audio.size > 0:
+                self.tts_mgr.play_array(audio, KOKORO_SAMPLE_RATE,
+                                        self._new_playback_event(), self.shutdown_event)
+        except Exception:
+            logging.exception("Greeting error:")
+        finally:
+            # Auto-generate the first phrase so the user isn't met with an
+            # empty phrase card; afterwards generation is driven by the New
+            # phrase button. Scheduled via after() — on_generate_phrase
+            # touches widgets, so it must run on the Tk main thread.
+            self.root.after(0, self.on_generate_phrase)
 
     # ------------------------------------------------------------------
     # Phrase generation + Prompt phase

@@ -19,6 +19,7 @@ import argparse
 import json
 import logging
 import os
+import random
 import site
 import sys
 import threading
@@ -178,6 +179,10 @@ def _stream_chat(request: ChatCompletionRequest) -> Iterator[str]:
             max_tokens=request.max_tokens,
             top_p=request.top_p,
             stream=True,
+            # Fresh seed per request: without it llama-cpp-python derives the
+            # sampler seed deterministically from the model's load-time seed,
+            # so every app run produces the same sequence of completions.
+            seed=random.randint(0, 2**31 - 1),
         )
 
         for chunk in stream:
@@ -258,6 +263,8 @@ def chat_completions(request: ChatCompletionRequest):
             max_tokens=request.max_tokens,
             top_p=request.top_p,
             stream=False,
+            # Fresh seed per request — see the comment in _stream_chat().
+            seed=random.randint(0, 2**31 - 1),
         )
     return result
 
