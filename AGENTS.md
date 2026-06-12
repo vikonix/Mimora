@@ -36,7 +36,7 @@ Also requires the native **espeak-ng** binary on `PATH` (used by `phonemizer`) a
 
 ## State Machine (pronunciation loop)
 
-1. **Prompt** — `llm_mgr.generate_phrase(source_text, recent_phrases)` → `tts_mgr.synthesize(phrase)`. The synthesized array is stored as `self.reference_audio` and played for the user. Phrase generation + synth + playback all run in one daemon thread (`_generate_and_prompt`).
+1. **Prompt** — `llm_mgr.generate_phrase(source_text)` → `tts_mgr.synthesize(phrase)`. The synthesized array is stored as `self.reference_audio` and played for the user. Phrase generation + synth + playback all run in one daemon thread (`_generate_and_prompt`).
 2. **Record** — shared recording path (`record_loop` → `get_recorded_audio`), 16 kHz mono. Gated by `_can_record()` (a phrase must be ready and nothing else busy).
 3. **Analyze** — `_finalize_recording` → `analyze_recording` (daemon thread) calls `pronounce.analyze(...)`.
 4. **Feedback** — `_show_feedback` (via `root.after`) shows score, transcription, problem words; enables replay buttons.
@@ -54,7 +54,7 @@ Also requires the native **espeak-ng** binary on `PATH` (used by `phonemizer`) a
 
 - **GPU contention**: Wav2Vec2, Kokoro, and `llama_cpp` can compete for VRAM. Mitigations: the LLM runs in a **separate process** (`llm_server/`), and the loop's phases (LLM → Kokoro → Wav2Vec2) run **sequentially**. If VRAM is tight, set `WAV2VEC2_DEVICE = "cpu"` in `echoloop/config.py`.
 
-- **Phrase generation** ([`echoloop/llm.py`](echoloop/llm.py)): `generate_phrase()` is a single non-streaming completion with its own system prompt (`config.PHRASE_GEN_SYSTEM_PROMPT`); it does **not** touch the conversational `self.messages` history. `recent_phrases` are passed back to avoid repeats; `_clean_phrase` strips quotes/list markers.
+- **Phrase generation** ([`echoloop/llm.py`](echoloop/llm.py)): `generate_phrase()` is a single non-streaming completion with its own system prompt (`config.PHRASE_GEN_SYSTEM_PROMPT`); it does **not** touch the conversational `self.messages` history. To keep phrases varied, the prompt only includes a sliding window of the source text (`_current_window`, advanced every `PHRASE_GEN_WINDOW_REPEATS` calls) plus a random focus word and opening-style hint; `_clean_phrase` strips quotes/list markers.
 
 - **Audio normalization** ([`main.py`](main.py)): peaks are normalized before analysis; silence below `AUDIO_MIN_PEAK_THRESHOLD = 0.01` skips gain adjustment.
 

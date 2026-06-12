@@ -143,7 +143,8 @@ Key options in [`echoloop/config.py`](echoloop/config.py) (overridable via [`con
 | `PRONUNCIATION_SCORE_THRESHOLD` | `70.0` | Score (0–100) required to pass a phrase. |
 | `PRACTICE_TEXT_FILE` | `texts/practice_text.txt` | Source text pre-loaded into the input panel. |
 | `PHRASE_GEN_TEMPERATURE` / `PHRASE_GEN_MAX_TOKENS` | `0.7` / `40` | Phrase-generation sampling. |
-| `PHRASE_GEN_RECENT_MEMORY` | `5` | How many recent phrases are sent back to the model to avoid repeats. |
+| `PHRASE_GEN_WINDOW_SENTENCES` | `5` | Sentences of the source text sent to the model per request (sliding window). |
+| `PHRASE_GEN_WINDOW_REPEATS` | `5` | Phrases generated per window position before it slides forward by half its size. |
 | `LLM_BACKEND` | `local_server` | `local_server` (auto-started subprocess) or `lm-studio`. |
 | `MAX_RECORD_SECONDS` | `20` | Safety cap on recording length. |
 

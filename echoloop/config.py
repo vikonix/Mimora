@@ -61,7 +61,8 @@ _KNOWN_USER_KEYS = {
     "external_model_path",
     "external_n_ctx",
     "practice_text_file",
-    "phrase_gen_recent_memory",
+    "phrase_gen_window_sentences",
+    "phrase_gen_window_repeats",
     "user_name",
     "phrase_length",
     "reference_speed",
@@ -422,10 +423,17 @@ PHRASE_GEN_SYSTEM_PROMPT = (
     "Use only plain words and a single final period — no quotation marks, no numbering, "
     "no extra commentary. Base the sentence on the topic and vocabulary of the text the user provides."
 )
-# How many recently used phrases to send back to the model so it avoids
-# repeats. int() because the value is used for list slicing.
-PHRASE_GEN_RECENT_MEMORY = int(_user_number("phrase_gen_recent_memory", 5,
-                                            minimum=0))
+# Sliding window over the source text: instead of sending the whole text with
+# every request (which makes a small model converge on one "most likely"
+# sentence), only PHRASE_GEN_WINDOW_SENTENCES consecutive sentences are sent.
+# After PHRASE_GEN_WINDOW_REPEATS generations the window advances by half its
+# size (so consecutive windows overlap and the topic shifts gradually) and
+# wraps around at the end of the text. int() because the values are used for
+# list slicing and modular arithmetic.
+PHRASE_GEN_WINDOW_SENTENCES = int(_user_number("phrase_gen_window_sentences", 5,
+                                               minimum=1))
+PHRASE_GEN_WINDOW_REPEATS = int(_user_number("phrase_gen_window_repeats", 5,
+                                             minimum=1))
 
 # "Few words" mode: generate a short 2-4 word fragment instead of a complete
 # sentence (e.g. "give me", "on the table", "where are you from"). Uses its own

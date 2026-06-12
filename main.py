@@ -1,6 +1,6 @@
 import time
 import threading
-from typing import Optional, List
+from typing import Optional
 import os
 import sys
 import warnings
@@ -145,7 +145,6 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         self.current_voice: str = config.KOKORO_VOICE
         self.reference_audio: Optional[np.ndarray] = None   # 24 kHz Kokoro output
         self.last_user_audio: Optional[np.ndarray] = None   # 16 kHz recorded attempt
-        self.recent_phrases: List[str] = []
         # Last analysis prosody, kept so the canvases can redraw on window resize.
         self._last_prosody: Optional[dict] = None
         # Last user name written to settings.json; lets on_user_name_changed
@@ -425,7 +424,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         """Generate one phrase, synthesize the reference, and play it. (Background thread.)"""
         try:
             phrase = self.llm_mgr.generate_phrase(
-                source_text, self.recent_phrases, length=self._selected_length())
+                source_text, length=self._selected_length())
             if not phrase:
                 self.root.after(0, self._phrase_generation_failed, "The model returned no phrase. Try again.")
                 return
@@ -444,10 +443,6 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             self.reference_audio = reference_audio
             if DEBUG_DUMP_RECORDINGS:
                 dump_record_wav(reference_audio, RECORD_MODEL_FILE, KOKORO_SAMPLE_RATE)
-            self.recent_phrases.append(phrase)
-            if len(self.recent_phrases) > config.PHRASE_GEN_RECENT_MEMORY:
-                self.recent_phrases.pop(0)
-
             # Show the phrase and play the reference for the user to hear
             # (fresh per-playback stop event; see _new_playback_event).
             self.root.after(0, self._show_new_phrase, phrase)
