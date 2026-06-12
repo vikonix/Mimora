@@ -131,6 +131,9 @@ def save_calibration(acoustic_good: float, extra: Optional[Dict[str, Any]] = Non
 _processor: Optional[Wav2Vec2Processor] = None
 _model: Optional[Wav2Vec2Model] = None          # embeddings (acoustic similarity)
 _model_ctc: Optional[Wav2Vec2ForCTC] = None     # transcription (what was recognised)
+# Guards load_models() so concurrent callers cannot load the weights twice
+# (the public API does not require callers to serialize themselves).
+_load_lock = threading.Lock()
 
 
 # =====================================================================
@@ -169,16 +172,17 @@ def load_models() -> None:
     at mode startup so the GUI stays responsive.
     """
     global _processor, _model, _model_ctc
-    if _model is not None and _model_ctc is not None and _processor is not None:
-        return
+    with _load_lock:
+        if _model is not None and _model_ctc is not None and _processor is not None:
+            return
 
-    _processor = Wav2Vec2Processor.from_pretrained(MODEL_NAME)
+        _processor = Wav2Vec2Processor.from_pretrained(MODEL_NAME)
 
-    _model = Wav2Vec2Model.from_pretrained(MODEL_NAME).to(DEVICE)
-    _model.eval()
+        _model = Wav2Vec2Model.from_pretrained(MODEL_NAME).to(DEVICE)
+        _model.eval()
 
-    _model_ctc = Wav2Vec2ForCTC.from_pretrained(MODEL_NAME).to(DEVICE)
-    _model_ctc.eval()
+        _model_ctc = Wav2Vec2ForCTC.from_pretrained(MODEL_NAME).to(DEVICE)
+        _model_ctc.eval()
 
 
 def warm_up() -> None:
@@ -310,8 +314,12 @@ def compare_transcriptions(transcription: str, text_reference: str) -> Dict[str,
     Identifies per-word pronunciation errors via phoneme alignment and returns
     the distances used by the scoring formula.
     """
-    transcription_clean = transcription.lower().strip()
-    reference_clean = text_reference.lower().strip()
+    # Normalize both sides identically (lower-case, punctuation stripped).
+    # The transcription usually arrives pre-cleaned, but the reference keeps
+    # its punctuation — without cleaning it too, every comma/period counted as
+    # a guaranteed edit and inflated word_error_rate (noticeable on short phrases).
+    transcription_clean = clean_transcription(transcription)
+    reference_clean = clean_transcription(text_reference)
 
     # Edit distance between transcription and reference text (global word-level signal).
     word_distance = Levenshtein.distance(transcription_clean, reference_clean)

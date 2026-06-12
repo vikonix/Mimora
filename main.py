@@ -114,7 +114,9 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         window_height = avail_height - caption - border
         self.root.geometry(f"{window_width}x{window_height}+{x}+{work_top}")
 
-        # Thread management events
+        # Thread management events. playback_stop_event always refers to the
+        # *current* playback's stop event; each new playback installs a fresh
+        # one via _new_playback_event() and stop_playback() sets the current.
         self.shutdown_event = threading.Event()
         self.playback_stop_event = threading.Event()
 
@@ -335,11 +337,11 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             if len(self.recent_phrases) > config.PHRASE_GEN_RECENT_MEMORY:
                 self.recent_phrases.pop(0)
 
-            # Show the phrase and play the reference for the user to hear.
+            # Show the phrase and play the reference for the user to hear
+            # (fresh per-playback stop event; see _new_playback_event).
             self.root.after(0, self._show_new_phrase, phrase)
-            self.playback_stop_event.clear()
             self.tts_mgr.play_array(self.reference_audio, KOKORO_SAMPLE_RATE,
-                                    self.playback_stop_event, self.shutdown_event)
+                                    self._new_playback_event(), self.shutdown_event)
 
             self.root.after(0, self._phrase_ready)
 
@@ -501,13 +503,12 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
     def _run_reference_test(self):
         """Play the reference, then analyze it against itself (off the main thread)."""
         try:
-            # Play the reference back first. stop_playback() set the stop event when
-            # the test started, so clear it to allow playback here.
-            self.playback_stop_event.clear()
+            # Play the reference back first (fresh per-playback stop event;
+            # see _new_playback_event).
             self.root.after(0, self.draw_mic_button, "speaking")
             self.root.after(0, self.update_status, "Playing reference...", THEME["reference"])
             self.tts_mgr.play_array(self.reference_audio, KOKORO_SAMPLE_RATE,
-                                    self.playback_stop_event, self.shutdown_event)
+                                    self._new_playback_event(), self.shutdown_event)
 
             # Then run analysis with the reference as both inputs.
             self.root.after(0, self.draw_mic_button, "processing")
@@ -553,13 +554,12 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
                 return
 
             # Play the just-recorded audio back to the user right away, before the
-            # (slower) pronunciation analysis runs. stop_playback() ran when recording
-            # started, so the stop event must be cleared to allow playback here.
-            self.playback_stop_event.clear()
+            # (slower) pronunciation analysis runs (fresh per-playback stop event;
+            # see _new_playback_event).
             self.root.after(0, self.draw_mic_button, "speaking")
             self.root.after(0, self.update_status, "Playing your recording...", THEME["reference"])
             self.tts_mgr.play_array(self.last_user_audio, config.AUDIO_SAMPLE_RATE,
-                                    self.playback_stop_event, self.shutdown_event)
+                                    self._new_playback_event(), self.shutdown_event)
             self.root.after(0, self.draw_mic_button, "processing")
             self.root.after(0, self.update_status, "Analyzing pronunciation...", THEME["warn"])
 
@@ -629,17 +629,41 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             return
         self._play_async(self.last_user_audio, config.AUDIO_SAMPLE_RATE, "Playing your recording...")
 
+    def _new_playback_event(self) -> threading.Event:
+        """Install a fresh stop event for a new playback and return it.
+
+        Every playback gets its own event. The previous shared event needed a
+        set()-then-clear() dance: an old playback blocked inside a chunk write
+        could miss the brief set() entirely and keep playing alongside the new
+        one. With per-playback events, stop_playback() sets the current
+        playback's event and it stays set — nothing is ever cleared from under
+        a still-running playback.
+        """
+        event = threading.Event()
+        self.playback_stop_event = event
+        return event
+
     def _play_async(self, waveform: np.ndarray, sample_rate: int, status: str):
         """Play a waveform in a background thread, stopping any current playback first."""
         self.stop_playback()
-        self.playback_stop_event.clear()
+        stop_event = self._new_playback_event()
         self.update_status(status, THEME["reference"])
 
         def _worker():
-            self.tts_mgr.play_array(waveform, sample_rate, self.playback_stop_event, self.shutdown_event)
-            self.root.after(0, self.update_status, "Ready", THEME["ready"])
+            self.tts_mgr.play_array(waveform, sample_rate, stop_event, self.shutdown_event)
+            self.root.after(0, self._playback_finished, stop_event)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def _playback_finished(self, stop_event: threading.Event):
+        """Restore the Ready status unless this playback was stopped/superseded.
+
+        Without the check, the worker of an interrupted playback would
+        overwrite the status set by whatever replaced it (e.g. a newer
+        playback's "Playing..." line).
+        """
+        if stop_event is self.playback_stop_event and not stop_event.is_set():
+            self.update_status("Ready", THEME["ready"])
 
     def stop_playback(self):
         self.playback_stop_event.set()

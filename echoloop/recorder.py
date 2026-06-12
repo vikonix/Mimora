@@ -116,9 +116,20 @@ class AudioRecorder:
             return self.is_recording
 
     def start(self) -> bool:
-        """Begin a new take. Returns False if a take is already in progress."""
+        """Begin a new take.
+
+        Returns False if a take is already in progress, or if the previous
+        take's capture thread has not exited yet (its join timed out): that
+        thread's callback may still be appending, and since the callback reads
+        ``self.recorded_chunks`` at call time, starting now would mix the stuck
+        take's tail into the new take's buffer.
+        """
         with self.record_lock:
             if self.is_recording:
+                return False
+            if self.record_thread is not None and self.record_thread.is_alive():
+                logging.warning("Previous record thread is still alive; "
+                                "refusing to start a new take.")
                 return False
             logging.info("Starting audio recording...")
             self.is_recording = True

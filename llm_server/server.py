@@ -194,15 +194,17 @@ def _stream_chat(request: ChatCompletionRequest) -> Iterator[str]:
 
 @app.get("/health")
 def health():
-    """Returns model load status and basic params."""
-    with _inference_lock:
-        loaded = _model is not None
-        path = _model_path
-        params = dict(_model_params) if loaded else {}
+    """Returns model load status and basic params.
+
+    Deliberately lock-free: a health probe must answer immediately even while
+    a long generation (or model load) holds _inference_lock. The globals may
+    be read mid-reload, which is acceptable for a diagnostic endpoint.
+    """
+    loaded = _model is not None
     return {
         "status": "ok" if loaded else "no_model",
-        "model_path": path,
-        "params": params,
+        "model_path": _model_path,
+        "params": dict(_model_params) if loaded else {},
     }
 
 

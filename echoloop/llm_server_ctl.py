@@ -60,6 +60,7 @@ class LLMServerController:
         while time.time() < deadline:
             if self._process.poll() is not None:
                 logging.error(f"LLM server exited unexpectedly (code {self._process.returncode}).")
+                self.shutdown()  # nothing to terminate; closes the log file
                 return False
             if llm_mgr.check_connection(silent=True):
                 logging.info("LLM server is ready.")
@@ -67,21 +68,29 @@ class LLMServerController:
             time.sleep(1.0)
 
         logging.error("LLM server did not become ready within the timeout.")
+        # The subprocess may still be loading the model — terminate it now
+        # instead of leaving it holding VRAM until the app exits.
+        self.shutdown()
         return False
 
     def shutdown(self):
         """Terminate the subprocess (kill on timeout) and close its log file.
 
-        Safe to call when the server was never started — both steps are no-ops.
+        Safe to call repeatedly and when the server was never started — every
+        step is a no-op then. Also called by start() on its failure paths.
         """
         if self._process is not None:
-            logging.info("Terminating LLM server subprocess...")
-            self._process.terminate()
-            try:
-                self._process.wait(timeout=SERVER_TERMINATE_TIMEOUT_SEC)
-            except subprocess.TimeoutExpired:
-                logging.warning("LLM server did not exit cleanly — killing it.")
-                self._process.kill()
+            if self._process.poll() is None:
+                logging.info("Terminating LLM server subprocess...")
+                self._process.terminate()
+                try:
+                    self._process.wait(timeout=SERVER_TERMINATE_TIMEOUT_SEC)
+                except subprocess.TimeoutExpired:
+                    logging.warning("LLM server did not exit cleanly — killing it.")
+                    self._process.kill()
+                    self._process.wait()  # reap the killed process (avoids a zombie on POSIX)
+            self._process = None
 
         if self._log_file is not None:
             self._log_file.close()
+            self._log_file = None

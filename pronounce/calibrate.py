@@ -70,9 +70,13 @@ def main() -> int:
                              "(the acoustic floor is voice-specific)")
     args = parser.parse_args()
 
-    samples = load_samples()[-MAX_SAMPLES_USED:]
+    # Filter by voice *before* truncating to the most recent samples — the
+    # reverse order spent the sample budget on other voices and silently
+    # dropped older samples of the requested one.
+    samples = load_samples()
     if args.voice:
         samples = [s for s in samples if s.get("voice") == args.voice]
+    samples = samples[-MAX_SAMPLES_USED:]
 
     good = [s for s in samples
             if s.get("acoustic_per_step", 0) >= SELF_TEST_ACOUSTIC

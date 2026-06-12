@@ -69,15 +69,27 @@ for _key in _USER:
               file=sys.stderr)
 
 
-def _user_number(key: str, default):
-    """Numeric setting from settings.json; *default* on a non-numeric value."""
+def _user_number(key: str, default, minimum=None, maximum=None):
+    """Numeric setting from settings.json.
+
+    Returns *default* on a non-numeric or out-of-range value: e.g.
+    max_record_seconds=0 would cut off every take instantly, and a threshold
+    above 100 would make passing impossible — a typo must not break the app.
+    """
     value = _USER.get(key, default)
     # bool is a subclass of int — exclude it so `true` is not accepted silently.
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return value
-    print(f"[config] settings.json: {key} must be a number, got {value!r}; "
-          f"using {default}", file=sys.stderr)
-    return default
+    if not (isinstance(value, (int, float)) and not isinstance(value, bool)):
+        print(f"[config] settings.json: {key} must be a number, got {value!r}; "
+              f"using {default}", file=sys.stderr)
+        return default
+    if (minimum is not None and value < minimum) or \
+            (maximum is not None and value > maximum):
+        lo = "-inf" if minimum is None else minimum
+        hi = "+inf" if maximum is None else maximum
+        print(f"[config] settings.json: {key} must be in range {lo}..{hi}, "
+              f"got {value!r}; using {default}", file=sys.stderr)
+        return default
+    return value
 
 
 def _user_path(key: str, default: Path) -> str:
@@ -159,7 +171,7 @@ TARGET_LANG_CODE = "en"  # ISO code used for Whisper transcription routing
 # Controls
 # =====================================================================
 # Safety threshold to prevent infinite recording loops if a key gets physically stuck
-MAX_RECORD_SECONDS = _user_number("max_record_seconds", 20)
+MAX_RECORD_SECONDS = _user_number("max_record_seconds", 20, minimum=1)
 
 # Hardware Acceleration setup — the value detected by hwconfig wins; otherwise
 # probe torch directly (wrapped so startup does not crash if torch is absent).
@@ -218,7 +230,10 @@ EXTERNAL_N_GPU_LAYERS = _HW.get("EXTERNAL_N_GPU_LAYERS", 20)  # layers on GPU (-
 # Context window size (n_ctx). settings.json ("external_n_ctx") wins over the
 # hwconfig-detected value, per the usual layering. int() because the value is
 # passed to the server as a command-line argument (a float would break it).
-EXTERNAL_N_CTX = int(_user_number("external_n_ctx", _HW.get("EXTERNAL_N_CTX", 2048)))
+# minimum=256: anything below breaks generation outright (the system prompt
+# alone would not fit), so treat it as a typo rather than passing it through.
+EXTERNAL_N_CTX = int(_user_number("external_n_ctx",
+                                  _HW.get("EXTERNAL_N_CTX", 2048), minimum=256))
 
 # =====================================================================
 # Speech-to-Text (Whisper) Settings
@@ -322,7 +337,7 @@ WAV2VEC2_DEVICE = _HW.get("WAV2VEC2_DEVICE") or DEVICE
 # Score (0-100) at or above which a repetition is accepted; below it the learner
 # is asked to repeat the same phrase.
 PRONUNCIATION_SCORE_THRESHOLD = float(
-    _user_number("pronunciation_score_threshold", 70.0)
+    _user_number("pronunciation_score_threshold", 70.0, minimum=0, maximum=100)
 )
 # Acoustic floor: typical per-step cosine DTW distance of a *good* attempt
 # (the user's voice never matches the TTS voice exactly, so this is > 0). This
@@ -352,7 +367,8 @@ PHRASE_GEN_SYSTEM_PROMPT = (
 )
 # How many recently used phrases to send back to the model so it avoids
 # repeats. int() because the value is used for list slicing.
-PHRASE_GEN_RECENT_MEMORY = int(_user_number("phrase_gen_recent_memory", 5))
+PHRASE_GEN_RECENT_MEMORY = int(_user_number("phrase_gen_recent_memory", 5,
+                                            minimum=0))
 
 # "Few words" mode: generate a short 2-4 word fragment instead of a complete
 # sentence (e.g. "give me", "on the table", "where are you from"). Uses its own
