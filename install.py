@@ -30,6 +30,10 @@ Design notes
   `llama-cpp-python` / `torch` constraints in requirements.txt are already
   satisfied — otherwise pip would try to source-build a CPU llama-cpp-python
   (no PyPI wheels on recent versions) only for it to be replaced afterwards.
+* Packages install into the interpreter that runs this script (sys.executable);
+  the script does not create a venv. It checks up front whether it is inside a
+  virtual environment and, if not, warns and asks before installing globally
+  (and refuses outright under --yes). Activate the project's .venv first.
 * The whole run is mirrored to install.txt next to this file.
 
 Run:  python install.py            (interactive)
@@ -383,6 +387,69 @@ def pick_cu_series(
 # Steps
 # ---------------------------------------------------------------------------
 
+def find_local_venv_name() -> str:
+    """Name of a virtual-env folder in the project root, for the activate hint.
+
+    A real venv always contains a 'pyvenv.cfg', so we look for any immediate
+    subdirectory that has one (covers '.venv', 'venv', 'env', custom names).
+    Falls back to '.venv' when none is found.
+    """
+    common = [".venv", "venv", "env", ".env"]
+    # Check the usual names first, then scan for any dir with a pyvenv.cfg.
+    for name in common:
+        if (PROJECT_ROOT / name / "pyvenv.cfg").exists():
+            return name
+    try:
+        for child in PROJECT_ROOT.iterdir():
+            if child.is_dir() and (child / "pyvenv.cfg").exists():
+                return child.name
+    except OSError:
+        pass
+    return ".venv"
+
+
+def check_virtualenv(log: Logger, args: argparse.Namespace) -> None:
+    """Warn (and optionally abort) when not running inside a virtual env.
+
+    Packages are installed into whatever interpreter runs this script
+    (sys.executable). Running it with the system Python would pollute the
+    global site-packages, so we detect a venv/virtualenv/conda env and, when
+    absent, make the user confirm before continuing.
+    """
+    log.banner("Step 0/8 — Environment check")
+    in_venv = (sys.prefix != sys.base_prefix
+               or bool(os.environ.get("CONDA_PREFIX")))
+    log.log(f"    Interpreter: {sys.executable}")
+
+    if in_venv:
+        log.log("    Running inside a virtual environment — packages stay local.")
+        return
+
+    log.log("    WARNING: NOT running inside a virtual environment.")
+    log.log("    Packages would be installed into the GLOBAL Python above.")
+    venv_name = find_local_venv_name()
+    if sys.platform == "win32":
+        log.log(f"    Activate the project venv first:  {venv_name}\\Scripts\\activate")
+    else:
+        log.log(f"    Activate the project venv first:  source {venv_name}/bin/activate")
+    log.log("    Then re-run:  python install.py")
+
+    if args.dry_run:
+        log.log("    [dry-run] continuing anyway (nothing is installed).")
+        return
+    if args.yes:
+        log.log("    [--yes] refusing to install globally; aborting. "
+                "Activate a venv or run interactively to override.")
+        raise SystemExit(1)
+
+    answer = input("    Install into this GLOBAL interpreter anyway? "
+                   "[y]es / [N]o-abort: ").strip().lower()
+    if answer not in ("y", "yes"):
+        log.log("    Aborted — activate a virtual environment and re-run.")
+        raise SystemExit(1)
+    log.log("    Proceeding with the global interpreter at the user's request.")
+
+
 def step_check_python(log: Logger, report: StepReport) -> None:
     """Hard requirement: refuse to continue on an unsupported interpreter."""
     log.banner("Step 1/8 — Python version")
@@ -691,6 +758,9 @@ def main() -> int:
     log.log(f"    platform: {platform.platform()}")
     log.log(f"    args: {vars(args)}")
     log.log(f"    log file: {LOG_FILE}")
+
+    # Step 0: refuse to silently install into the global interpreter.
+    check_virtualenv(log, args)
 
     # Step 1: Python version (hard gate).
     step_check_python(log, report)
