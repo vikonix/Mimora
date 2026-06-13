@@ -1,3 +1,16 @@
+"""EchoLoop application entry point.
+
+Wires together the pronunciation-trainer components and runs the Tkinter GUI:
+the local LLM (LLMManager / LLMServerController), text-to-speech (TTSManager,
+Kokoro), audio capture (AudioRecorder) and Wav2Vec2-based pronunciation
+analysis (pronounce/), all driven from PronunciationTrainerUI.
+
+It also installs the root logging configuration (console + logs/main.log) for
+the whole app. Run this module to start the trainer:
+
+    python main.py
+"""
+
 import time
 import threading
 from typing import Optional

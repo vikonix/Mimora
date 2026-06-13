@@ -19,6 +19,7 @@ such problem is recorded in the "warnings" list of the output file.
 
 import ctypes
 import json
+import logging
 import os
 import platform
 import site
@@ -28,6 +29,29 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 OUTPUT_FILE = Path(__file__).parent / "hardware_config.json"
+
+# A timestamped record of each run is kept in the project-wide logs/ directory
+# (the same one config.py uses for main.log), alongside the human-friendly
+# console print()s. The log file is the place to look when diagnosing why a
+# given machine was detected the way it was — it captures the warnings too.
+LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOG_FILE = LOG_DIR / "hwdetect.log"
+
+logger = logging.getLogger("hwdetect")
+
+
+def _setup_logging() -> None:
+    """Attach a file handler writing to logs/hwdetect.log (overwritten per run).
+
+    Kept independent of the console output: the terminal stays concise while the
+    log file preserves a timestamped, complete record for later inspection.
+    """
+    LOG_DIR.mkdir(exist_ok=True)
+    handler = logging.FileHandler(LOG_FILE, mode="w", encoding="utf-8")
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.setLevel(logging.INFO)
+    logger.addHandler(handler)
+    logger.propagate = False
 
 # llama-3.2-3b-instruct has 28 transformer layers; -1 below means "offload all".
 MODEL_TOTAL_LAYERS = 28
@@ -318,9 +342,11 @@ def build_config(hardware: dict) -> dict:
 # =====================================================================
 
 def main() -> int:
+    _setup_logging()
     warnings: list[str] = []
 
     print("Detecting hardware...")
+    logger.info("Detecting hardware...")
     hardware = {
         "platform": f"{platform.system()} {platform.release()}",
         "ram_total_gb": detect_ram_gb(warnings),
@@ -341,20 +367,35 @@ def main() -> int:
     )
 
     gpu = hardware["gpu"]
-    print(f"  RAM:   {hardware['ram_total_gb']} GB, CPU cores: {hardware['cpu_cores']}")
+    ram_line = f"RAM: {hardware['ram_total_gb']} GB, CPU cores: {hardware['cpu_cores']}"
+    print(f"  {ram_line}")
+    logger.info(ram_line)
+
     if gpu["present"]:
         llama_state = {True: "yes", False: "NO", None: "unknown"}[gpu["llama_gpu_offload"]]
-        print(f"  GPU:   {gpu['name']} ({gpu['vram_gb']} GB VRAM, "
-              f"llama offload: {llama_state}, torch CUDA: "
-              f"{'yes' if gpu['torch_cuda'] else 'no'})")
+        gpu_line = (f"GPU: {gpu['name']} ({gpu['vram_gb']} GB VRAM, "
+                    f"llama offload: {llama_state}, torch CUDA: "
+                    f"{'yes' if gpu['torch_cuda'] else 'no'})")
     else:
-        print("  GPU:   none detected")
-    print(f"  Audio: {len(hardware['audio']['input_devices'])} input / "
-          f"{len(hardware['audio']['output_devices'])} output device(s)")
+        gpu_line = "GPU: none detected"
+    print(f"  {gpu_line}")
+    logger.info(gpu_line)
+
+    audio_line = (f"Audio: {len(hardware['audio']['input_devices'])} input / "
+                  f"{len(hardware['audio']['output_devices'])} output device(s)")
+    print(f"  {audio_line}")
+    logger.info(audio_line)
+
     print(f"  Config: {json.dumps(result['config'])}")
+    logger.info("Config: %s", json.dumps(result["config"]))
+
     for w in warnings:
         print(f"  WARNING: {w}")
+        logger.warning(w)
+
     print(f"\nWritten to {OUTPUT_FILE}")
+    logger.info("Written to %s", OUTPUT_FILE)
+    logger.info("Log written to %s", LOG_FILE)
     return 0
 
 
