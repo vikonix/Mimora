@@ -34,7 +34,7 @@ Design notes
   the script does not create a venv. It checks up front whether it is inside a
   virtual environment and, if not, warns and asks before installing globally
   (and refuses outright under --yes). Activate the project's .venv first.
-* The whole run is mirrored to install.txt next to this file.
+* The whole run is mirrored to logs/install.log.
 
 Run:  python install.py            (interactive)
       python install.py --yes      (no prompts)
@@ -60,7 +60,9 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-LOG_FILE = PROJECT_ROOT / "install.txt"
+# Logs live in the project's logs/ dir alongside main.log / llm_server.log.
+LOG_DIR = PROJECT_ROOT / "logs"
+LOG_FILE = LOG_DIR / "install.log"
 REQUIREMENTS = PROJECT_ROOT / "requirements.txt"
 MODELS_DIR = PROJECT_ROOT / "models"
 MODEL_CACHE_DIR = PROJECT_ROOT / "model_cache"
@@ -138,10 +140,25 @@ def all_requirements_installed() -> bool:
     return all(is_installed(name) for name in REQUIRED_DISTS)
 
 
-def hf_repo_cached(repo_id: str) -> bool:
-    """True if a Hugging Face repo already has a folder in the local cache."""
-    folder = "models--" + repo_id.replace("/", "--")
-    return (MODEL_CACHE_DIR / "hub" / folder).exists()
+def hf_repo_fully_cached(repo_id: str) -> bool:
+    """True only if a COMPLETE snapshot of the repo is in the local HF cache.
+
+    A folder existing under model_cache/hub/ is not enough: an interrupted run
+    can leave a partial snapshot (missing files). snapshot_download in offline
+    mode returns the path only when every file of the recorded revision is
+    present, and raises otherwise — so partial downloads are correctly reported
+    as not-installed and will be re-offered. Requires HF_HOME to be set first.
+    """
+    try:
+        from huggingface_hub import snapshot_download
+    except ImportError:
+        # huggingface_hub not installed yet → nothing can be cached.
+        return False
+    try:
+        snapshot_download(repo_id=repo_id, local_files_only=True)
+        return True
+    except Exception:  # noqa: BLE001 — any miss/partial means "not fully cached"
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -149,10 +166,11 @@ def hf_repo_cached(repo_id: str) -> bool:
 # ---------------------------------------------------------------------------
 
 class Logger:
-    """Writes to both stdout and install.txt (append-mode, line-buffered)."""
+    """Writes to both stdout and logs/install.log (append-mode, line-buffered)."""
 
     def __init__(self, path: Path):
-        # Opened lazily-but-eagerly here; closed at process exit by the OS.
+        # Ensure logs/ exists, then append (keeps a history across runs).
+        path.parent.mkdir(parents=True, exist_ok=True)
         self._fh = open(path, "a", encoding="utf-8", buffering=1)
 
     def log(self, message: str = "") -> None:
@@ -283,7 +301,7 @@ def run_command(cmd: list[str], log: Logger) -> bool:
     """Run a subprocess, streaming combined output live to console and log.
 
     Output is read line-by-line as it is produced (so a long pip install shows
-    progress in real time) and mirrored into install.txt. Returns True on exit
+    progress in real time) and mirrored into logs/install.log. Returns True on exit
     code 0, False otherwise. Never raises on a non-zero exit — the caller
     decides how a failure affects the rest of the run.
     """
@@ -620,6 +638,45 @@ def _linux_espeak_command() -> list[str] | None:
     return None
 
 
+def configure_hf_symlink_fallback(log: Logger) -> None:
+    """On Windows without symlink privilege, make HF copy files instead.
+
+    huggingface_hub's cache normally points snapshots/ at blobs/ via symlinks.
+    Creating a symlink on Windows needs Developer Mode or admin rights; without
+    them the native hf-xet downloader fails hard with WinError 1314 (it does not
+    fall back to copying the way the pure-Python path does). Detect the missing
+    privilege here and, when absent, disable hf-xet so downloads fall back to
+    plain file copies (uses more disk, but always works). Must run before
+    huggingface_hub is first imported.
+    """
+    if sys.platform != "win32":
+        return
+    MODEL_CACHE_DIR.mkdir(exist_ok=True)
+
+    import tempfile
+    supported = True
+    try:
+        with tempfile.TemporaryDirectory(dir=MODEL_CACHE_DIR) as tmp:
+            src = Path(tmp) / "probe_src"
+            src.touch()
+            try:
+                os.symlink(src, Path(tmp) / "probe_dst")
+            except OSError:
+                supported = False
+    except OSError:
+        supported = False
+
+    if supported:
+        log.log("    Symlink support: OK.")
+        return
+
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
+    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+    log.log("    Symlinks unavailable (no Developer Mode / admin): HF downloads")
+    log.log("    will COPY into the cache instead of symlinking (more disk use).")
+    log.log("    Tip: enabling Windows Developer Mode lets HF use symlinks.")
+
+
 def step_prefetch_models(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
@@ -629,9 +686,12 @@ def step_prefetch_models(
     # Match echoloop/config.py: HF_HOME points at the project's model_cache/.
     MODEL_CACHE_DIR.mkdir(exist_ok=True)
     os.environ["HF_HOME"] = str(MODEL_CACHE_DIR)
+    # Avoid the Windows symlink-privilege crash (WinError 1314) before any
+    # huggingface_hub import happens below.
+    configure_hf_symlink_fallback(log)
 
     repos = ", ".join(repo for repo, _ in HF_MODEL_REPOS)
-    installed = all(hf_repo_cached(repo) for repo, _ in HF_MODEL_REPOS)
+    installed = all(hf_repo_fully_cached(repo) for repo, _ in HF_MODEL_REPOS)
     desc = (f"Download HF models into {MODEL_CACHE_DIR.name}/ (HF_HOME): {repos}. "
             f"Several GB; already-cached files are reused.")
     if installed:
