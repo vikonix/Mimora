@@ -132,12 +132,6 @@ class PronunciationTrainerUI:
                                           font=(FONT_FAMILY, 10), fg=THEME["text_dim"], bg=THEME["bg_main"])
         self.instruction_label.pack(pady=5)
 
-        replay_frame = tk.Frame(control_frame, bg=THEME["bg_main"])
-        replay_frame.pack(pady=5)
-        self.user_btn = self._make_button(replay_frame, "▶ My recording", self.play_user_recording)
-        self.user_btn.pack(side=tk.LEFT, padx=5)
-        self.user_btn.config(state=tk.DISABLED)
-
         # 4. Source text panel (editable)
         source_frame = tk.Frame(self.root, bg=THEME["bg_main"])
         source_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 5))
@@ -214,28 +208,6 @@ class PronunciationTrainerUI:
         # immediately (see on_speed_changed).
         self.speed_selector.bind("<<ComboboxSelected>>", self.on_speed_changed)
 
-        # Action row: Test diagnostic, Reference replay and New phrase buttons.
-        action_frame = tk.Frame(source_frame, bg=THEME["bg_main"])
-        action_frame.pack(anchor=tk.E, pady=(4, 0))
-
-        # Small diagnostic button: run the reference through analysis instead
-        # of a recording (it should score near 100 against itself).
-        self.test_btn = tk.Button(action_frame, text="Test", command=self.on_test_reference,
-                                  font=(FONT_FAMILY, 8), bg=THEME["bg_panel"], fg=THEME["text_muted"],
-                                  activebackground=THEME["border"], activeforeground=THEME["info"],
-                                  bd=0, padx=8, pady=3, cursor="hand2",
-                                  disabledforeground=THEME["text_disabled_dim"])
-        self.test_btn.pack(side=tk.LEFT, padx=(0, 10))
-        self.test_btn.config(state=tk.DISABLED)
-
-        self.ref_btn = self._make_button(action_frame, "▶ Reference", self.play_reference)
-        self.ref_btn.pack(side=tk.LEFT, padx=(0, 6))
-        self.ref_btn.config(state=tk.DISABLED)
-
-        self.generate_btn = self._make_button(action_frame, "🎲 New phrase", self.on_generate_phrase)
-        self.generate_btn.pack(side=tk.LEFT)
-        self.generate_btn.config(state=tk.DISABLED)
-
         # 5. Current phrase card
         phrase_frame = tk.Frame(self.root, bg=THEME["bg_panel"])
         phrase_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=5)
@@ -291,7 +263,42 @@ class PronunciationTrainerUI:
         # persisted checkbox state says is off.
         self._toggle_prosody_charts()
 
-        # 6. Feedback log (fills remaining space)
+        # 6. Action row directly under the result window: groups every action
+        # button on one line — Test diagnostic, replay of the user's recording,
+        # reference replay and new-phrase generation.
+        #
+        # Packed BEFORE the feedback panel below and at side=BOTTOM on purpose:
+        # the feedback panel uses expand=True with a large default height and
+        # would otherwise claim all the space, clipping a later-packed row to
+        # zero height. Reserving this row first keeps it visible just above the
+        # mic control_frame, so it sits right under the result window.
+        action_frame = tk.Frame(self.root, bg=THEME["bg_main"])
+        action_frame.pack(side=tk.BOTTOM, padx=20, pady=(0, 5))
+
+        # Small diagnostic button: run the reference through analysis instead
+        # of a recording (it should score near 100 against itself).
+        self.test_btn = tk.Button(action_frame, text="Test", command=self.on_test_reference,
+                                  font=(FONT_FAMILY, 8), bg=THEME["bg_panel"], fg=THEME["text_muted"],
+                                  activebackground=THEME["border"], activeforeground=THEME["info"],
+                                  bd=0, padx=8, pady=3, cursor="hand2",
+                                  disabledforeground=THEME["text_disabled_dim"])
+        self.test_btn.pack(side=tk.LEFT, padx=(0, 10))
+        self.test_btn.config(state=tk.DISABLED)
+
+        self.user_btn = self._make_button(action_frame, "▶ My recording", self.play_user_recording)
+        self.user_btn.pack(side=tk.LEFT, padx=(0, 6))
+        self.user_btn.config(state=tk.DISABLED)
+
+        self.ref_btn = self._make_button(action_frame, "▶ Reference", self.play_reference)
+        self.ref_btn.pack(side=tk.LEFT, padx=(0, 6))
+        self.ref_btn.config(state=tk.DISABLED)
+
+        self.generate_btn = self._make_button(action_frame, "🎲 New phrase", self.on_generate_phrase)
+        self.generate_btn.pack(side=tk.LEFT)
+        self.generate_btn.config(state=tk.DISABLED)
+
+        # 7. Feedback log (fills remaining space). Packed AFTER action_frame so
+        # its expand=True only consumes space left over above the button row.
         feedback_frame = tk.Frame(self.root, bg=THEME["bg_main"])
         feedback_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=20, pady=5)
 
