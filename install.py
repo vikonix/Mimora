@@ -208,6 +208,15 @@ FAILED = "failed"
 MANUAL = "needs manual action"
 
 
+class InstallError(RuntimeError):
+    """A step failed. Raised to abort the installer immediately (fail-fast).
+
+    Continuing past a failed step leaves a half-built environment and lets a
+    misleading "all done" message print at the end, so any hard failure stops
+    the run instead. The argument is the step name, used in the abort message.
+    """
+
+
 class StepReport:
     """Collects (name, status, note) tuples for an end-of-run summary."""
 
@@ -224,6 +233,10 @@ class StepReport:
             suffix = f" — {note}" if note else ""
             lines.append(f"  {name.ljust(width)}  {status}{suffix}")
         return "\n".join(lines)
+
+    def statuses(self) -> list[str]:
+        """All recorded status strings (used to decide the closing message)."""
+        return [status for _, status, _ in self._rows]
 
 
 # ---------------------------------------------------------------------------
@@ -373,6 +386,21 @@ def run_command(cmd: list[str], log: Logger) -> bool:
     return True
 
 
+def run_or_fail(cmd: list[str], log: Logger, report: StepReport,
+                step_name: str, note: str = "") -> None:
+    """Run a command, record DONE/FAILED, and abort the installer on failure.
+
+    This is the fail-fast wrapper around run_command: a non-zero exit records a
+    FAILED row and raises InstallError so no later step runs against a broken
+    environment. Callers that must keep going on failure should use run_command
+    directly instead.
+    """
+    ok = run_command(cmd, log)
+    report.add(step_name, DONE if ok else FAILED, note)
+    if not ok:
+        raise InstallError(step_name)
+
+
 # ---------------------------------------------------------------------------
 # GPU / CUDA detection (no third-party packages required)
 # ---------------------------------------------------------------------------
@@ -520,7 +548,7 @@ def step_check_python(
         need = ".".join(map(str, MIN_PYTHON))
         log.log(f"    ERROR: EchoLoop needs Python >= {need}. Aborting.")
         report.add("Python version", FAILED, f"need >= {need}")
-        raise SystemExit(1)
+        raise InstallError("Python version")
     if current > WHEEL_TESTED_MAX:
         tested = ".".join(map(str, WHEEL_TESTED_MAX))
         confirmer.warn_continue([
@@ -541,7 +569,7 @@ def step_install_requirements(
     if not REQUIREMENTS.exists():
         log.log(f"    ERROR: {REQUIREMENTS} not found. Aborting.")
         report.add("pip requirements", FAILED, "requirements.txt missing")
-        raise SystemExit(1)
+        raise InstallError("pip requirements")
 
     installed = all_requirements_installed()
     # Binary-only install: if pip can't find a prebuilt wheel for the current
@@ -560,10 +588,7 @@ def step_install_requirements(
         report.add("pip requirements", SKIPPED,
                    "already installed" if installed else "")
         return
-    ok = run_command(cmd, log)
-    report.add("pip requirements", DONE if ok else FAILED)
-    if not ok:
-        log.log("    WARNING: dependency install failed; later steps may not work.")
+    run_or_fail(cmd, log, report, "pip requirements")
 
 
 def step_gpu_torch(
@@ -591,8 +616,7 @@ def step_gpu_torch(
         report.add("torch (CUDA)", SKIPPED,
                    "already CUDA build" if installed else "")
         return
-    ok = run_command(cmd, log)
-    report.add("torch (CUDA)", DONE if ok else FAILED, series)
+    run_or_fail(cmd, log, report, "torch (CUDA)", series)
 
 
 def step_gpu_llama(
@@ -625,8 +649,7 @@ def step_gpu_llama(
         report.add("llama-cpp-python (CUDA)", SKIPPED,
                    "already installed" if installed else "")
     else:
-        ok = run_command(cmd, log)
-        report.add("llama-cpp-python (CUDA)", DONE if ok else FAILED, series)
+        run_or_fail(cmd, log, report, "llama-cpp-python (CUDA)", series)
 
     # On Windows with no system CUDA toolkit, the CUDA runtime DLLs come from
     # these pip packages; detect_hardware.py / llm_server expect them on PATH.
@@ -639,7 +662,7 @@ def step_gpu_llama(
                  "nvidia-cublas-cu12) so llama-cpp can load on Windows.")
         if confirmer.confirm(rdesc, " ".join(runtime_cmd),
                              installed=runtime_present):
-            run_command(runtime_cmd, log)
+            run_or_fail(runtime_cmd, log, report, "CUDA runtime DLLs")
 
 
 def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
@@ -658,8 +681,7 @@ def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
         if pkg_cmd:
             if confirmer.confirm("Install espeak-ng via the system package "
                                  "manager (needs sudo).", " ".join(pkg_cmd)):
-                ok = run_command(pkg_cmd, log)
-                report.add("espeak-ng", DONE if ok else FAILED)
+                run_or_fail(pkg_cmd, log, report, "espeak-ng")
                 return
             report.add("espeak-ng", SKIPPED)
             return
@@ -670,8 +692,7 @@ def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
             brew_cmd = ["brew", "install", "espeak-ng"]
             if confirmer.confirm("Install espeak-ng via Homebrew.",
                                  " ".join(brew_cmd)):
-                ok = run_command(brew_cmd, log)
-                report.add("espeak-ng", DONE if ok else FAILED)
+                run_or_fail(brew_cmd, log, report, "espeak-ng")
                 return
             report.add("espeak-ng", SKIPPED)
             return
@@ -765,7 +786,7 @@ def step_prefetch_models(
     except ImportError:
         log.log("    huggingface_hub not installed (did the deps step run?).")
         report.add("HF model cache", FAILED, "huggingface_hub missing")
-        return
+        raise InstallError("HF model cache")
 
     all_ok = True
     for repo_id, label in HF_MODEL_REPOS:
@@ -773,10 +794,12 @@ def step_prefetch_models(
         try:
             snapshot_download(repo_id=repo_id)
             log.log(f"    -> done: {repo_id}")
-        except Exception as exc:  # noqa: BLE001 — report and continue
+        except Exception as exc:  # noqa: BLE001 — record which repo failed
             all_ok = False
             log.log(f"    -> FAILED: {repo_id}: {exc}")
     report.add("HF model cache", DONE if all_ok else FAILED)
+    if not all_ok:
+        raise InstallError("HF model cache")
 
 
 def step_download_gguf(
@@ -802,7 +825,7 @@ def step_download_gguf(
     except ImportError:
         log.log("    huggingface_hub not installed (did the deps step run?).")
         report.add("GGUF model", FAILED, "huggingface_hub missing")
-        return
+        raise InstallError("GGUF model")
 
     try:
         # local_dir=models/ places the file exactly where config.py expects it
@@ -816,6 +839,7 @@ def step_download_gguf(
     except Exception as exc:  # noqa: BLE001
         log.log(f"    -> FAILED: {exc}")
         report.add("GGUF model", FAILED)
+        raise InstallError("GGUF model")
 
 
 def step_detect_hardware(
@@ -834,13 +858,33 @@ def step_detect_hardware(
     if not confirmer.confirm(desc, " ".join(cmd)):
         report.add("hardware detection", SKIPPED)
         return
-    ok = run_command(cmd, log)
-    report.add("hardware detection", DONE if ok else FAILED)
+    run_or_fail(cmd, log, report, "hardware detection")
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+def finish(log: Logger, report: StepReport, *, success: bool) -> None:
+    """Print the end-of-run summary.
+
+    The "run main.py" hint is printed ONLY on a fully successful run, so a
+    failed or aborted install never reads as ready to launch. A successful run
+    that still has manual-action items says so before the launch hint.
+    """
+    log.banner("Summary")
+    log.log(report.render())
+    log.log("")
+    log.log(f"    finished: {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
+    if not success:
+        log.log("    Installation INCOMPLETE — fix the error above and re-run")
+        log.log("    install.py. Do NOT run main.py until it finishes cleanly.")
+        return
+    if MANUAL in report.statuses():
+        log.log("    Some steps need manual action (see 'needs manual action'")
+        log.log("    above) before EchoLoop will fully work.")
+    log.log("    Next: run `python main.py` to start EchoLoop.")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -878,64 +922,69 @@ def main() -> int:
     log.log(f"    args: {vars(args)}")
     log.log(f"    log file: {LOG_FILE}")
 
-    # Step 0: refuse to silently install into the global interpreter.
-    check_virtualenv(log, args)
+    # All steps run inside this guard: the first one to fail raises
+    # InstallError, so the run stops immediately instead of pressing on with a
+    # half-built environment and printing a misleading "ready to launch" line.
+    try:
+        # Step 0: refuse to silently install into the global interpreter.
+        check_virtualenv(log, args)
 
-    # Step 1: Python version (hard min gate; warn above the tested max).
-    step_check_python(log, confirmer, report)
+        # Step 1: Python version (hard min gate; warn above the tested max).
+        step_check_python(log, confirmer, report)
 
-    # Step 2: GPU detection (informs steps 4a/4b; no packages needed).
-    log.banner("Step 2/8 — GPU / CUDA detection")
-    gpu_name, driver_cuda = detect_gpu(log)
-    use_gpu = (gpu_name is not None or args.gpu) and not args.cpu
-    if args.cpu:
-        log.log("    --cpu given: GPU steps will be skipped.")
-    elif use_gpu:
-        log.log("    GPU steps will be offered.")
-    else:
-        log.log("    No GPU detected: GPU steps will be skipped "
-                "(use --gpu to force).")
-    report.add("GPU detection", DONE,
-               gpu_name or ("forced" if args.gpu else "none"))
+        # Step 2: GPU detection (informs steps 4a/4b; no packages needed).
+        log.banner("Step 2/8 — GPU / CUDA detection")
+        gpu_name, driver_cuda = detect_gpu(log)
+        use_gpu = (gpu_name is not None or args.gpu) and not args.cpu
+        if args.cpu:
+            log.log("    --cpu given: GPU steps will be skipped.")
+        elif use_gpu:
+            log.log("    GPU steps will be offered.")
+        else:
+            log.log("    No GPU detected: GPU steps will be skipped "
+                    "(use --gpu to force).")
+        report.add("GPU detection", DONE,
+                   gpu_name or ("forced" if args.gpu else "none"))
 
-    # Step 3: GPU-specific CUDA builds, installed BEFORE requirements so the
-    # llama-cpp-python / torch constraints in requirements.txt are already
-    # satisfied (avoids a doomed CPU source-build of llama-cpp-python).
-    if use_gpu:
-        log.banner("Step 3/8 — GPU (CUDA) builds")
-        step_gpu_torch(log, confirmer, report, driver_cuda)
-        step_gpu_llama(log, confirmer, report, driver_cuda)
-    else:
-        report.add("torch (CUDA)", SKIPPED, "CPU-only")
-        report.add("llama-cpp-python (CUDA)", SKIPPED, "CPU-only")
+        # Step 3: GPU-specific CUDA builds, installed BEFORE requirements so the
+        # llama-cpp-python / torch constraints in requirements.txt are already
+        # satisfied (avoids a doomed CPU source-build of llama-cpp-python).
+        if use_gpu:
+            log.banner("Step 3/8 — GPU (CUDA) builds")
+            step_gpu_torch(log, confirmer, report, driver_cuda)
+            step_gpu_llama(log, confirmer, report, driver_cuda)
+        else:
+            report.add("torch (CUDA)", SKIPPED, "CPU-only")
+            report.add("llama-cpp-python (CUDA)", SKIPPED, "CPU-only")
 
-    # Step 4: project dependencies.
-    step_install_requirements(log, confirmer, report)
+        # Step 4: project dependencies.
+        step_install_requirements(log, confirmer, report)
 
-    # Step 5: espeak-ng.
-    step_espeak(log, confirmer, report)
+        # Step 5: espeak-ng.
+        step_espeak(log, confirmer, report)
 
-    # Step 6: HF model cache.
-    if args.skip_models:
-        report.add("HF model cache", SKIPPED, "--skip-models")
-    else:
-        step_prefetch_models(log, confirmer, report)
+        # Step 6: HF model cache.
+        if args.skip_models:
+            report.add("HF model cache", SKIPPED, "--skip-models")
+        else:
+            step_prefetch_models(log, confirmer, report)
 
-    # Step 7: GGUF.
-    if args.skip_gguf:
-        report.add("GGUF model", SKIPPED, "--skip-gguf")
-    else:
-        step_download_gguf(log, confirmer, report)
+        # Step 7: GGUF.
+        if args.skip_gguf:
+            report.add("GGUF model", SKIPPED, "--skip-gguf")
+        else:
+            step_download_gguf(log, confirmer, report)
 
-    # Step 8: hardware detection (after torch/llama exist).
-    step_detect_hardware(log, confirmer, report)
+        # Step 8: hardware detection (after torch/llama exist).
+        step_detect_hardware(log, confirmer, report)
+    except InstallError as exc:
+        log.log("")
+        log.log(f"    ABORTED: step '{exc}' failed — stopping the installer "
+                f"so the error is not masked.")
+        finish(log, report, success=False)
+        return 1
 
-    # Summary.
-    log.banner("Summary")
-    log.log(report.render())
-    log.log("")
-    log.log(f"    finished: {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
-    log.log("    Next: run `python main.py` to start EchoLoop.")
+    finish(log, report, success=True)
     return 0
 
 
