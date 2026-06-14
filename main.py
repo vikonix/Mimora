@@ -208,6 +208,17 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             logging.info("TTS model loaded.")
 
             self.root.after(0, self.append_system_msg, "Loading Wav2Vec2 (pronunciation, ~1.2 GB on first run)...")
+            # Inject app settings into the (app-agnostic) pronounce library before
+            # it loads any model. Done once here, the analyzer's composition root.
+            pronounce.configure(pronounce.AnalyzerConfig(
+                model_name=config.WAV2VEC2_MODEL_NAME,
+                device=config.WAV2VEC2_DEVICE,
+                espeak_language=config.ESPEAK_LANGUAGE,
+                score_threshold=config.PRONUNCIATION_SCORE_THRESHOLD,
+                acoustic_good=config.PRONUNCIATION_ACOUSTIC_GOOD,
+                log_dir=Path(config.LOG_DIR),
+                user_name=config.USER_NAME,
+            ))
             pronounce.load_models()
             logging.info("Wav2Vec2 model loaded.")
 

@@ -31,11 +31,29 @@ from pathlib import Path
 
 import numpy as np
 
+# Run as a standalone script (`python pronounce/calibrate.py`): put the project
+# root on the path so both the pronounce package and the host app resolve.
 _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
-from pronounce import speech
+from pronounce import speech, configure, AnalyzerConfig
+# Composition root: this calibration CLI is the only place in pronounce/ that
+# reads the host application's settings. It wires them into the analyzer with
+# configure() (see _app_config), so the analyzer core stays app-agnostic.
 from echoloop import config
+
+
+def _app_config() -> AnalyzerConfig:
+    """Build the analyzer configuration from the EchoLoop application settings."""
+    return AnalyzerConfig(
+        model_name=config.WAV2VEC2_MODEL_NAME,
+        device=config.WAV2VEC2_DEVICE,
+        espeak_language=config.ESPEAK_LANGUAGE,
+        score_threshold=config.PRONUNCIATION_SCORE_THRESHOLD,
+        acoustic_good=config.PRONUNCIATION_ACOUSTIC_GOOD,
+        log_dir=Path(config.LOG_DIR),
+        user_name=config.USER_NAME,
+    )
 
 # A sample counts as a "good attempt" when the text clearly matched.
 MAX_WORD_ERROR_RATE = 0.20
@@ -51,10 +69,10 @@ MAX_SAMPLES_USED = 300
 
 
 def load_samples() -> list:
-    if not speech.SAMPLES_FILE.exists():
+    if not speech.samples_file().exists():
         return []
     samples = []
-    for line in speech.SAMPLES_FILE.read_text(encoding="utf-8").splitlines():
+    for line in speech.samples_file().read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if not line:
             continue
@@ -75,6 +93,10 @@ def main() -> int:
                              "(the acoustic floor is voice-specific)")
     args = parser.parse_args()
 
+    # Inject the application's settings into the analyzer before using it, so the
+    # sample-log path, user name and floor default match the running app.
+    configure(_app_config())
+
     # The acoustic floor is per practising user, so calibrate only from the
     # current user's attempts (matched on the user_name recorded by
     # speech.analyze; "" when no name is set in settings.json).
@@ -93,7 +115,7 @@ def main() -> int:
             and s.get("word_error_rate", 1) <= MAX_WORD_ERROR_RATE
             and s.get("phoneme_error_rate", 1) <= MAX_PHONEME_ERROR_RATE]
 
-    print(f"Samples file:   {speech.SAMPLES_FILE}")
+    print(f"Samples file:   {speech.samples_file()}")
     print(f"Current user:   {config.USER_NAME!r}")
     print(f"Total samples:  {len(samples)} (last {MAX_SAMPLES_USED} max"
           + (f", voice={args.voice}" if args.voice else "") + ")")
@@ -118,7 +140,7 @@ def main() -> int:
     print(f"\nAcoustic per-step distance of good attempts: "
           f"min={distances.min():.4f} p10={np.percentile(distances, 10):.4f} "
           f"median={np.median(distances):.4f} max={distances.max():.4f}")
-    print(f"Current floor (acoustic_good): {speech.ACOUSTIC_GOOD:.4f}")
+    print(f"Current floor (acoustic_good): {speech.current_acoustic_floor():.4f}")
     print(f"Proposed floor:                {new_floor:.4f}")
 
     # Project how the good attempts would have scored with the new floor.
@@ -133,7 +155,7 @@ def main() -> int:
             s["acoustic_per_step"], s["phoneme_error_rate"], s["word_error_rate"],
             acoustic_bad=bad_a, acoustic_good=new_floor))
     print(f"Median score of good attempts: {np.median(before):.1f} -> {np.median(after):.1f} "
-          f"(pass threshold: {speech.SCORE_THRESHOLD})")
+          f"(pass threshold: {config.PRONUNCIATION_SCORE_THRESHOLD})")
 
     if args.dry_run:
         print("\nDry run: calibration.json not written.")

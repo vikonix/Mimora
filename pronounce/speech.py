@@ -15,8 +15,10 @@ Design notes:
     * Models load lazily on first use; ``load_models`` only makes that explicit so the
       heavy download/initialisation can happen in a background daemon thread, matching
       the warm-up pattern in ``stt.py`` / ``tts.py``.
-    * Device follows ``config.DEVICE``; it can be overridden with an optional
-      ``config.WAV2VEC2_DEVICE`` value without editing this file.
+    * Settings (model, device, accent, thresholds, log dir, user name) come from
+      the library's own ``AnalyzerConfig`` (see pronounce/config.py), read at
+      use-time. A host injects its values once with ``pronounce.configure(...)``;
+      the defaults keep the package autonomous, so it never imports the host app.
     * Wav2Vec2 needs 16 kHz mono audio. User audio already arrives at 16 kHz from the
       recording path; the Kokoro reference is 24 kHz, so it is resampled here.
 """
@@ -24,7 +26,6 @@ Design notes:
 import json
 import logging
 import re
-import sys
 import threading
 from dataclasses import dataclass, field
 from functools import lru_cache
@@ -42,89 +43,109 @@ from sklearn.preprocessing import MinMaxScaler
 from transformers import Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2ForCTC
 from phonemizer import phonemize
 
-# Allow autonomous use (e.g. running the test directly from inside pronounce/):
-# make the project root importable so the echoloop package resolves.
-_ROOT = Path(__file__).resolve().parent.parent
-if str(_ROOT) not in sys.path:
-    sys.path.insert(0, str(_ROOT))
-from echoloop import config
+# Settings come from the library's own AnalyzerConfig (see pronounce/config.py),
+# never from the host application: a host injects its values once at startup via
+# pronounce.configure(). get_config() returns the active configuration.
+from .config import get_config
 
 
 # =====================================================================
-# Configuration. Read via direct attribute access on purpose: config.py
-# always defines these keys, and getattr-with-fallback would silently
-# mask a typo in either file (it did once — see PRONUNCIATION_*).
+# Configuration.
+#
+# All host-tunable settings (model, device, espeak accent, score threshold,
+# acoustic floor default, log dir, user name) come from the active
+# AnalyzerConfig via get_config(); they are read at use-time so a host app can
+# inject them with pronounce.configure() after import but before analysis.
+# The constants below are intrinsic to the analyzer and are not host-tunable.
 # =====================================================================
 # Wav2Vec2 expects strictly 16 kHz mono input.
 TARGET_SAMPLE_RATE = 16_000
 # Kokoro synthesises at 24 kHz; used as the default reference sample rate.
 KOKORO_SAMPLE_RATE = 24_000
 
-MODEL_NAME = config.WAV2VEC2_MODEL_NAME
-# Device for Wav2Vec2 (cuda/cpu); config.WAV2VEC2_DEVICE follows config.DEVICE.
-DEVICE = config.WAV2VEC2_DEVICE
-# Score (0-100) at or above which a repetition is considered acceptable.
-SCORE_THRESHOLD = config.PRONUNCIATION_SCORE_THRESHOLD
-# espeak dialect ("en-us"/"en-gb") used to phonemize the reference text. Follows
-# the accent selected in config so British speech is scored against British
-# phonemes (and American against American), not always en-us.
-ESPEAK_LANGUAGE = config.ESPEAK_LANGUAGE
-
 # ---------------------------------------------------------------------
 # Acoustic score calibration.
 #
 # The acoustic component compares per-step cosine DTW distance between the two
 # Wav2Vec2 embedding sequences. Two anchors map it to 0-100:
-#   * floor (ACOUSTIC_GOOD)  — typical per-step distance of a *good* attempt by a
-#     different speaker (the user vs the TTS voice never reach 0). Calibrated
-#     per voice/microphone; ``python pronounce/calibrate.py`` writes it to
-#     calibration.json from collected session samples.
+#   * floor (the acoustic "good" distance) — typical per-step distance of a
+#     *good* attempt by a different speaker (the user vs the TTS voice never
+#     reach 0). Configurable default in AnalyzerConfig.acoustic_good; calibrated
+#     per voice/microphone by ``python pronounce/calibrate.py``, which writes it
+#     to calibration.json. current_acoustic_floor() returns the value in effect.
 #   * ceiling — per-step distance when content does not match. Derived
 #     automatically per utterance from the random-pair baseline (the mean
 #     distance between unaligned frames of the two recordings), so it adapts to
 #     each phrase without manual tuning.
 # ---------------------------------------------------------------------
-ACOUSTIC_GOOD_DEFAULT = float(config.PRONUNCIATION_ACOUSTIC_GOOD)
 ACOUSTIC_BAD_DEFAULT = 0.60      # fixed ceiling when no per-utterance baseline exists
 ACOUSTIC_BAD_FRACTION = 0.9      # ceiling = this fraction of the random-pair baseline
 ACOUSTIC_MIN_SPAN = 0.05         # minimal floor-to-ceiling span (avoids degenerate scale)
 TRIM_TOP_DB = 30                 # silence trim threshold relative to peak, in dB
 
-# Persisted calibration (floor override) and the per-attempt sample log used by
-# pronounce/calibrate.py to compute that override on request.
+# Persisted calibration (floor override) lives next to this module.
 CALIBRATION_FILE = Path(__file__).resolve().parent / "calibration.json"
-SAMPLES_FILE = Path(config.LOG_DIR) / "pronounce_samples.jsonl"
+
+
+def samples_file() -> Path:
+    """Path of the per-attempt calibration sample log.
+
+    Lives under the configured log directory; ``pronounce/calibrate.py`` reads it
+    to recompute the acoustic floor on request.
+    """
+    return Path(get_config().log_dir) / "pronounce_samples.jsonl"
 
 
 # The acoustic floor is per practising user: calibration.json maps a user name
-# (config.USER_NAME, "" when unset) to that user's floor under a "users" object:
+# (AnalyzerConfig.user_name, "" when unset) to that user's floor under a "users"
+# object:
 #   {"users": {"": {"acoustic_good": 0.18, "created": ...}, "valery": {...}}}
 # A pre-per-user file had the floor at the top level ({"acoustic_good": ...}); it
 # is still honoured as a fallback and migrated into the "" profile on next save.
 def _load_calibration() -> float:
     """Return the current user's calibrated acoustic floor, or the default."""
+    user_name = get_config().user_name
+    default = get_config().acoustic_good
     try:
         if CALIBRATION_FILE.exists():
             data = json.loads(CALIBRATION_FILE.read_text(encoding="utf-8"))
             users = data.get("users") if isinstance(data, dict) else None
-            entry = users.get(config.USER_NAME) if isinstance(users, dict) else None
+            entry = users.get(user_name) if isinstance(users, dict) else None
             if isinstance(entry, dict) and "acoustic_good" in entry:
                 value = float(entry["acoustic_good"])
-                source = f"user={config.USER_NAME!r}"
+                source = f"user={user_name!r}"
             elif isinstance(data, dict) and "acoustic_good" in data:
                 value = float(data["acoustic_good"])  # legacy flat file
                 source = "legacy"
             else:
-                return ACOUSTIC_GOOD_DEFAULT
+                return default
             logging.info(f"[pronounce] Loaded calibration ({source}): "
                          f"acoustic_good={value:.4f} ({CALIBRATION_FILE})")
             return value
     except Exception:
         logging.exception("Failed to read calibration file; using defaults:")
-    return ACOUSTIC_GOOD_DEFAULT
+    return default
 
 
-ACOUSTIC_GOOD = _load_calibration()
+# Calibrated acoustic floor in effect, cached after first load so calibration.json
+# is read once. Loaded lazily (so configure() can install the user name first) and
+# refreshed automatically when the active user changes; None means "not loaded".
+_acoustic_good: Optional[float] = None
+_acoustic_good_user: Optional[str] = None
+
+
+def current_acoustic_floor() -> float:
+    """Return the active user's calibrated acoustic floor (cached).
+
+    Reloads from calibration.json when the configured user changes, so switching
+    users via configure() picks up the right floor without an explicit reset.
+    """
+    global _acoustic_good, _acoustic_good_user
+    user_name = get_config().user_name
+    if _acoustic_good is None or _acoustic_good_user != user_name:
+        _acoustic_good = _load_calibration()
+        _acoustic_good_user = user_name
+    return _acoustic_good
 
 
 # Keys carried over when migrating a legacy flat calibration into a user profile.
@@ -134,14 +155,15 @@ _LEGACY_CALIBRATION_KEYS = ("acoustic_good", "created", "samples_used", "voice")
 def save_calibration(acoustic_good: float, extra: Optional[Dict[str, Any]] = None) -> None:
     """Persist the current user's acoustic floor and apply it to this process.
 
-    The floor is stored under ``config.USER_NAME`` in the ``users`` map, leaving
-    other users' calibrations untouched.
+    The floor is stored under the configured user name in the ``users`` map,
+    leaving other users' calibrations untouched.
     """
-    global ACOUSTIC_GOOD
+    global _acoustic_good, _acoustic_good_user
+    user_name = get_config().user_name
     entry: Dict[str, Any] = {
         "acoustic_good": round(float(acoustic_good), 5),
         "created": datetime.now().isoformat(timespec="seconds"),
-        "user_name": config.USER_NAME,
+        "user_name": user_name,
     }
     if extra:
         entry.update(extra)
@@ -161,12 +183,13 @@ def save_calibration(acoustic_good: float, extra: Optional[Dict[str, Any]] = Non
     # Preserve a pre-per-user floor by parking it in the default ("") profile.
     if "acoustic_good" in data and "" not in users:
         users[""] = {k: data[k] for k in _LEGACY_CALIBRATION_KEYS if k in data}
-    users[config.USER_NAME] = entry
+    users[user_name] = entry
 
     CALIBRATION_FILE.write_text(
         json.dumps({"users": users}, indent=2) + "\n", encoding="utf-8")
-    ACOUSTIC_GOOD = float(acoustic_good)
-    logging.info(f"[pronounce] Saved calibration user={config.USER_NAME!r} "
+    _acoustic_good = float(acoustic_good)
+    _acoustic_good_user = user_name
+    logging.info(f"[pronounce] Saved calibration user={user_name!r} "
                  f"acoustic_good={acoustic_good:.4f} -> {CALIBRATION_FILE}")
 
 # Lazily-initialised model singletons (loaded once, reused for every analysis).
@@ -194,7 +217,7 @@ class PronunciationResult:
     word_errors: List[Dict[str, Any]]             # per-word expected/actual phonemes
     prosody: Dict[str, List[float]]               # {"f0": [...], "energy": [...]}
     transcription: str                            # what the ASR recognised
-    passed: bool = False                          # score >= SCORE_THRESHOLD
+    passed: bool = False                          # score >= configured score_threshold
     feedback: str = ""                            # human-readable summary
     acoustic_distance: int = 0                    # total Wav2Vec2-embedding DTW distance
     acoustic_per_step: float = 0.0                # DTW distance per alignment step (scored)
@@ -225,12 +248,13 @@ def load_models() -> None:
         if _model is not None and _model_ctc is not None and _processor is not None:
             return
 
-        _processor = Wav2Vec2Processor.from_pretrained(MODEL_NAME)
+        cfg = get_config()
+        _processor = Wav2Vec2Processor.from_pretrained(cfg.model_name)
 
-        _model = Wav2Vec2Model.from_pretrained(MODEL_NAME).to(DEVICE)
+        _model = Wav2Vec2Model.from_pretrained(cfg.model_name).to(cfg.device)
         _model.eval()
 
-        _model_ctc = Wav2Vec2ForCTC.from_pretrained(MODEL_NAME).to(DEVICE)
+        _model_ctc = Wav2Vec2ForCTC.from_pretrained(cfg.model_name).to(cfg.device)
         _model_ctc.eval()
 
 
@@ -296,7 +320,7 @@ def extract_embeddings(audio_waveform: np.ndarray,
     input_values = inputs.input_values
     if input_values.dim() > 2:  # drop any spurious leading dimension
         input_values = input_values.squeeze(0)
-    input_values = input_values.to(DEVICE)
+    input_values = input_values.to(get_config().device)
 
     with torch.no_grad():
         features = _model(input_values).last_hidden_state  # (batch, time, features)
@@ -310,7 +334,7 @@ def transcribe(audio_waveform: np.ndarray) -> str:
 
     inputs = _processor(audio_waveform, sampling_rate=TARGET_SAMPLE_RATE,
                         return_tensors="pt", padding=True)
-    input_values = inputs.input_values.to(DEVICE)
+    input_values = inputs.input_values.to(get_config().device)
 
     with torch.no_grad():
         logits = _model_ctc(input_values).logits
@@ -325,9 +349,14 @@ def transcribe(audio_waveform: np.ndarray) -> str:
 @lru_cache(maxsize=4096)
 def _phonemize_word(word: str) -> tuple:
     """Phonemize one word (each phonemize call spawns espeak, so cache results;
-    words repeat both across attempts at a phrase and across phrases)."""
+    words repeat both across attempts at a phrase and across phrases).
+
+    The espeak accent is fixed for the process (set once via configure() before
+    any analysis), so it does not need to be part of the cache key.
+    """
     try:
-        return tuple(phonemize(word, language=ESPEAK_LANGUAGE, backend="espeak",
+        return tuple(phonemize(word, language=get_config().espeak_language,
+                               backend="espeak",
                                strip=True, preserve_punctuation=False).split())
     except Exception:
         try:
@@ -573,7 +602,7 @@ def _random_pair_baseline(emb_a: np.ndarray, emb_b: np.ndarray,
 
 def acoustic_bad_for(baseline: float, acoustic_good: Optional[float] = None) -> float:
     """Per-utterance acoustic ceiling derived from the random-pair baseline."""
-    good = ACOUSTIC_GOOD if acoustic_good is None else acoustic_good
+    good = current_acoustic_floor() if acoustic_good is None else acoustic_good
     return max(ACOUSTIC_BAD_FRACTION * baseline, good + ACOUSTIC_MIN_SPAN)
 
 
@@ -590,9 +619,10 @@ def compute_pronunciation_score(acoustic_per_step: float,
         word_error_rate: character edit distance / reference text length.
         acoustic_bad: per-utterance ceiling (see ``acoustic_bad_for``); falls back
             to a fixed default when no baseline is available.
-        acoustic_good: floor override; defaults to the calibrated ACOUSTIC_GOOD.
+        acoustic_good: floor override; defaults to the calibrated floor in effect
+            (see ``current_acoustic_floor``).
     """
-    good = ACOUSTIC_GOOD if acoustic_good is None else acoustic_good
+    good = current_acoustic_floor() if acoustic_good is None else acoustic_good
     bad = ACOUSTIC_BAD_DEFAULT if acoustic_bad is None else acoustic_bad
     bad = max(bad, good + ACOUSTIC_MIN_SPAN)
 
@@ -690,8 +720,9 @@ def _append_calibration_sample(record: Dict[str, Any]) -> None:
     the analysis itself.
     """
     try:
-        SAMPLES_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with SAMPLES_FILE.open("a", encoding="utf-8") as f:
+        path = samples_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         logging.exception("Failed to append calibration sample:")
@@ -756,11 +787,11 @@ def analyze(user_audio: np.ndarray,
     )
 
     # Calibration log: raw components in one greppable line. ``calibrate.py``
-    # consumes the structured copy appended to SAMPLES_FILE below.
+    # consumes the structured copy appended to the samples file below.
     logging.info(
         "[pronounce] score=%.1f | acoustic/step=%.4f (good=%.3f bad=%.3f baseline=%.4f) | "
         "phonemes=%d/%d (err=%.2f) | chars_lev=%d/%d (err=%.2f) | voice=%s | asr=%r",
-        score, acoustic_per_step, ACOUSTIC_GOOD, acoustic_bad, acoustic_baseline,
+        score, acoustic_per_step, current_acoustic_floor(), acoustic_bad, acoustic_baseline,
         differences["phoneme_distance"], phoneme_length, phoneme_error_rate,
         differences["char_distance"], reference_length, word_error_rate,
         voice, transcription,
@@ -769,9 +800,9 @@ def analyze(user_audio: np.ndarray,
         "ts": datetime.now().isoformat(timespec="seconds"),
         "text": expected_text,
         "asr": transcription,
-        # Practising user (config.USER_NAME, "" when unset). The acoustic floor
-        # is per-user, so calibrate.py filters the log by this field.
-        "user_name": config.USER_NAME,
+        # Practising user (AnalyzerConfig.user_name, "" when unset). The acoustic
+        # floor is per-user, so calibrate.py filters the log by this field.
+        "user_name": get_config().user_name,
         "voice": voice,
         "acoustic_per_step": round(acoustic_per_step, 5),
         "acoustic_baseline": round(acoustic_baseline, 5),
@@ -801,7 +832,7 @@ def analyze(user_audio: np.ndarray,
             "ref_f0": ref_f0.tolist(), "ref_energy": ref_energy.tolist(),
         },
         transcription=transcription,
-        passed=score >= SCORE_THRESHOLD,
+        passed=score >= get_config().score_threshold,
         feedback=differences["feedback"],
         acoustic_distance=int(acoustic_total),
         acoustic_per_step=acoustic_per_step,
