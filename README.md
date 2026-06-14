@@ -27,6 +27,7 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 - 🧠 **LLM-generated phrases** built from an editable *practice text* panel — paste your own paragraph, song, or sentences to drill.
 - 📊 **Pronunciation scoring** combining acoustic similarity — per-step cosine DTW over Wav2Vec2 embeddings (40%) — with phoneme error rate (30%) and word error rate (30%). All components are length-invariant; the acoustic floor is calibrated to your voice with `python pronounce/calibrate.py`.
 - 🔁 **Replay reference vs. your recording** to compare.
+- 😀 **Articulation face** — a schematic mouth opens and closes with the speech as a reference or your recording plays, and shows a smiley reflecting your score while idle.
 - 🧵 **Responsive UI** — analysis and model loading run in daemon threads; the GUI is updated only via `root.after()`.
 - 💻 **Fully local & offline** after the models are downloaded.
 
@@ -39,7 +40,8 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 | `main.py` | `PronunciationTrainerGUI` — Tkinter GUI, recording, the Prompt→Record→Analyze→Feedback→Loop state machine, threading orchestration, LLM-server subprocess management. |
 | `pronounce/speech.py` | Pronunciation analysis core (adapted from OpenPronounce). Single entry point `analyze(...)`; Wav2Vec2 embeddings + DTW, phoneme comparison, prosody, scoring. No GUI dependency. |
 | `pronounce/calibrate.py` | On-request scoring calibration: reads the per-attempt samples from `logs/pronounce_samples.jsonl` and writes the acoustic floor to `pronounce/calibration.json`. |
-| `echoloop/tts.py` | `TTSManager` — Kokoro TTS. `synthesize()` returns the waveform; `play_array()` plays any waveform (reference at 24 kHz, your recording at 16 kHz). |
+| `echoloop/tts.py` | `TTSManager` — Kokoro TTS. `synthesize()` returns the waveform; `play_array()` plays any waveform (reference at 24 kHz, your recording at 16 kHz). `loudness_envelope()` precomputes the per-frame mouth-openness track used by the face. |
+| `echoloop/face_widget.py` | `FaceWidget` — schematic articulation face (Tk Canvas). Talking mouth driven from a precomputed loudness track while audio plays; smiley reflecting the score when idle. Stdlib `tkinter` only. |
 | `echoloop/stt.py` | `STTManager` — faster-whisper speech-to-text (loaded at startup; kept available for future use). |
 | `echoloop/llm.py` | `LLMManager` — OpenAI-compatible client. `generate_phrase()` produces one practice phrase per request. |
 | `echoloop/config.py` | All configuration: device, model names, score threshold, practice-text path, phrase-generation settings, audio settings. |

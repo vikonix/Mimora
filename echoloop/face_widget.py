@@ -42,6 +42,7 @@ Typical use::
 
 from __future__ import annotations
 
+import time
 import tkinter as tk
 
 
@@ -87,6 +88,7 @@ class FaceWidget(tk.Canvas):
         self._ink = ink
         self._face_color = face_color
         self._frame_ms = max(1, int(1000 / fps))
+        self.fps = fps
         self._attack = attack
         self._release = release
 
@@ -94,6 +96,13 @@ class FaceWidget(tk.Canvas):
         # ``_current`` is the smoothed value the loop actually draws.
         self._target = 0.0
         self._current = 0.0
+        # Optional pre-computed loudness track (see play_levels). While set, the
+        # loop reads the level for the current time from it instead of from
+        # set_level; this is how playback drives the mouth when the audio backend
+        # gives no per-frame callback (winsound on Windows).
+        self._track: list[float] | None = None
+        self._track_fps = float(fps)
+        self._track_t0 = 0.0
         # Expression state: mouth-corner height, -1 frown .. +1 smile.
         self._curl_target = 0.0
         self._curl_current = 0.0
@@ -227,8 +236,27 @@ class FaceWidget(tk.Canvas):
         self._target = level
         self._mode = "talking"
 
+    def play_levels(self, levels: "list[float]", fps: "float | None" = None) -> None:
+        """Drive the talking mouth from a pre-computed loudness track.
+
+        ``levels`` is a sequence of openness values in ``[0, 1]`` sampled at
+        ``fps`` (defaults to the widget's own fps). The track is indexed by
+        wall-clock time from this call, so starting it together with audio
+        playback keeps the mouth in sync *without* any per-frame audio callback
+        -- the path ``winsound`` cannot provide on Windows. When the track runs
+        out the mouth returns to the resting smiley on its own; call ``rest()``
+        to stop it early (e.g. on a playback interrupt).
+
+        Call on the Tk thread: it switches the widget into talking mode.
+        """
+        self._track = list(levels)
+        self._track_fps = float(fps) if fps else self.fps
+        self._track_t0 = time.perf_counter()
+        self._mode = "talking"
+
     def rest(self) -> None:
         """Stop talking and show the smiley. Call when playback stops."""
+        self._track = None
         self._target = 0.0
         self._mode = "paused"
 
@@ -294,6 +322,18 @@ class FaceWidget(tk.Canvas):
 
     def _tick(self) -> None:
         """One animation frame: update only the mouth shape that is visible."""
+        # A pre-computed loudness track, if present, drives the talking mouth by
+        # wall-clock time and hands back to the smiley once it is exhausted.
+        if self._track is not None:
+            idx = int((time.perf_counter() - self._track_t0) * self._track_fps)
+            if idx < len(self._track):
+                self._target = self._track[idx]
+                self._mode = "talking"
+            else:
+                self._track = None
+                self._target = 0.0
+                self._mode = "paused"
+
         if self._mode == "talking":
             self._show_mouth("oval")
             # Asymmetric smoothing: open fast, close slow.

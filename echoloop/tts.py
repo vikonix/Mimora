@@ -24,7 +24,8 @@ _NULL_EVENT = Event()
 # Silence padding prepended to every winsound playback block.
 # Windows Audio Session needs ~50-200ms to initialize on the first call,
 # which clips the very beginning of the first sentence without this buffer.
-WINSOUND_LEAD_IN_SAMPLES = int(KOKORO_SAMPLE_RATE * 0.15)  # 150ms of silence
+WINSOUND_LEAD_IN_SECONDS = 0.15  # 150ms of silence
+WINSOUND_LEAD_IN_SAMPLES = int(KOKORO_SAMPLE_RATE * WINSOUND_LEAD_IN_SECONDS)
 
 # Language-specific warm-up words to prevent out-of-vocabulary phoneme warnings
 KOKORO_WARMUP_WORDS = {
@@ -59,6 +60,40 @@ def reset_portaudio():
         logging.debug(f"PortAudio reinitialization error: {init_err}")
 
 
+def uses_winsound() -> bool:
+    """True when play_array will take the blocking winsound path.
+
+    winsound can only target the default output device, so an explicit
+    AUDIO_OUTPUT_DEVICE forces the sounddevice path even on Windows. Kept as a
+    single source of truth so the playback path and the mouth-animation lead-in
+    (see playback_lead_in_seconds) never disagree.
+    """
+    return WINSOUND_AVAILABLE and config.AUDIO_OUTPUT_DEVICE is None
+
+
+def loudness_envelope(waveform: np.ndarray, sample_rate: int,
+                      fps: int = 30, gain: float = 8.0) -> list:
+    """Pre-compute a per-frame loudness track for the articulation face.
+
+    Returns openness values in ``[0, 1]`` -- one per animation frame at ``fps``
+    -- from the windowed RMS of ``waveform``. The mapping mirrors
+    ``FaceWidget.level_from_rms`` (same ``gain``) so a pre-computed track looks
+    identical to live RMS feeding. The whole signal is known before playback,
+    so the face can be driven by a wall-clock timer instead of a per-frame
+    audio callback -- which winsound does not provide on Windows.
+    """
+    audio = np.asarray(waveform, dtype=np.float32)
+    if audio.size == 0:
+        return []
+    frame = max(1, int(round(sample_rate / fps)))
+    pad = (-len(audio)) % frame  # right-pad with silence to a whole frame count
+    if pad:
+        audio = np.concatenate([audio, np.zeros(pad, dtype=np.float32)])
+    frames = audio.reshape(-1, frame)
+    rms = np.sqrt(np.mean(frames * frames, axis=1))
+    return np.clip(rms * gain, 0.0, 1.0).tolist()
+
+
 class TTSManager:
     def __init__(self):
         self.model = None
@@ -68,6 +103,15 @@ class TTSManager:
         """Immediately interrupts any active winsound playback (Windows only)."""
         if WINSOUND_AVAILABLE:
             winsound.PlaySound(None, 0)
+
+    def playback_lead_in_seconds(self) -> float:
+        """Silence play_array prepends before audio, in seconds (0 if none).
+
+        The face animation prepends the same amount of closed-mouth frames so
+        the mouth stays shut during the Windows audio-session warm-up and the
+        talking animation lines up with the sound.
+        """
+        return WINSOUND_LEAD_IN_SECONDS if uses_winsound() else 0.0
 
     def load_model(self):
         """Instantiates Kokoro TTS network into memory."""
@@ -144,7 +188,7 @@ class TTSManager:
             # error 6). winsound can only target the default output device, so an
             # explicit AUDIO_OUTPUT_DEVICE forces the sounddevice path below —
             # otherwise that config option would be silently ignored on Windows.
-            if WINSOUND_AVAILABLE and config.AUDIO_OUTPUT_DEVICE is None:
+            if uses_winsound():
                 # Normalise peak to avoid clipping.
                 peak = np.max(np.abs(full_audio))
                 if peak > 0:
@@ -152,7 +196,7 @@ class TTSManager:
 
                 # Prepend silence so the Windows Audio Session can initialize without
                 # clipping the first ~150ms. Lead-in scales with the sample rate.
-                lead_in = np.zeros(int(sample_rate * 0.15), dtype=np.float32)
+                lead_in = np.zeros(int(sample_rate * WINSOUND_LEAD_IN_SECONDS), dtype=np.float32)
                 full_audio = np.concatenate([lead_in, full_audio])
 
                 # Convert float32 (-1.0..1.0) to 16-bit PCM.

@@ -36,7 +36,7 @@ from echoloop import config
 # done by Wav2Vec2 in pronounce/. Re-enable by importing STTManager again.
 from echoloop.llm import LLMManager
 from echoloop.llm_server_ctl import LLMServerController
-from echoloop.tts import TTSManager, KOKORO_SAMPLE_RATE
+from echoloop.tts import TTSManager, KOKORO_SAMPLE_RATE, loudness_envelope
 from echoloop.recorder import (
     AudioRecorder,
     DEBUG_DUMP_RECORDINGS,
@@ -319,8 +319,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             self.root.after(0, self.append_system_msg, greeting)
             audio = self.tts_mgr.synthesize(greeting, voice=self._selected_voice())
             if audio.size > 0:
-                self.tts_mgr.play_array(audio, KOKORO_SAMPLE_RATE,
-                                        self._new_playback_event(), self.shutdown_event)
+                self._play_with_face(audio, KOKORO_SAMPLE_RATE, self._new_playback_event())
         except Exception:
             logging.exception("Greeting error:")
         finally:
@@ -467,8 +466,8 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             # Honor the selected reference speed (see play_reference for the
             # lowered-sample-rate slowing approach) instead of always 1.0×.
             effective_sr = int(KOKORO_SAMPLE_RATE * self._selected_speed())
-            self.tts_mgr.play_array(self.reference_audio, effective_sr,
-                                    self._new_playback_event(), self.shutdown_event)
+            self._play_with_face(self.reference_audio, effective_sr,
+                                 self._new_playback_event())
 
             self.root.after(0, self._phrase_ready)
 
@@ -639,8 +638,8 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             # see _new_playback_event).
             self.root.after(0, self.draw_mic_button, "speaking")
             self.root.after(0, self.update_status, "Playing reference...", THEME["reference"])
-            self.tts_mgr.play_array(self.reference_audio, KOKORO_SAMPLE_RATE,
-                                    self._new_playback_event(), self.shutdown_event)
+            self._play_with_face(self.reference_audio, KOKORO_SAMPLE_RATE,
+                                 self._new_playback_event())
 
             # Then run analysis with the reference as both inputs.
             self.root.after(0, self.draw_mic_button, "processing")
@@ -690,8 +689,8 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             # see _new_playback_event).
             self.root.after(0, self.draw_mic_button, "speaking")
             self.root.after(0, self.update_status, "Playing your recording...", THEME["reference"])
-            self.tts_mgr.play_array(self.last_user_audio, config.AUDIO_SAMPLE_RATE,
-                                    self._new_playback_event(), self.shutdown_event)
+            self._play_with_face(self.last_user_audio, config.AUDIO_SAMPLE_RATE,
+                                 self._new_playback_event())
             self.root.after(0, self.draw_mic_button, "processing")
             self.root.after(0, self.update_status, "Analyzing pronunciation...", THEME["warn"])
 
@@ -782,10 +781,56 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         self.update_status(status, THEME["reference"])
 
         def _worker():
-            self.tts_mgr.play_array(waveform, sample_rate, stop_event, self.shutdown_event)
+            self._play_with_face(waveform, sample_rate, stop_event)
             self.root.after(0, self._playback_finished, stop_event)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    # ------------------------------------------------------------------
+    # Articulation face (talking mouth driven from the loudness envelope)
+    # ------------------------------------------------------------------
+    def _play_with_face(self, waveform: np.ndarray, sample_rate: int,
+                        stop_event: threading.Event):
+        """play_array, with the talking mouth driven from its loudness envelope.
+
+        winsound plays the whole buffer with no per-frame callback, so the mouth
+        cannot follow live amplitude on Windows. Instead the envelope is
+        pre-computed (the signal is fully known up front) and the face advances
+        it on its own wall-clock timer, kept in sync by matching the playback
+        lead-in. Safe to call from a background thread: the widget is touched
+        only via root.after. Blocks for the playback duration, like play_array.
+        """
+        self.root.after(0, self._start_face_track, waveform, sample_rate)
+        try:
+            self.tts_mgr.play_array(waveform, sample_rate, stop_event, self.shutdown_event)
+        finally:
+            self.root.after(0, self._rest_face_if_current, stop_event)
+
+    def _start_face_track(self, waveform: np.ndarray, sample_rate: int):
+        """Build the loudness track and hand it to the face. (Tk thread.)"""
+        face = getattr(self, "face", None)
+        if face is None or waveform is None or getattr(waveform, "size", 0) == 0:
+            return
+        fps = face.fps
+        levels = loudness_envelope(waveform, sample_rate, fps=fps)
+        # Keep the mouth shut during any playback lead-in silence (Windows
+        # audio-session warm-up) so the animation lines up with the sound.
+        lead_frames = int(round(self.tts_mgr.playback_lead_in_seconds() * fps))
+        if lead_frames:
+            levels = [0.0] * lead_frames + levels
+        face.play_levels(levels, fps=fps)
+
+    def _rest_face_if_current(self, stop_event: threading.Event):
+        """Close the mouth, unless a newer playback has already taken over.
+
+        Guards against an interrupted playback's cleanup clobbering the mouth
+        track of the playback that superseded it (same reasoning as
+        _playback_finished). (Tk thread.)
+        """
+        if stop_event is self.playback_stop_event:
+            face = getattr(self, "face", None)
+            if face is not None:
+                face.rest()
 
     def _playback_finished(self, stop_event: threading.Event):
         """Restore the Ready status unless this playback was stopped/superseded.
@@ -800,6 +845,12 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
     def stop_playback(self):
         self.playback_stop_event.set()
         self.tts_mgr.stop_playback()
+        # Close the mouth at once on an interrupt; a track left running would
+        # keep flapping with no sound. A superseding playback calls this before
+        # starting its own track, so the order (rest -> new track) is correct.
+        face = getattr(self, "face", None)
+        if face is not None:
+            face.rest()
 
     # ------------------------------------------------------------------
     # Shutdown
