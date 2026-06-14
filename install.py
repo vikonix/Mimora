@@ -69,6 +69,18 @@ MODEL_CACHE_DIR = PROJECT_ROOT / "model_cache"
 DETECT_HW_SCRIPT = PROJECT_ROOT / "hwconfig" / "detect_hardware.py"
 
 MIN_PYTHON = (3, 11)  # matches requires-python in pyproject.toml
+# Highest Python minor we have verified has prebuilt wheels for every
+# dependency. Newer interpreters are NOT blocked (no upper version gate) — they
+# only get a warning (see step_check_python). Because the requirements install
+# is binary-only, a missing wheel on such an interpreter fails loudly with a
+# "no matching distribution" error instead of silently source-building.
+WHEEL_TESTED_MAX = (3, 12)
+
+# Dependencies that publish no wheels (pure-Python, sdist only). The
+# requirements step installs binary-only to stop an unsupported interpreter
+# from silently compiling a package that lacks a wheel; these few must be
+# exempted or the install would fail on them on every Python version.
+SOURCE_ONLY_PACKAGES = ("fastdtw", "docopt")
 
 # The GGUF chat model. Default filename matches EXTERNAL_MODEL_PATH in
 # echoloop/config.py, so the app finds it without any settings change.
@@ -292,6 +304,34 @@ class Confirmer:
                 raise SystemExit(1)
             print("    Please answer r, s, or n.")
 
+    def warn_continue(self, lines: list[str]) -> bool:
+        """Show a warning and ask whether to continue or abort the installer.
+
+        Unlike confirm(), there is no 'skip': the choice is proceed or stop.
+        Honors --yes and --dry-run by proceeding (the warning is still logged).
+        Returns True to continue; raises SystemExit(1) if the user aborts.
+        """
+        self._log.log("")
+        for line in lines:
+            self._log.log(f"    WARNING: {line}")
+
+        if self._assume_yes or self._dry_run:
+            note = "[--yes]" if self._assume_yes else "[dry-run]"
+            self._log.log(f"    {note} continuing despite warning")
+            return True
+
+        # No default: an empty answer re-prompts. The choice is consequential
+        # (the install may fail), so require an explicit continue or abort.
+        while True:
+            answer = input("    Continue anyway? [c]ontinue / [a]bort: "
+                           ).strip().lower()
+            if answer in ("c", "continue"):
+                return True
+            if answer in ("a", "abort"):
+                self._log.log("    aborted by user")
+                raise SystemExit(1)
+            print("    Please answer c or a.")
+
 
 # ---------------------------------------------------------------------------
 # Command execution
@@ -468,8 +508,11 @@ def check_virtualenv(log: Logger, args: argparse.Namespace) -> None:
     log.log("    Proceeding with the global interpreter at the user's request.")
 
 
-def step_check_python(log: Logger, report: StepReport) -> None:
-    """Hard requirement: refuse to continue on an unsupported interpreter."""
+def step_check_python(
+    log: Logger, confirmer: Confirmer, report: StepReport
+) -> None:
+    """Gate the interpreter: hard-fail below the minimum, warn above the tested
+    maximum (no upper version block — newer Pythons may just lack wheels)."""
     log.banner("Step 1/8 — Python version")
     current = sys.version_info[:2]
     log.log(f"    Running Python {platform.python_version()} ({sys.executable})")
@@ -478,6 +521,15 @@ def step_check_python(log: Logger, report: StepReport) -> None:
         log.log(f"    ERROR: EchoLoop needs Python >= {need}. Aborting.")
         report.add("Python version", FAILED, f"need >= {need}")
         raise SystemExit(1)
+    if current > WHEEL_TESTED_MAX:
+        tested = ".".join(map(str, WHEEL_TESTED_MAX))
+        confirmer.warn_continue([
+            f"Python {platform.python_version()} is newer than the latest "
+            f"version EchoLoop is tested against ({tested}).",
+            "Prebuilt wheels may not exist yet for some dependencies on this "
+            "interpreter. Installs are binary-only, so the dependency step may "
+            "stop with a 'no matching distribution' error.",
+        ])
     report.add("Python version", DONE, platform.python_version())
 
 
@@ -492,7 +544,14 @@ def step_install_requirements(
         raise SystemExit(1)
 
     installed = all_requirements_installed()
-    cmd = PIP + ["install", "-r", str(REQUIREMENTS)]
+    # Binary-only install: if pip can't find a prebuilt wheel for the current
+    # interpreter it fails with "no matching distribution" instead of quietly
+    # downloading an sdist and compiling it (which is what happened on an
+    # untested Python and triggered a numpy source build). The few sdist-only
+    # packages are exempted so they can still build.
+    cmd = PIP + ["install", "-r", str(REQUIREMENTS),
+                 "--only-binary", ":all:",
+                 "--no-binary", ",".join(SOURCE_ONLY_PACKAGES)]
     desc = ("Install all Python dependencies (requirements.txt also pulls in "
             "llm_server/ and pronounce/ requirements).")
     if installed:
@@ -822,8 +881,8 @@ def main() -> int:
     # Step 0: refuse to silently install into the global interpreter.
     check_virtualenv(log, args)
 
-    # Step 1: Python version (hard gate).
-    step_check_python(log, report)
+    # Step 1: Python version (hard min gate; warn above the tested max).
+    step_check_python(log, confirmer, report)
 
     # Step 2: GPU detection (informs steps 4a/4b; no packages needed).
     log.banner("Step 2/8 — GPU / CUDA detection")
