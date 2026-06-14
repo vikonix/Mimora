@@ -51,7 +51,7 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 
 ## Requirements
 
-- **Python 3.11** (developed and tested on 3.11)
+- **Python 3.11 or 3.12** (developed and tested on 3.11 and 3.12). Python 3.13 and newer are not yet supported (as of June 2026).
 - **Windows** is the primary target (TTS playback uses `winsound`); a `sounddevice` fallback exists for other platforms.
 - A microphone and speakers.
 - For GPU acceleration: an NVIDIA GPU with a CUDA-enabled PyTorch build.

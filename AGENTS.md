@@ -4,7 +4,7 @@ This file provides guidance to agents when working with code in this repository.
 
 ## Project Overview
 
-EchoLoop is a local, offline **pronunciation trainer** (Python 3.11, Tkinter GUI). It speaks an LLM-generated phrase aloud (Kokoro TTS), records the user repeating it, then scores the attempt against the reference using Wav2Vec2 acoustic similarity, phoneme-level word errors, and prosody. The user repeats the same phrase until the score passes a configurable threshold, then generates the next one.
+EchoLoop is a local, offline **pronunciation trainer** (Python 3.11/3.12, Tkinter GUI). It speaks an LLM-generated phrase aloud (Kokoro TTS), records the user repeating it, then scores the attempt against the reference using Wav2Vec2 acoustic similarity, phoneme-level word errors, and prosody. The user repeats the same phrase until the score passes a configurable threshold, then generates the next one.
 
 The pronunciation-scoring core in `pronounce/` is adapted from [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) and reused as a GUI-agnostic library.
 

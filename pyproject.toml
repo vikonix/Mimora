@@ -7,7 +7,8 @@ name = "echoloop"
 version = "0.1.0"
 description = "Local, offline pronunciation trainer: Kokoro TTS prompts, Wav2Vec2 scoring, local LLM phrase generation."
 readme = "README.md"
-requires-python = ">=3.11"
+# Tested on 3.11 and 3.12; 3.13+ not yet supported (as of June 2026).
+requires-python = ">=3.11,<3.13"
 license = { file = "LICENSE" }
 
 # The app is run from the project root (`python main.py`) and is not meant to
