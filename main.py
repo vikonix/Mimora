@@ -407,6 +407,11 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         self._persist_setting("show_pitch_chart", bool(self.show_f0.get()))
         self._persist_setting("show_energy_chart", bool(self.show_energy.get()))
 
+    def on_show_face_toggled(self):
+        """Apply the face checkbox (show/hide the panel) and persist it."""
+        self._toggle_face()
+        self._persist_setting("show_face", bool(self.show_face.get()))
+
     def on_generate_phrase(self):
         if not self.app_ready or self.is_generating:
             return

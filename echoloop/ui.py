@@ -15,6 +15,7 @@ from tkinter import scrolledtext
 from typing import TYPE_CHECKING
 
 from echoloop import config, prosody_utils
+from echoloop.face_widget import FaceWidget
 
 # Resolved UI color palette (semantic name -> hex), selected by the
 # "color_theme" setting in settings.json; see config.py.
@@ -224,6 +225,15 @@ class PronunciationTrainerUI:
         prosody_header.pack(fill=tk.X)
         tk.Label(prosody_header, text="Prosody", font=(FONT_FAMILY, 9, "bold"),
                  fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
+        # "Face" toggles the articulation panel on the right. Packed first among
+        # the right-aligned items so it sits at the far right, after the legend.
+        self.show_face = tk.BooleanVar(value=config.SHOW_FACE)
+        tk.Checkbutton(prosody_header, text="Face", variable=self.show_face,
+                       command=self.on_show_face_toggled,
+                       font=(FONT_FAMILY, 8), fg=THEME["text_muted"], bg=THEME["bg_main"],
+                       activebackground=THEME["bg_main"], activeforeground=THEME["text_dim"],
+                       selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
+                       cursor="hand2").pack(side=tk.RIGHT, padx=(12, 0))
         tk.Label(prosody_header, text="● reference", font=(FONT_FAMILY, 8),
                  fg=THEME["reference"], bg=THEME["bg_main"]).pack(side=tk.RIGHT, padx=(8, 0))
         tk.Label(prosody_header, text="● you", font=(FONT_FAMILY, 8),
@@ -232,21 +242,47 @@ class PronunciationTrainerUI:
         # Each chart title doubles as a checkbox: unchecking hides that chart's
         # canvas to free vertical space; checking restores it in place
         # (see _toggle_prosody_charts). Initial state is the persisted setting.
+        # The Pitch title sits above the row so the face panel beside the charts
+        # lines up with the chart areas, not the labels.
         self.show_f0 = tk.BooleanVar(value=config.SHOW_PITCH_CHART)
         self.f0_check = self._make_chart_checkbox(
             prosody_frame, "Pitch — intonation (semitones vs your median)", self.show_f0)
         self.f0_check.pack(anchor=tk.W)
-        self.f0_canvas = tk.Canvas(prosody_frame, height=46, bg=THEME["bg_panel"],
+
+        # Body row: charts on the left (flexible width), face panel on the right.
+        prosody_body = tk.Frame(prosody_frame, bg=THEME["bg_main"])
+        prosody_body.pack(fill=tk.X)
+
+        charts_frame = tk.Frame(prosody_body, bg=THEME["bg_main"])
+        charts_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.f0_canvas = tk.Canvas(charts_frame, height=46, bg=THEME["bg_panel"],
                                    highlightthickness=1, highlightbackground=THEME["border"])
         self.f0_canvas.pack(fill=tk.X, pady=(0, 4))
 
         self.show_energy = tk.BooleanVar(value=config.SHOW_ENERGY_CHART)
         self.en_check = self._make_chart_checkbox(
-            prosody_frame, "Energy — stress pattern", self.show_energy)
+            charts_frame, "Energy — stress pattern", self.show_energy)
         self.en_check.pack(anchor=tk.W)
-        self.en_canvas = tk.Canvas(prosody_frame, height=46, bg=THEME["bg_panel"],
+        self.en_canvas = tk.Canvas(charts_frame, height=46, bg=THEME["bg_panel"],
                                    highlightthickness=1, highlightbackground=THEME["border"])
         self.en_canvas.pack(fill=tk.X)
+
+        # Face panel: a bordered box (matching the charts) spanning the row
+        # height, with the articulation face centred inside. The face fill uses
+        # the brightest theme colour and its features the panel colour, so it
+        # reads as a white face on dark themes and a dark face on light ones.
+        self.face_frame = tk.Frame(prosody_body, bg=THEME["bg_panel"],
+                                   highlightthickness=1, highlightbackground=THEME["border"])
+        self.face = FaceWidget(self.face_frame, size=110, bg=THEME["bg_panel"],
+                               face_color=THEME["text_bright"], ink=THEME["bg_panel"])
+        # Let the charts column decide the row height: a tiny requested height
+        # stops the face from inflating the row, while fill=BOTH makes it fill
+        # whatever height the panel gets. Its responsive rebuild keeps the face
+        # circular and centred, so the panel bottom lines up with the charts.
+        self.face.configure(height=1)
+        self.face.pack(expand=True, fill=tk.BOTH, padx=10, pady=6)
+        self.face.set_expression(":)")  # waiting state
 
         # Reading hint: horizontal axis is time (stretched to equal width for both),
         # so the goal is matching the *shape* of the reference, not exact overlap.
@@ -259,9 +295,10 @@ class PronunciationTrainerUI:
         self.f0_canvas.bind("<Configure>", lambda e: self._redraw_prosody())
         self.en_canvas.bind("<Configure>", lambda e: self._redraw_prosody())
 
-        # Both canvases are packed above by default; hide whichever chart the
-        # persisted checkbox state says is off.
+        # Both canvases and the face panel are packed above by default; hide
+        # whichever the persisted checkbox state says is off.
         self._toggle_prosody_charts()
+        self._toggle_face()
 
         # 6. Action row directly under the result window: groups every action
         # button on one line — Test diagnostic, replay of the user's recording,
@@ -428,15 +465,28 @@ class PronunciationTrainerUI:
         # Return focus to the window so the spacebar push-to-talk keeps working
         # (a focused checkbox would otherwise capture the spacebar and toggle).
         self.root.focus_set()
-        for var, canvas, title, pady in (
-                (self.show_f0, self.f0_canvas, self.f0_check, (0, 4)),
-                (self.show_energy, self.en_canvas, self.en_check, 0)):
-            shown = canvas.winfo_manager() == "pack"
-            if var.get() and not shown:
-                # Re-pack right below the chart's own title to keep the order.
-                canvas.pack(fill=tk.X, pady=pady, after=title)
-            elif not var.get() and shown:
-                canvas.pack_forget()
+        # Pitch chart leads the charts column (its title is above the row), so
+        # re-pack it before the Energy title to preserve order.
+        f0_shown = self.f0_canvas.winfo_manager() == "pack"
+        if self.show_f0.get() and not f0_shown:
+            self.f0_canvas.pack(fill=tk.X, pady=(0, 4), before=self.en_check)
+        elif not self.show_f0.get() and f0_shown:
+            self.f0_canvas.pack_forget()
+        # Energy chart sits right after its own title.
+        en_shown = self.en_canvas.winfo_manager() == "pack"
+        if self.show_energy.get() and not en_shown:
+            self.en_canvas.pack(fill=tk.X, after=self.en_check)
+        elif not self.show_energy.get() and en_shown:
+            self.en_canvas.pack_forget()
+
+    def _toggle_face(self):
+        """Show/hide the face panel; the charts column reflows to the free width."""
+        self.root.focus_set()
+        shown = self.face_frame.winfo_manager() == "pack"
+        if self.show_face.get() and not shown:
+            self.face_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(8, 0))
+        elif not self.show_face.get() and shown:
+            self.face_frame.pack_forget()
 
     def _redraw_prosody(self):
         """Redraw both prosody canvases from the cached result (e.g. after resize)."""
@@ -460,6 +510,8 @@ class PronunciationTrainerUI:
     # Feedback rendering
     # ------------------------------------------------------------------
     def _show_feedback(self, result: "pronounce.PronunciationResult"):
+        # Reflect the score on the face: above 50 smiles, below frowns, 50 flat.
+        self.face.set_score(result.score)
         self.feedback_display.configure(state=tk.NORMAL)
         tag = "good" if result.passed else "bad"
         self.feedback_display.insert(tk.END, f"Score: {result.score:.0f}/100 ", tag)

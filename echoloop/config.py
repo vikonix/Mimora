@@ -68,6 +68,7 @@ _KNOWN_USER_KEYS = {
     "reference_speed",
     "show_pitch_chart",
     "show_energy_chart",
+    "show_face",
 }
 for _key in _USER:
     if not _key.startswith("_") and _key not in _KNOWN_USER_KEYS:
@@ -464,6 +465,10 @@ if PHRASE_LENGTH not in ("full", "fragment"):
 # the app window and persisted on change.
 SHOW_PITCH_CHART = _user_bool("show_pitch_chart", True)
 SHOW_ENERGY_CHART = _user_bool("show_energy_chart", True)
+
+# Visibility of the articulation face shown beside the prosody charts, toggled
+# by the "Face" checkbox in the prosody header and persisted on change.
+SHOW_FACE = _user_bool("show_face", True)
 
 # =====================================================================
 # Color Theme (UI palette)
