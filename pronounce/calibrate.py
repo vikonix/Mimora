@@ -6,7 +6,11 @@ After a practice session (10+ honest attempts), run:
     python pronounce/calibrate.py            # compute and write calibration.json
     python pronounce/calibrate.py --dry-run  # only show what would change
 
+The floor is per practising user: only attempts logged under the current
+``config.USER_NAME`` are used, and the result is saved under that name.
+
 How it works:
+  * keeps only the current user's attempts (matched on the logged user_name);
   * keeps attempts whose *text* matched well — low word/phoneme error rates mean
     the user really said the expected phrase, so its acoustic distance is a
     sample of "good pronunciation, different speaker";
@@ -31,6 +35,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 from pronounce import speech
+from echoloop import config
 
 # A sample counts as a "good attempt" when the text clearly matched.
 MAX_WORD_ERROR_RATE = 0.20
@@ -70,10 +75,15 @@ def main() -> int:
                              "(the acoustic floor is voice-specific)")
     args = parser.parse_args()
 
+    # The acoustic floor is per practising user, so calibrate only from the
+    # current user's attempts (matched on the user_name recorded by
+    # speech.analyze; "" when no name is set in settings.json).
+    samples = load_samples()
+    samples = [s for s in samples if s.get("user_name", "") == config.USER_NAME]
+
     # Filter by voice *before* truncating to the most recent samples — the
     # reverse order spent the sample budget on other voices and silently
     # dropped older samples of the requested one.
-    samples = load_samples()
     if args.voice:
         samples = [s for s in samples if s.get("voice") == args.voice]
     samples = samples[-MAX_SAMPLES_USED:]
@@ -84,6 +94,7 @@ def main() -> int:
             and s.get("phoneme_error_rate", 1) <= MAX_PHONEME_ERROR_RATE]
 
     print(f"Samples file:   {speech.SAMPLES_FILE}")
+    print(f"Current user:   {config.USER_NAME!r}")
     print(f"Total samples:  {len(samples)} (last {MAX_SAMPLES_USED} max"
           + (f", voice={args.voice}" if args.voice else "") + ")")
     print(f"Good attempts:  {len(good)} (word_err<={MAX_WORD_ERROR_RATE}, "

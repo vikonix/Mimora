@@ -96,14 +96,28 @@ CALIBRATION_FILE = Path(__file__).resolve().parent / "calibration.json"
 SAMPLES_FILE = Path(config.LOG_DIR) / "pronounce_samples.jsonl"
 
 
+# The acoustic floor is per practising user: calibration.json maps a user name
+# (config.USER_NAME, "" when unset) to that user's floor under a "users" object:
+#   {"users": {"": {"acoustic_good": 0.18, "created": ...}, "valery": {...}}}
+# A pre-per-user file had the floor at the top level ({"acoustic_good": ...}); it
+# is still honoured as a fallback and migrated into the "" profile on next save.
 def _load_calibration() -> float:
-    """Return the calibrated acoustic floor, or the default when not calibrated."""
+    """Return the current user's calibrated acoustic floor, or the default."""
     try:
         if CALIBRATION_FILE.exists():
             data = json.loads(CALIBRATION_FILE.read_text(encoding="utf-8"))
-            value = float(data["acoustic_good"])
-            logging.info(f"[pronounce] Loaded calibration: acoustic_good={value:.4f} "
-                         f"({CALIBRATION_FILE})")
+            users = data.get("users") if isinstance(data, dict) else None
+            entry = users.get(config.USER_NAME) if isinstance(users, dict) else None
+            if isinstance(entry, dict) and "acoustic_good" in entry:
+                value = float(entry["acoustic_good"])
+                source = f"user={config.USER_NAME!r}"
+            elif isinstance(data, dict) and "acoustic_good" in data:
+                value = float(data["acoustic_good"])  # legacy flat file
+                source = "legacy"
+            else:
+                return ACOUSTIC_GOOD_DEFAULT
+            logging.info(f"[pronounce] Loaded calibration ({source}): "
+                         f"acoustic_good={value:.4f} ({CALIBRATION_FILE})")
             return value
     except Exception:
         logging.exception("Failed to read calibration file; using defaults:")
@@ -113,19 +127,47 @@ def _load_calibration() -> float:
 ACOUSTIC_GOOD = _load_calibration()
 
 
+# Keys carried over when migrating a legacy flat calibration into a user profile.
+_LEGACY_CALIBRATION_KEYS = ("acoustic_good", "created", "samples_used", "voice")
+
+
 def save_calibration(acoustic_good: float, extra: Optional[Dict[str, Any]] = None) -> None:
-    """Persist a new acoustic floor (and apply it to the running process)."""
+    """Persist the current user's acoustic floor and apply it to this process.
+
+    The floor is stored under ``config.USER_NAME`` in the ``users`` map, leaving
+    other users' calibrations untouched.
+    """
     global ACOUSTIC_GOOD
-    payload: Dict[str, Any] = {
+    entry: Dict[str, Any] = {
         "acoustic_good": round(float(acoustic_good), 5),
         "created": datetime.now().isoformat(timespec="seconds"),
+        "user_name": config.USER_NAME,
     }
     if extra:
-        payload.update(extra)
-    CALIBRATION_FILE.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        entry.update(extra)
+
+    # Merge into the existing store so other users keep their floors.
+    data: Dict[str, Any] = {}
+    if CALIBRATION_FILE.exists():
+        try:
+            existing = json.loads(CALIBRATION_FILE.read_text(encoding="utf-8"))
+            if isinstance(existing, dict):
+                data = existing
+        except Exception:
+            logging.exception("Calibration file unreadable; rewriting it:")
+    users = data.get("users")
+    if not isinstance(users, dict):
+        users = {}
+    # Preserve a pre-per-user floor by parking it in the default ("") profile.
+    if "acoustic_good" in data and "" not in users:
+        users[""] = {k: data[k] for k in _LEGACY_CALIBRATION_KEYS if k in data}
+    users[config.USER_NAME] = entry
+
+    CALIBRATION_FILE.write_text(
+        json.dumps({"users": users}, indent=2) + "\n", encoding="utf-8")
     ACOUSTIC_GOOD = float(acoustic_good)
-    logging.info(f"[pronounce] Saved calibration acoustic_good={acoustic_good:.4f} "
-                 f"-> {CALIBRATION_FILE}")
+    logging.info(f"[pronounce] Saved calibration user={config.USER_NAME!r} "
+                 f"acoustic_good={acoustic_good:.4f} -> {CALIBRATION_FILE}")
 
 # Lazily-initialised model singletons (loaded once, reused for every analysis).
 _processor: Optional[Wav2Vec2Processor] = None
@@ -727,6 +769,9 @@ def analyze(user_audio: np.ndarray,
         "ts": datetime.now().isoformat(timespec="seconds"),
         "text": expected_text,
         "asr": transcription,
+        # Practising user (config.USER_NAME, "" when unset). The acoustic floor
+        # is per-user, so calibrate.py filters the log by this field.
+        "user_name": config.USER_NAME,
         "voice": voice,
         "acoustic_per_step": round(acoustic_per_step, 5),
         "acoustic_baseline": round(acoustic_baseline, 5),
