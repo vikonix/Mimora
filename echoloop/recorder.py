@@ -18,7 +18,7 @@ import numpy as np
 import sounddevice as sd
 
 from echoloop import config
-from echoloop.tts import reset_portaudio
+from echoloop.audio_io import reset_portaudio
 
 # Technical recording & signal processing parameters
 RECORDING_BLOCKSIZE = 0  # 0 → PortAudio picks an optimal block size. A small fixed

@@ -6,26 +6,22 @@ import numpy as np
 import sounddevice as sd
 from kokoro import KModel, KPipeline
 from echoloop import config
+from echoloop.audio_io import (
+    WINSOUND_AVAILABLE,
+    WINSOUND_LEAD_IN_SECONDS,
+    reset_portaudio,
+    uses_winsound,
+)
 import io
 import wave
 
-try:
+# winsound is the module actually driving Windows playback below; the
+# availability flag and path-selection logic live in echoloop.audio_io.
+if WINSOUND_AVAILABLE:
     import winsound
-    WINSOUND_AVAILABLE = True
-except ImportError:
-    WINSOUND_AVAILABLE = False
-
-# Technical synthesizer & audio configurations
-KOKORO_SAMPLE_RATE = 24_000   # Kokoro synthesizes native 24kHz audio outputs
 
 # A never-set event used as a default so callers may omit stop/shutdown events.
 _NULL_EVENT = Event()
-
-# Silence padding prepended to every winsound playback block.
-# Windows Audio Session needs ~50-200ms to initialize on the first call,
-# which clips the very beginning of the first sentence without this buffer.
-WINSOUND_LEAD_IN_SECONDS = 0.15  # 150ms of silence
-WINSOUND_LEAD_IN_SAMPLES = int(KOKORO_SAMPLE_RATE * WINSOUND_LEAD_IN_SECONDS)
 
 # Language-specific warm-up words to prevent out-of-vocabulary phoneme warnings
 KOKORO_WARMUP_WORDS = {
@@ -41,34 +37,6 @@ KOKORO_WARMUP_WORDS = {
     "r": "Привет.",    # Russian
     "z": "你好",       # Chinese
 }
-
-
-def reset_portaudio():
-    """Fully reinitialize PortAudio before opening a stream.
-
-    Heals HDMI/NVIDIA device disconnects caused by CUDA power-state transitions
-    on Windows. sd._terminate/_initialize are *not* public sounddevice API
-    (present in 0.4.x/0.5.x); if an upgrade removes them this degrades to a
-    logged no-op and the reset can simply be dropped. Call only while holding
-    config.AUDIO_LOCK and with no other stream open — the reset invalidates
-    every existing PortAudio stream in the process.
-    """
-    try:
-        sd._terminate()
-        sd._initialize()
-    except Exception as init_err:
-        logging.debug(f"PortAudio reinitialization error: {init_err}")
-
-
-def uses_winsound() -> bool:
-    """True when play_array will take the blocking winsound path.
-
-    winsound can only target the default output device, so an explicit
-    AUDIO_OUTPUT_DEVICE forces the sounddevice path even on Windows. Kept as a
-    single source of truth so the playback path and the mouth-animation lead-in
-    (see playback_lead_in_seconds) never disagree.
-    """
-    return WINSOUND_AVAILABLE and config.AUDIO_OUTPUT_DEVICE is None
 
 
 def loudness_envelope(waveform: np.ndarray, sample_rate: int,

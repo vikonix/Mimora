@@ -36,7 +36,8 @@ from echoloop import config
 # done by Wav2Vec2 in pronounce/. Re-enable by importing STTManager again.
 from echoloop.llm import LLMManager
 from echoloop.llm_server_ctl import LLMServerController
-from echoloop.tts import TTSManager, KOKORO_SAMPLE_RATE, loudness_envelope
+from echoloop.audio_io import KOKORO_SAMPLE_RATE
+from echoloop.tts import TTSManager, loudness_envelope
 from echoloop.recorder import (
     AudioRecorder,
     DEBUG_DUMP_RECORDINGS,
