@@ -1,4 +1,4 @@
-"""Microphone capture and recorded-signal helpers for EchoLoop.
+"""Microphone capture and recorded-signal helpers for Mimora.
 
 AudioRecorder owns the capture thread, input device selection and the raw
 chunk buffer; the GUI controller only starts/stops takes and collects the
@@ -17,8 +17,8 @@ from typing import Callable, List, Optional
 import numpy as np
 import sounddevice as sd
 
-from echoloop import config
-from echoloop.audio_io import reset_portaudio
+from mimora import config
+from mimora.audio_io import reset_portaudio
 
 # Technical recording & signal processing parameters
 RECORDING_BLOCKSIZE = 0  # 0 → PortAudio picks an optimal block size. A small fixed

@@ -1,6 +1,6 @@
 import numpy as np
 from faster_whisper import WhisperModel
-from echoloop import config
+from mimora import config
 
 
 COMPUTE_TYPE = "float16" if config.DEVICE == "cuda" else "int8"

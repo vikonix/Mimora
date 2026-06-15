@@ -1,11 +1,11 @@
-"""Unit tests for echoloop/prosody_utils.py (pure, no tkinter / no ML stack).
+"""Unit tests for mimora/prosody_utils.py (pure, no tkinter / no ML stack).
 
-Run: python -m unittest echoloop.test_prosody_utils
+Run: python -m unittest mimora.test_prosody_utils
 """
 
 import unittest
 
-from echoloop import prosody_utils
+from mimora import prosody_utils
 
 
 class TestToSemitones(unittest.TestCase):

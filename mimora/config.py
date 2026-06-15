@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 
 # Project root — always absolute, regardless of working directory at launch.
-# This file lives in echoloop/, so the root is one level up.
+# This file lives in mimora/, so the root is one level up.
 BASE_DIR = Path(__file__).resolve().parent.parent
 # Hand-edited configuration data (settings.json, themes/) lives here.
 CONFIG_DIR = BASE_DIR / "config"

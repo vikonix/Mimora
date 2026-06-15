@@ -1,4 +1,4 @@
-"""EchoLoop pronunciation analysis package.
+"""Mimora pronunciation analysis package.
 
 Reuses the OpenPronounce (MIT) acoustic/phoneme comparison core as a library.
 The single entry point is ``analyze``; ``load_models`` / ``warm_up`` manage the

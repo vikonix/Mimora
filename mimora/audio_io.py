@@ -1,4 +1,4 @@
-"""Shared audio-device infrastructure for EchoLoop.
+"""Shared audio-device infrastructure for Mimora.
 
 This module owns the PortAudio/winsound plumbing that the microphone path
 (``recorder.py``) and the speaker path (``tts.py``) both need but neither
@@ -17,7 +17,7 @@ import logging
 
 import sounddevice as sd
 
-from echoloop import config
+from mimora import config
 
 try:
     import winsound

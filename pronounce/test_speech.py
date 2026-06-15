@@ -150,7 +150,7 @@ class TestPureLogic(unittest.TestCase):
 
 
 # Note: the prosody-visualisation helpers (to_semitones, resample_series) moved
-# to echoloop/prosody_utils.py; their tests live in echoloop/test_prosody_utils.py.
+# to mimora/prosody_utils.py; their tests live in mimora/test_prosody_utils.py.
 
 
 def _run_end_to_end(user_path: str, reference_path: Optional[str]) -> None:

@@ -1,4 +1,4 @@
-"""Schematic articulation face for EchoLoop.
+"""Schematic articulation face for Mimora.
 
 A minimal "talking head" drawn on a Tk Canvas: a circle for the face and two
 dot eyes, plus a mouth that has two mutually exclusive modes:
@@ -368,7 +368,7 @@ class FaceWidget(tk.Canvas):
 
 
 if __name__ == "__main__":
-    # Manual eyeball test, no audio needed. Run: python -m echoloop.face_widget
+    # Manual eyeball test, no audio needed. Run: python -m mimora.face_widget
     # It alternates ~2.5 s of "talking" (the ellipse driven by a sine envelope)
     # with ~1 s of "paused", cycling through the three smileys.
     import math

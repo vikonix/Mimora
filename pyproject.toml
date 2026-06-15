@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "echoloop"
+name = "mimora"
 version = "0.1.0"
 description = "Local, offline pronunciation trainer: Kokoro TTS prompts, Wav2Vec2 scoring, local LLM phrase generation."
 readme = "README.md"
@@ -17,4 +17,4 @@ license = { file = "LICENSE" }
 # pronounce/ requirements) because they are installed per-machine with
 # CPU/CUDA variants.
 [tool.setuptools]
-packages = ["echoloop", "pronounce"]
+packages = ["mimora", "pronounce"]

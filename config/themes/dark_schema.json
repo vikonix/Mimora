@@ -1,5 +1,5 @@
 {
-  "_readme": "EchoLoop dark color scheme. Selected via 'color_theme': 'dark' in settings.json; restart to apply. Keys starting with '_' are ignored. A missing key falls back to the built-in dark palette in config.py.",
+  "_readme": "Mimora dark color scheme. Selected via 'color_theme': 'dark' in settings.json; restart to apply. Keys starting with '_' are ignored. A missing key falls back to the built-in dark palette in config.py.",
 
   "_surfaces": "Backgrounds and borders. bg_main = window, bg_panel = panels/inputs/status bar, bg_accent = accent-tinted controls (buttons, combobox).",
   "bg_main": "#121214",

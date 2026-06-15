@@ -4,7 +4,7 @@ import hashlib
 import logging
 from typing import List, Optional
 from openai import OpenAI
-from echoloop import config
+from mimora import config
 
 # Technical configuration parameters
 LLM_TIMEOUT = 30.0

@@ -1,8 +1,8 @@
-# EchoLoop — Individual Contributor License Agreement (CLA)
+# Mimora — Individual Contributor License Agreement (CLA)
 
-Thank you for your interest in contributing to EchoLoop, maintained by Valeriy
+Thank you for your interest in contributing to Mimora, maintained by Valeriy
 Kovalev (the "Project Owner"). As used in this Agreement, the **"Project"**
-means EchoLoop, including its source code repositories, documentation, and
+means Mimora, including its source code repositories, documentation, and
 related materials maintained by the Project Owner.
 
 This Contributor License Agreement ("Agreement") clarifies the intellectual

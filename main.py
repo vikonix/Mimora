@@ -1,4 +1,4 @@
-"""EchoLoop application entry point.
+"""Mimora application entry point.
 
 Wires together the pronunciation-trainer components and runs the Tkinter GUI:
 the local LLM (LLMManager / LLMServerController), text-to-speech (TTSManager,
@@ -30,15 +30,15 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 warnings.filterwarnings("ignore", message="dropout option adds dropout.*")
 warnings.filterwarnings("ignore", message=".*weight_norm.*deprecated.*")
 
-from echoloop import config
-# Whisper STT is disabled: echoloop/stt.py is not imported, so faster-whisper
+from mimora import config
+# Whisper STT is disabled: mimora/stt.py is not imported, so faster-whisper
 # is never loaded and no VRAM/start-up time is spent on it. Transcription is
 # done by Wav2Vec2 in pronounce/. Re-enable by importing STTManager again.
-from echoloop.llm import LLMManager
-from echoloop.llm_server_ctl import LLMServerController
-from echoloop.audio_io import KOKORO_SAMPLE_RATE
-from echoloop.tts import TTSManager, loudness_envelope
-from echoloop.recorder import (
+from mimora.llm import LLMManager
+from mimora.llm_server_ctl import LLMServerController
+from mimora.audio_io import KOKORO_SAMPLE_RATE
+from mimora.tts import TTSManager, loudness_envelope
+from mimora.recorder import (
     AudioRecorder,
     DEBUG_DUMP_RECORDINGS,
     RECORD_MODEL_FILE,
@@ -48,7 +48,7 @@ from echoloop.recorder import (
     normalize_audio,
 )
 import pronounce
-from echoloop.ui import PronunciationTrainerUI, LENGTH_FEW_WORDS
+from mimora.ui import PronunciationTrainerUI, LENGTH_FEW_WORDS
 
 # Resolved UI color palette (semantic name -> hex), selected by the
 # "color_theme" setting in settings.json; see config.py.
@@ -70,12 +70,12 @@ logging.basicConfig(
 )
 
 class PronunciationTrainerGUI(PronunciationTrainerUI):
-    """Tkinter front-end for the EchoLoop pronunciation trainer.
+    """Tkinter front-end for the Mimora pronunciation trainer.
 
     Inherits widget construction and rendering from PronunciationTrainerUI
     (ui.py); this class holds the controller logic (threads, analysis, state
-    transitions). Microphone capture lives in echoloop/recorder.py and the
-    local LLM server lifecycle in echoloop/llm_server_ctl.py.
+    transitions). Microphone capture lives in mimora/recorder.py and the
+    local LLM server lifecycle in mimora/llm_server_ctl.py.
 
     Flow per phrase (spec state machine):
         Prompt   -> Kokoro speaks an LLM-generated reference phrase.
@@ -87,11 +87,11 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
     """
 
     def __init__(self):
-        logging.info("Starting EchoLoop Pronunciation Trainer...")
+        logging.info("Starting Mimora Pronunciation Trainer...")
 
         # Core Tkinter setup
         self.root = tk.Tk()
-        self.root.title("EchoLoop - Pronunciation Trainer")
+        self.root.title("Mimora - Pronunciation Trainer")
         self.root.configure(bg=THEME["bg_main"])
 
         # Fixed width; the window spans the full usable screen height. We query the
@@ -244,7 +244,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
 
             self.root.after(0, self.load_practice_text)
             self.root.after(0, self.make_app_ready)
-            logging.info("EchoLoop initialization complete.")
+            logging.info("Mimora initialization complete.")
 
         except Exception as e:
             logging.exception("Error during initialization thread:")
@@ -259,7 +259,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
                 text = f.read()
         except Exception as e:
             logging.warning(f"Could not read practice text file: {e}")
-            text = "Hello and welcome to EchoLoop. Edit this text and click New phrase to begin."
+            text = "Hello and welcome to Mimora. Edit this text and click New phrase to begin."
 
         self.source_text.delete("1.0", tk.END)
         self.source_text.insert("1.0", text.strip())
@@ -871,7 +871,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         if self._closing:
             return  # Escape and the window-close button can both land here
         self._closing = True
-        logging.info("Shutting down EchoLoop...")
+        logging.info("Shutting down Mimora...")
         self.shutdown_event.set()
         self.stop_playback()
 

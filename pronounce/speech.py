@@ -1,8 +1,8 @@
-"""Pronunciation analysis core for EchoLoop.
+"""Pronunciation analysis core for Mimora.
 
 Adapted from OpenPronounce (https://github.com/Halleck45/OpenPronounce), MIT License.
 The acoustic / phoneme comparison logic is reused as a library; the original web
-front-end and built-in TTS were dropped. In EchoLoop the reference audio is produced
+front-end and built-in TTS were dropped. In Mimora the reference audio is produced
 by the existing Kokoro TTS and passed into ``analyze`` as a NumPy array, so this module
 never synthesizes speech itself and never touches the GUI.
 

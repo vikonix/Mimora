@@ -40,11 +40,11 @@ from pronounce import speech, configure, AnalyzerConfig
 # Composition root: this calibration CLI is the only place in pronounce/ that
 # reads the host application's settings. It wires them into the analyzer with
 # configure() (see _app_config), so the analyzer core stays app-agnostic.
-from echoloop import config
+from mimora import config
 
 
 def _app_config() -> AnalyzerConfig:
-    """Build the analyzer configuration from the EchoLoop application settings."""
+    """Build the analyzer configuration from the Mimora application settings."""
     return AnalyzerConfig(
         model_name=config.WAV2VEC2_MODEL_NAME,
         device=config.WAV2VEC2_DEVICE,

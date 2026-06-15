@@ -5,8 +5,8 @@ from typing import Optional
 import numpy as np
 import sounddevice as sd
 from kokoro import KModel, KPipeline
-from echoloop import config
-from echoloop.audio_io import (
+from mimora import config
+from mimora.audio_io import (
     WINSOUND_AVAILABLE,
     WINSOUND_LEAD_IN_SECONDS,
     reset_portaudio,
@@ -16,7 +16,7 @@ import io
 import wave
 
 # winsound is the module actually driving Windows playback below; the
-# availability flag and path-selection logic live in echoloop.audio_io.
+# availability flag and path-selection logic live in mimora.audio_io.
 if WINSOUND_AVAILABLE:
     import winsound
 

@@ -1,4 +1,4 @@
-"""View layer for the EchoLoop pronunciation trainer.
+"""View layer for the Mimora pronunciation trainer.
 
 This module holds the UI as a mixin (:class:`PronunciationTrainerUI`) that the
 main controller class inherits. The mixin only builds widgets and renders state;
@@ -14,8 +14,8 @@ from tkinter import ttk
 from tkinter import scrolledtext
 from typing import TYPE_CHECKING
 
-from echoloop import config, prosody_utils
-from echoloop.face_widget import FaceWidget
+from mimora import config, prosody_utils
+from mimora.face_widget import FaceWidget
 
 # Resolved UI color palette (semantic name -> hex), selected by the
 # "color_theme" setting in settings.json; see config.py.
@@ -98,7 +98,7 @@ class PronunciationTrainerUI:
         header_frame = tk.Frame(self.root, bg=THEME["bg_main"], height=60)
         header_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=10)
 
-        tk.Label(header_frame, text="ECHOLOOP • Pronunciation",
+        tk.Label(header_frame, text="MIMORA • Pronunciation",
                  font=(FONT_FAMILY, 16, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
 
         tk.Label(header_frame, text=config.TARGET_LANGUAGE,

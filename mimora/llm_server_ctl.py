@@ -11,8 +11,8 @@ import sys
 import time
 from typing import Optional
 
-from echoloop import config
-from echoloop.llm import LLMManager
+from mimora import config
+from mimora.llm import LLMManager
 
 SERVER_SCRIPT = str(config.BASE_DIR / "llm_server" / "server.py")
 

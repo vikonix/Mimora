@@ -76,7 +76,7 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s",
 )
 
-app = FastAPI(title="EchoLoop LLM Server", version="1.0.0")
+app = FastAPI(title="Mimora LLM Server", version="1.0.0")
 
 # Global model state.
 # _inference_lock serialises all inference calls — llama_cpp is not thread-safe.
@@ -299,7 +299,7 @@ def reload_model(req: ModelLoadRequest):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="EchoLoop local LLM server (OpenAI-compatible)"
+        description="Mimora local LLM server (OpenAI-compatible)"
     )
     parser.add_argument("--model", type=str, default=None,
                         help="Path to GGUF model file (optional at startup)")

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""EchoLoop installer.
+"""Mimora installer.
 
 A standalone, idempotent setup helper that walks through everything needed to
-run EchoLoop on a fresh machine:
+run Mimora on a fresh machine:
 
   1. Verify the Python version.
   2. Detect an NVIDIA GPU / CUDA version (via nvidia-smi, no extra packages).
@@ -83,11 +83,11 @@ WHEEL_TESTED_MAX = (3, 12)
 SOURCE_ONLY_PACKAGES = ("fastdtw", "docopt")
 
 # The GGUF chat model. Default filename matches EXTERNAL_MODEL_PATH in
-# echoloop/config.py, so the app finds it without any settings change.
+# mimora/config.py, so the app finds it without any settings change.
 GGUF_REPO_ID = "hugging-quants/Llama-3.2-3B-Instruct-Q4_K_M-GGUF"
 GGUF_FILENAME = "llama-3.2-3b-instruct-q4_k_m.gguf"
 
-# Hugging Face models EchoLoop pulls on first run; pre-fetching them here means
+# Hugging Face models Mimora pulls on first run; pre-fetching them here means
 # the first launch is offline-ready. Repo ids match what the app requests.
 HF_MODEL_REPOS = [
     ("facebook/wav2vec2-large-960h", "Wav2Vec2 (pronunciation analysis, ~1.2 GB)"),
@@ -546,14 +546,14 @@ def step_check_python(
     log.log(f"    Running Python {platform.python_version()} ({sys.executable})")
     if current < MIN_PYTHON:
         need = ".".join(map(str, MIN_PYTHON))
-        log.log(f"    ERROR: EchoLoop needs Python >= {need}. Aborting.")
+        log.log(f"    ERROR: Mimora needs Python >= {need}. Aborting.")
         report.add("Python version", FAILED, f"need >= {need}")
         raise InstallError("Python version")
     if current > WHEEL_TESTED_MAX:
         tested = ".".join(map(str, WHEEL_TESTED_MAX))
         confirmer.warn_continue([
             f"Python {platform.python_version()} is newer than the latest "
-            f"version EchoLoop is tested against ({tested}).",
+            f"version Mimora is tested against ({tested}).",
             "Prebuilt wheels may not exist yet for some dependencies on this "
             "interpreter. Installs are binary-only, so the dependency step may "
             "stop with a 'no matching distribution' error.",
@@ -763,7 +763,7 @@ def step_prefetch_models(
     """Download the Hugging Face models into model_cache/ (HF_HOME)."""
     log.banner("Step 6/8 — Pre-download Hugging Face models")
 
-    # Match echoloop/config.py: HF_HOME points at the project's model_cache/.
+    # Match mimora/config.py: HF_HOME points at the project's model_cache/.
     MODEL_CACHE_DIR.mkdir(exist_ok=True)
     os.environ["HF_HOME"] = str(MODEL_CACHE_DIR)
     # Avoid the Windows symlink-privilege crash (WinError 1314) before any
@@ -882,13 +882,13 @@ def finish(log: Logger, report: StepReport, *, success: bool) -> None:
         return
     if MANUAL in report.statuses():
         log.log("    Some steps need manual action (see 'needs manual action'")
-        log.log("    above) before EchoLoop will fully work.")
-    log.log("    Next: run `python main.py` to start EchoLoop.")
+        log.log("    above) before Mimora will fully work.")
+    log.log("    Next: run `python main.py` to start Mimora.")
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="EchoLoop installer — installs dependencies and downloads "
+        description="Mimora installer — installs dependencies and downloads "
                     "the model cache and the LLM model.",
     )
     parser.add_argument("-y", "--yes", action="store_true",
@@ -916,7 +916,7 @@ def main() -> int:
                           force_reinstall=args.reinstall)
     report = StepReport()
 
-    log.banner("EchoLoop installer")
+    log.banner("Mimora installer")
     log.log(f"    started: {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
     log.log(f"    platform: {platform.platform()}")
     log.log(f"    args: {vars(args)}")

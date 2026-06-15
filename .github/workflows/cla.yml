@@ -34,7 +34,7 @@ jobs:
 
           # Link to the CLA text shown to the contributor.
           # REPLACE YOUR_GITHUB_USERNAME with your login/organization.
-          path-to-document: 'https://github.com/vikonix/EchoLoop/blob/main/CLA.md'
+          path-to-document: 'https://github.com/vikonix/Mimora/blob/main/CLA.md'
 
           # Branch where the bot commits the signatures file.
           branch: 'main'

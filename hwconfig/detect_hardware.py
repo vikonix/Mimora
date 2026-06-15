@@ -1,4 +1,4 @@
-"""Hardware detection for EchoLoop.
+"""Hardware detection for Mimora.
 
 Standalone tool: probes the machine (RAM, CPU, GPU/VRAM, audio devices) and
 writes hwconfig/hardware_config.json with two sections:
