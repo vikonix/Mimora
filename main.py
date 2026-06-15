@@ -44,7 +44,9 @@ from mimora.recorder import (
     DEBUG_DUMP_RECORDINGS,
     RECORD_MODEL_FILE,
     RECORD_NORMALIZED_FILE,
+    RECORD_PHRASE_FILE,
     RECORD_RAW_FILE,
+    dump_record_text,
     dump_record_wav,
     normalize_audio,
 )
@@ -474,6 +476,7 @@ class PronunciationTrainerGUI:
             self.reference_audio = reference_audio
             if DEBUG_DUMP_RECORDINGS:
                 dump_record_wav(reference_audio, RECORD_MODEL_FILE, KOKORO_SAMPLE_RATE)
+                dump_record_text(phrase, RECORD_PHRASE_FILE)
             # Show the phrase and play the reference for the user to hear
             # (fresh per-playback stop event; see _new_playback_event).
             self.root.after(0, self._show_new_phrase, phrase)

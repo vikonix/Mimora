@@ -39,10 +39,11 @@ RECORD_THREAD_JOIN_TIMEOUT_SEC = 1.5
 DEBUG_DUMP_RECORDINGS = True
 RECORDS_DIR = str(config.BASE_DIR / "records")
 
-# Fixed file names for the three dumped recordings (overwritten each take).
+# Fixed file names for the dumped recordings (overwritten each take).
 RECORD_MODEL_FILE = "model.wav"        # what the model said (Kokoro reference)
 RECORD_RAW_FILE = "raw.wav"            # raw microphone capture
 RECORD_NORMALIZED_FILE = "normalized.wav"  # normalized capture
+RECORD_PHRASE_FILE = "phrase.txt"      # the text of the spoken phrase
 
 
 def normalize_audio(audio: np.ndarray) -> np.ndarray:
@@ -80,6 +81,23 @@ def dump_record_wav(audio: np.ndarray, file_name: str, sample_rate: int):
                      f"(peak={np.max(np.abs(audio)):.4f}, n={len(audio)})")
     except Exception:
         logging.exception("Failed to save record WAV:")
+
+
+def dump_record_text(text: str, file_name: str):
+    """Write the spoken phrase to records/<file_name> as UTF-8 text.
+
+    Companion to dump_record_wav (guarded by DEBUG_DUMP_RECORDINGS): the file
+    name is fixed (phrase.txt), so each take overwrites the previous one and
+    only the latest phrase is kept on disk, matching the dumped WAV files.
+    """
+    try:
+        os.makedirs(RECORDS_DIR, exist_ok=True)
+        path = os.path.join(RECORDS_DIR, file_name)
+        with open(path, "w", encoding="utf-8") as text_file:
+            text_file.write(text)
+        logging.info(f"[record] Saved {file_name} -> {path}")
+    except Exception:
+        logging.exception("Failed to save record text:")
 
 
 class AudioRecorder:
