@@ -136,6 +136,10 @@ class TrainerView:
                          disabledforeground=THEME["text_disabled"])
 
     def build_ui(self):
+        # Window background (shows through wherever no widget covers it). The
+        # view owns the window chrome so the controller need not know the palette.
+        self.root.configure(bg=THEME["bg_main"])
+
         # 0. Menu bar (cross-platform tk.Menu). On Windows it is drawn by the
         # OS, so it does not follow the app's dark theme — that is expected.
         # The handler (on_open_practice_text) lives in the controller (main.py).
@@ -553,6 +557,67 @@ class TrainerView:
             self.update_instruction("Click 'New phrase' to begin.")
         if has_recording:
             self._set_actions(user=True)
+
+    # ------------------------------------------------------------------
+    # Startup / failure status intents (status line only; the action
+    # buttons start disabled during init, so these deliberately leave them
+    # untouched). They keep the controller from knowing the palette.
+    # ------------------------------------------------------------------
+    def enter_loading(self):
+        """Models are loading."""
+        self.update_status("Loading models...", THEME["warn"])
+
+    def enter_server_starting(self):
+        """The local LLM server is being launched."""
+        self.update_status("Starting LLM server...", THEME["warn"])
+
+    def enter_warming_up(self):
+        """Models are loaded and being warmed up."""
+        self.update_status("Warming up models...", THEME["warn"])
+
+    def server_failed(self):
+        """The local LLM server failed to start."""
+        self.update_status("LLM Server Error", THEME["bad"])
+
+    def init_failed(self):
+        """Initialization aborted on an unexpected error."""
+        self.update_status("Initialization Failed", THEME["bad"])
+
+    def recording_failed(self):
+        """The microphone input stream failed."""
+        self.update_status("Recording Error", THEME["bad"])
+
+    def playing_status(self, status: str):
+        """Set the status line for an ad-hoc playback (no button changes).
+
+        Unlike enter_playing, this only touches the status line; it is used by
+        the standalone replay path, which manages the mic button elsewhere.
+        """
+        self.update_status(status, THEME["reference"])
+
+    def restore_ready_status(self):
+        """Restore the default "Ready" status line without a full transition."""
+        self.update_status("Ready", THEME["ready"])
+
+    # ------------------------------------------------------------------
+    # Talking face (driven by the controller from a loudness envelope)
+    # ------------------------------------------------------------------
+    def face_fps(self):
+        """Frame rate of the talking-mouth animation, or None if no face."""
+        face = getattr(self, "face", None)
+        return face.fps if face is not None else None
+
+    def face_play_levels(self, levels, fps):
+        """Drive the talking mouth from a pre-computed loudness track."""
+        face = getattr(self, "face", None)
+        if face is not None:
+            face.play_levels(levels, fps=fps)
+
+    def face_rest(self):
+        """Close the talking mouth (no-op if there is no face)."""
+        face = getattr(self, "face", None)
+        if face is not None:
+            face.rest()
 
     # ------------------------------------------------------------------
     # Feedback / status helpers (always called on the main thread)

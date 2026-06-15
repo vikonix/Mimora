@@ -51,10 +51,6 @@ from mimora.recorder import (
 import pronounce
 from mimora.ui import TrainerView, ViewCallbacks, LENGTH_FEW_WORDS
 
-# Resolved UI color palette (semantic name -> hex), selected by the
-# "color_theme" setting in settings.json; see config.py.
-THEME = config.THEME
-
 # Configure comprehensive events logging (console + file). force=True replaces
 # any handlers auto-installed by logging calls during the imports above (e.g.
 # pronounce loads calibration.json at import and logs it), which would otherwise
@@ -95,7 +91,6 @@ class PronunciationTrainerGUI:
         # Core Tkinter setup
         self.root = tk.Tk()
         self.root.title("Mimora - Pronunciation Trainer")
-        self.root.configure(bg=THEME["bg_main"])
 
         # Fixed width; the window spans the full usable screen height. We query the
         # Windows desktop work area (screen minus the taskbar) so the window fits
@@ -218,7 +213,7 @@ class PronunciationTrainerGUI:
     # ------------------------------------------------------------------
     def load_components(self):
         logging.info("Starting model loading thread...")
-        self.root.after(0, self.view.update_status, "Loading models...", THEME["warn"])
+        self.root.after(0, self.view.enter_loading)
         self.root.after(0, self.view.append_system_msg, "Loading TTS and pronunciation models...")
 
         try:
@@ -243,10 +238,10 @@ class PronunciationTrainerGUI:
             if self.llm_backend == "local_server":
                 model_name = os.path.basename(config.EXTERNAL_MODEL_PATH)
                 self.root.after(0, self.view.append_system_msg, f"Starting LLM server with {model_name}...")
-                self.root.after(0, self.view.update_status, "Starting LLM server...", THEME["warn"])
+                self.root.after(0, self.view.enter_server_starting)
                 if not self.llm_server.start(self.llm_mgr):
                     self.root.after(0, self.view.append_error_msg, "Error: LLM server failed to start. Check model path and GPU memory.")
-                    self.root.after(0, self.view.update_status, "LLM Server Error", THEME["bad"])
+                    self.root.after(0, self.view.server_failed)
                     self.root.after(0, self.view.update_instruction, "LLM server failed to start. Check the log and restart.")
                     return
                 self.root.after(0, self.view.append_system_msg, "LLM server is ready.")
@@ -255,7 +250,7 @@ class PronunciationTrainerGUI:
                 if not self.llm_mgr.check_connection():
                     self.root.after(0, self.view.append_error_msg, "Warning: LM Studio is offline. Start it to generate phrases!")
 
-            self.root.after(0, self.view.update_status, "Warming up models...", THEME["warn"])
+            self.root.after(0, self.view.enter_warming_up)
             self.tts_mgr.warm_up()
             pronounce.warm_up()
             logging.info("Models warmed up.")
@@ -267,7 +262,7 @@ class PronunciationTrainerGUI:
         except Exception as e:
             logging.exception("Error during initialization thread:")
             self.root.after(0, self.view.append_error_msg, f"Initialization Error: {e}")
-            self.root.after(0, self.view.update_status, "Initialization Failed", THEME["bad"])
+            self.root.after(0, self.view.init_failed)
 
     def load_practice_text(self):
         """Pre-fill the source panel from the practice text file (main thread)."""
@@ -608,7 +603,7 @@ class PronunciationTrainerGUI:
         error status on top of the reset's default "Ready".
         """
         self.root.after(0, self._reset_to_retry)
-        self.root.after(0, self.view.update_status, "Recording Error", THEME["bad"])
+        self.root.after(0, self.view.recording_failed)
 
     # ------------------------------------------------------------------
     # Analyze phase
@@ -767,7 +762,7 @@ class PronunciationTrainerGUI:
         """Play a waveform in a background thread, stopping any current playback first."""
         self.stop_playback()
         stop_event = self._new_playback_event()
-        self.view.update_status(status, THEME["reference"])
+        self.view.playing_status(status)
 
         def _worker():
             self._play_with_face(waveform, sample_rate, stop_event)
@@ -797,17 +792,16 @@ class PronunciationTrainerGUI:
 
     def _start_face_track(self, waveform: np.ndarray, sample_rate: int):
         """Build the loudness track and hand it to the face. (Tk thread.)"""
-        face = getattr(self.view, "face", None)
-        if face is None or waveform is None or getattr(waveform, "size", 0) == 0:
+        fps = self.view.face_fps()
+        if fps is None or waveform is None or getattr(waveform, "size", 0) == 0:
             return
-        fps = face.fps
         levels = loudness_envelope(waveform, sample_rate, fps=fps)
         # Keep the mouth shut during any playback lead-in silence (Windows
         # audio-session warm-up) so the animation lines up with the sound.
         lead_frames = int(round(self.tts_mgr.playback_lead_in_seconds() * fps))
         if lead_frames:
             levels = [0.0] * lead_frames + levels
-        face.play_levels(levels, fps=fps)
+        self.view.face_play_levels(levels, fps=fps)
 
     def _rest_face_if_current(self, stop_event: threading.Event):
         """Close the mouth, unless a newer playback has already taken over.
@@ -817,9 +811,7 @@ class PronunciationTrainerGUI:
         _playback_finished). (Tk thread.)
         """
         if stop_event is self.playback_stop_event:
-            face = getattr(self.view, "face", None)
-            if face is not None:
-                face.rest()
+            self.view.face_rest()
 
     def _playback_finished(self, stop_event: threading.Event):
         """Restore the Ready status unless this playback was stopped/superseded.
@@ -829,7 +821,7 @@ class PronunciationTrainerGUI:
         playback's "Playing..." line).
         """
         if stop_event is self.playback_stop_event and not stop_event.is_set():
-            self.view.update_status("Ready", THEME["ready"])
+            self.view.restore_ready_status()
 
     def stop_playback(self):
         self.playback_stop_event.set()
@@ -837,9 +829,7 @@ class PronunciationTrainerGUI:
         # Close the mouth at once on an interrupt; a track left running would
         # keep flapping with no sound. A superseding playback calls this before
         # starting its own track, so the order (rest -> new track) is correct.
-        face = getattr(self.view, "face", None)
-        if face is not None:
-            face.rest()
+        self.view.face_rest()
 
     # ------------------------------------------------------------------
     # Shutdown
