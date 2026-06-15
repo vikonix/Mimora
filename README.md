@@ -224,10 +224,10 @@ print(result.prosody)            # {"f0": [...], "energy": [...]}
 
 ```bash
 # Fast unit tests (pure logic, no model download, offline)
-python -m unittest pronounce.test_speech -v
+python -m unittest tests.test_speech -v
 
 # Optional end-to-end check on real audio (downloads the model, needs espeak-ng)
-python pronounce/test_speech.py path/to/user.wav [path/to/reference.wav]
+python tests/test_speech.py path/to/user.wav [path/to/reference.wav]
 ```
 
 ---

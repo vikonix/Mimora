@@ -3,13 +3,13 @@
 Two layers:
   1. Fast unit tests over the pure logic (scoring, DTW alignment, helpers).
      They never load the Wav2Vec2 model, so they run offline and quickly.
-  2. An optional end-to-end runner (``python test_speech.py user.wav [ref.wav]``)
-     that exercises ``analyze`` on real audio. This downloads the ~1.2 GB model
-     and needs espeak-ng installed, so it is gated behind the CLI and is not run
-     by the unit tests.
+  2. An optional end-to-end runner (``python tests/test_speech.py user.wav
+     [ref.wav]``) that exercises ``analyze`` on real audio. This downloads the
+     ~1.2 GB model and needs espeak-ng installed, so it is gated behind the CLI
+     and is not run by the unit tests.
 
-Run unit tests:   python -m unittest pronounce.test_speech
-End-to-end check: python pronounce/test_speech.py path/to/user.wav [path/to/ref.wav]
+Run unit tests:   python -m unittest tests.test_speech
+End-to-end check: python tests/test_speech.py path/to/user.wav [path/to/ref.wav]
 """
 
 import sys
@@ -150,7 +150,7 @@ class TestPureLogic(unittest.TestCase):
 
 
 # Note: the prosody-visualisation helpers (to_semitones, resample_series) moved
-# to mimora/prosody_utils.py; their tests live in mimora/test_prosody_utils.py.
+# to mimora/prosody_utils.py; their tests live in tests/test_prosody_utils.py.
 
 
 def _run_end_to_end(user_path: str, reference_path: Optional[str]) -> None:

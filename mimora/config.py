@@ -1,8 +1,10 @@
-import json
 import os
 import sys
 import threading
+from functools import partial
 from pathlib import Path
+
+from . import loader
 
 # Project root — always absolute, regardless of working directory at launch.
 # This file lives in mimora/, so the root is one level up.
@@ -23,33 +25,15 @@ CONFIG_DIR = BASE_DIR / "config"
 # optional and settings.json is edited by hand.
 
 
-def _read_json(path: Path) -> dict:
-    """Parse a JSON object from *path*; returns {} when absent or invalid."""
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except FileNotFoundError:
-        return {}
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"[config] cannot read {path.name} ({exc}); using defaults",
-              file=sys.stderr)
-        return {}
-    if not isinstance(data, dict):
-        print(f"[config] {path.name} must contain a JSON object; using defaults",
-              file=sys.stderr)
-        return {}
-    return data
-
-
 # Machine-derived overrides. Only the "config" section is consumed here;
 # the "hardware" section is diagnostics for humans.
-_HW = _read_json(BASE_DIR / "hwconfig" / "hardware_config.json").get("config")
+_HW = loader.read_json(BASE_DIR / "hwconfig" / "hardware_config.json").get("config")
 if not isinstance(_HW, dict):
     _HW = {}
 
 # User preferences. Keys starting with "_" are skipped so they can serve as
 # comments (plain JSON has no comment syntax).
-_USER = _read_json(CONFIG_DIR / "settings.json")
+_USER = loader.read_json(CONFIG_DIR / "settings.json")
 
 _KNOWN_USER_KEYS = {
     "english_accent",
@@ -76,76 +60,22 @@ for _key in _USER:
               file=sys.stderr)
 
 
-def _user_number(key: str, default, minimum=None, maximum=None):
-    """Numeric setting from settings.json.
-
-    Returns *default* on a non-numeric or out-of-range value: e.g.
-    max_record_seconds=0 would cut off every take instantly, and a threshold
-    above 100 would make passing impossible — a typo must not break the app.
-    """
-    value = _USER.get(key, default)
-    # bool is a subclass of int — exclude it so `true` is not accepted silently.
-    if not (isinstance(value, (int, float)) and not isinstance(value, bool)):
-        print(f"[config] settings.json: {key} must be a number, got {value!r}; "
-              f"using {default}", file=sys.stderr)
-        return default
-    if (minimum is not None and value < minimum) or \
-            (maximum is not None and value > maximum):
-        lo = "-inf" if minimum is None else minimum
-        hi = "+inf" if maximum is None else maximum
-        print(f"[config] settings.json: {key} must be in range {lo}..{hi}, "
-              f"got {value!r}; using {default}", file=sys.stderr)
-        return default
-    return value
-
-
-def _user_path(key: str, default: Path) -> str:
-    """Path setting from settings.json; *default* on a non-string value.
-
-    A relative value is resolved against BASE_DIR (pathlib keeps an absolute
-    value as-is when joined), so settings.json works regardless of the working
-    directory at launch.
-    """
-    value = _USER.get(key)
-    if value is None:
-        return str(default)
-    if isinstance(value, str) and value.strip():
-        return str(BASE_DIR / value)
-    print(f"[config] settings.json: {key} must be a non-empty string, got "
-          f"{value!r}; using {default}", file=sys.stderr)
-    return str(default)
-
-
-def _user_bool(key: str, default: bool) -> bool:
-    """Boolean setting from settings.json; *default* on a non-boolean value."""
-    value = _USER.get(key, default)
-    if not isinstance(value, bool):
-        print(f"[config] settings.json: {key} must be true or false, got "
-              f"{value!r}; using {default}", file=sys.stderr)
-        return default
-    return value
+# Validated accessors for settings.json values. The loader functions are pure
+# (they take the parsed dict as their first argument); binding _USER — and
+# BASE_DIR for path resolution — here keeps every call site below short.
+_num = partial(loader.user_number, _USER)
+_path = partial(loader.user_path, _USER, BASE_DIR)
+_bool = partial(loader.user_bool, _USER)
 
 
 def save_user_setting(key: str, value) -> bool:
     """Write one setting back to settings.json, keeping every other key.
 
-    The file is re-read first so hand-edited values and the "_" comment keys
-    are preserved. Failures are reported, never raised — saving a preference
-    must not crash the app. Returns True on success.
+    Thin wrapper that binds the settings path and the in-memory _USER view to
+    loader.save_setting (which preserves hand-edited and "_" comment keys, and
+    reports failures instead of raising). Returns True on success.
     """
-    path = CONFIG_DIR / "settings.json"
-    data = _read_json(path)
-    data[key] = value
-    try:
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
-    except OSError as exc:
-        print(f"[config] cannot write {path.name} ({exc}); {key} not saved",
-              file=sys.stderr)
-        return False
-    _USER[key] = value  # keep the in-memory view consistent for this run
-    return True
+    return loader.save_setting(CONFIG_DIR / "settings.json", key, value, _USER)
 
 
 # Display name of the practicing user; shown in the Name field of the UI and
@@ -171,7 +101,7 @@ if not isinstance(USER_NAME, str):
 # project module imported by main.py (before stt/tts/pronounce), so it is early
 # enough. We use setdefault() so an externally set HF_HOME is respected.
 MODEL_CACHE_DIR = BASE_DIR / "model_cache"
-MODEL_CACHE_DIR.mkdir(exist_ok=True)
+loader.ensure_dir(MODEL_CACHE_DIR)
 os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 
 # Repo IDs whose presence in the cache means "fully downloaded".
@@ -184,28 +114,11 @@ _CACHED_REPOS = (
 )
 
 
-def _all_models_cached() -> bool:
-    """True only when every networked model already exists in the local cache.
-
-    Besides a non-empty snapshots dir, the blobs dir must hold no *.incomplete
-    files — those are partial downloads left by an interrupted first run, and
-    flipping to offline mode with one present would crash model loading.
-    """
-    hub_dir = Path(os.environ["HF_HOME"]) / "hub"
-    for repo in _CACHED_REPOS:
-        repo_dir = hub_dir / ("models--" + repo.replace("/", "--"))
-        snapshots = repo_dir / "snapshots"
-        if not snapshots.is_dir() or not any(snapshots.iterdir()):
-            return False
-        if any(repo_dir.glob("blobs/*.incomplete")):
-            return False
-    return True
-
-
 # Auto offline: the first run downloads online; once everything is cached, every
 # later run loads straight from disk with no network access. Delete model_cache/
-# to force a fresh download.
-if _all_models_cached():
+# to force a fresh download. HF_HOME is read from os.environ (not MODEL_CACHE_DIR)
+# so an externally set cache location is honored.
+if loader.models_cached(Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
@@ -219,17 +132,12 @@ TARGET_LANG_CODE = "en"  # ISO code used for Whisper transcription routing
 # Controls
 # =====================================================================
 # Safety threshold to prevent infinite recording loops if a key gets physically stuck
-MAX_RECORD_SECONDS = _user_number("max_record_seconds", 20, minimum=1)
+MAX_RECORD_SECONDS = _num("max_record_seconds", 20, minimum=1)
 
 # Hardware Acceleration setup — the value detected by hwconfig wins; otherwise
-# probe torch directly (wrapped so startup does not crash if torch is absent).
-DEVICE = _HW.get("DEVICE")
-if DEVICE not in ("cuda", "cpu"):
-    try:
-        import torch
-        DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    except ImportError:
-        DEVICE = "cpu"
+# loader.detect_device probes torch directly (and does not import torch at all
+# when hwconfig already supplied a valid device, so this stays cheap).
+DEVICE = loader.detect_device(_HW.get("DEVICE"))
 
 # =====================================================================
 # LLM Backend Settings
@@ -268,7 +176,7 @@ LOCAL_SERVER_STARTUP_TIMEOUT = 60
 # =====================================================================
 # GGUF file, read from settings.json ("external_model_path"); a relative path
 # resolves against the project root.
-EXTERNAL_MODEL_PATH = _user_path(
+EXTERNAL_MODEL_PATH = _path(
     "external_model_path",
     BASE_DIR / "models" / "llama-3.2-3b-instruct-q4_k_m.gguf",
 )
@@ -280,7 +188,7 @@ EXTERNAL_N_GPU_LAYERS = _HW.get("EXTERNAL_N_GPU_LAYERS", 20)  # layers on GPU (-
 # passed to the server as a command-line argument (a float would break it).
 # minimum=256: anything below breaks generation outright (the system prompt
 # alone would not fit), so treat it as a typo rather than passing it through.
-EXTERNAL_N_CTX = int(_user_number("external_n_ctx",
+EXTERNAL_N_CTX = int(_num("external_n_ctx",
                                   _HW.get("EXTERNAL_N_CTX", 2048), minimum=256))
 
 # =====================================================================
@@ -378,7 +286,7 @@ KOKORO_VOICES = _ACCENT["voices"]
 # persisted on change. The UI selector is built from these choices, so the
 # valid values and the visible options can never drift apart.
 REFERENCE_SPEED_CHOICES = (1.0, 0.9, 0.8)
-REFERENCE_SPEED = float(_user_number("reference_speed", 1.0))
+REFERENCE_SPEED = float(_num("reference_speed", 1.0))
 if REFERENCE_SPEED not in REFERENCE_SPEED_CHOICES:
     print(f"[config] settings.json: reference_speed must be one of "
           f"{REFERENCE_SPEED_CHOICES}, got {REFERENCE_SPEED!r}; using 1.0",
@@ -396,7 +304,7 @@ WAV2VEC2_DEVICE = _HW.get("WAV2VEC2_DEVICE") or DEVICE
 # Score (0-100) at or above which a repetition is accepted; below it the learner
 # is asked to repeat the same phrase.
 PRONUNCIATION_SCORE_THRESHOLD = float(
-    _user_number("pronunciation_score_threshold", 70.0, minimum=0, maximum=100)
+    _num("pronunciation_score_threshold", 70.0, minimum=0, maximum=100)
 )
 # Acoustic floor: typical per-step cosine DTW distance of a *good* attempt
 # (the user's voice never matches the TTS voice exactly, so this is > 0). This
@@ -412,7 +320,7 @@ PRONUNCIATION_ACOUSTIC_GOOD = 0.20
 # phrases from whatever text the user has in that panel. Read from
 # settings.json ("practice_text_file"); a relative path resolves against the
 # project root.
-PRACTICE_TEXT_FILE = _user_path("practice_text_file",
+PRACTICE_TEXT_FILE = _path("practice_text_file",
                                 BASE_DIR / "texts" / "practice_text.txt")
 
 # One short phrase is generated per request (non-streaming).
@@ -431,9 +339,9 @@ PHRASE_GEN_SYSTEM_PROMPT = (
 # size (so consecutive windows overlap and the topic shifts gradually) and
 # wraps around at the end of the text. int() because the values are used for
 # list slicing and modular arithmetic.
-PHRASE_GEN_WINDOW_SENTENCES = int(_user_number("phrase_gen_window_sentences", 5,
+PHRASE_GEN_WINDOW_SENTENCES = int(_num("phrase_gen_window_sentences", 5,
                                                minimum=1))
-PHRASE_GEN_WINDOW_REPEATS = int(_user_number("phrase_gen_window_repeats", 5,
+PHRASE_GEN_WINDOW_REPEATS = int(_num("phrase_gen_window_repeats", 5,
                                              minimum=1))
 
 # "Few words" mode: generate a short 2-4 word fragment instead of a complete
@@ -463,12 +371,12 @@ if PHRASE_LENGTH not in ("full", "fragment"):
 # =====================================================================
 # Visibility of the two prosody charts, toggled by their title checkboxes in
 # the app window and persisted on change.
-SHOW_PITCH_CHART = _user_bool("show_pitch_chart", True)
-SHOW_ENERGY_CHART = _user_bool("show_energy_chart", True)
+SHOW_PITCH_CHART = _bool("show_pitch_chart", True)
+SHOW_ENERGY_CHART = _bool("show_energy_chart", True)
 
 # Visibility of the articulation face shown beside the prosody charts, toggled
 # by the "Face" checkbox in the prosody header and persisted on change.
-SHOW_FACE = _user_bool("show_face", True)
+SHOW_FACE = _bool("show_face", True)
 
 # =====================================================================
 # Color Theme (UI palette)
@@ -524,7 +432,7 @@ if not isinstance(COLOR_THEME, str) or not COLOR_THEME.strip():
 THEME = dict(_DARK_THEME)
 
 _THEME_FILE = CONFIG_DIR / "themes" / f"{COLOR_THEME}_schema.json"
-_SCHEMA = _read_json(_THEME_FILE)
+_SCHEMA = loader.read_json(_THEME_FILE)
 if not _SCHEMA:
     # For "dark" a missing file is fine — the built-in palette IS dark.
     if COLOR_THEME != "dark":
@@ -572,7 +480,7 @@ AUDIO_OUTPUT_DEVICE = _HW.get("AUDIO_OUTPUT_DEVICE")
 # All log files live in a dedicated logs/ directory (created on import so the
 # handlers can open their files immediately).
 LOG_DIR = BASE_DIR / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+loader.ensure_dir(LOG_DIR)
 LOG_FILE = str(LOG_DIR / "main.log")
 # Log file for the auto-started local LLM server subprocess (see main.py).
 LLM_SERVER_LOG_FILE = str(LOG_DIR / "llm_server.log")

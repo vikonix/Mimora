@@ -1,6 +1,6 @@
 """Unit tests for mimora/prosody_utils.py (pure, no tkinter / no ML stack).
 
-Run: python -m unittest mimora.test_prosody_utils
+Run: python -m unittest tests.test_prosody_utils
 """
 
 import unittest

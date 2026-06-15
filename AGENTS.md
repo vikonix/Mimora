@@ -73,8 +73,8 @@ Also requires the native **espeak-ng** binary on `PATH` (used by `phonemizer`) a
 ## Testing
 
 ```bash
-python -m unittest pronounce.test_speech -v          # fast unit tests, no model download
-python pronounce/test_speech.py user.wav [ref.wav]   # optional end-to-end (loads the model)
+python -m unittest discover -s tests -v              # all fast unit tests, no model download
+python tests/test_speech.py user.wav [ref.wav]       # optional end-to-end (loads the model)
 ```
 
 ## Code Style (Python)
