@@ -3,7 +3,8 @@
 Wires together the pronunciation-trainer components and runs the Tkinter GUI:
 the local LLM (LLMManager / LLMServerController), text-to-speech (TTSManager,
 Kokoro), audio capture (AudioRecorder) and Wav2Vec2-based pronunciation
-analysis (pronounce/), all driven from PronunciationTrainerUI.
+analysis (pronounce/), all driven from PronunciationTrainerGUI, which composes
+the TrainerView (mimora/ui.py) for the widgets.
 
 It also installs the root logging configuration (console + logs/main.log) for
 the whole app. Run this module to start the trainer:
@@ -48,7 +49,7 @@ from mimora.recorder import (
     normalize_audio,
 )
 import pronounce
-from mimora.ui import PronunciationTrainerUI, LENGTH_FEW_WORDS
+from mimora.ui import TrainerView, LENGTH_FEW_WORDS
 
 # Resolved UI color palette (semantic name -> hex), selected by the
 # "color_theme" setting in settings.json; see config.py.
@@ -69,13 +70,15 @@ logging.basicConfig(
     force=True,
 )
 
-class PronunciationTrainerGUI(PronunciationTrainerUI):
+class PronunciationTrainerGUI:
     """Tkinter front-end for the Mimora pronunciation trainer.
 
-    Inherits widget construction and rendering from PronunciationTrainerUI
-    (ui.py); this class holds the controller logic (threads, analysis, state
-    transitions). Microphone capture lives in mimora/recorder.py and the
-    local LLM server lifecycle in mimora/llm_server_ctl.py.
+    Holds the controller logic (threads, analysis, state transitions) and owns
+    the view by composition: ``self.view`` is a TrainerView (ui.py) that builds
+    and renders the widgets. The controller drives the UI through
+    ``self.view.*`` and the view forwards widget callbacks back to the
+    controller. Microphone capture lives in mimora/recorder.py and the local
+    LLM server lifecycle in mimora/llm_server_ctl.py.
 
     Flow per phrase (spec state machine):
         Prompt   -> Kokoro speaks an LLM-generated reference phrase.
@@ -159,8 +162,6 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         self.current_voice: str = config.KOKORO_VOICE
         self.reference_audio: Optional[np.ndarray] = None   # 24 kHz Kokoro output
         self.last_user_audio: Optional[np.ndarray] = None   # 16 kHz recorded attempt
-        # Last analysis prosody, kept so the canvases can redraw on window resize.
-        self._last_prosody: Optional[dict] = None
         # Last user name written to settings.json; lets on_user_name_changed
         # skip the file write when the field loses focus without an edit.
         self._saved_user_name: str = config.USER_NAME
@@ -182,8 +183,9 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             logging.info("Using LM Studio LLM backend (LLMManager).")
             self.llm_mgr = LLMManager()
 
-        self.setup_styles()
-        self.build_ui()
+        # Compose the view: it builds and owns the widgets, and forwards widget
+        # callbacks back to this controller (passed as `self`).
+        self.view = TrainerView(self.root, self)
         self.bind_events()
 
         # Load all models in the background to keep the UI responsive.
@@ -200,14 +202,14 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
     # ------------------------------------------------------------------
     def load_components(self):
         logging.info("Starting model loading thread...")
-        self.root.after(0, self.update_status, "Loading models...", THEME["warn"])
-        self.root.after(0, self.append_system_msg, "Loading TTS and pronunciation models...")
+        self.root.after(0, self.view.update_status, "Loading models...", THEME["warn"])
+        self.root.after(0, self.view.append_system_msg, "Loading TTS and pronunciation models...")
 
         try:
             self.tts_mgr.load_model()
             logging.info("TTS model loaded.")
 
-            self.root.after(0, self.append_system_msg, "Loading Wav2Vec2 (pronunciation, ~1.2 GB on first run)...")
+            self.root.after(0, self.view.append_system_msg, "Loading Wav2Vec2 (pronunciation, ~1.2 GB on first run)...")
             # Inject app settings into the (app-agnostic) pronounce library before
             # it loads any model. Done once here, the analyzer's composition root.
             pronounce.configure(pronounce.AnalyzerConfig(
@@ -224,20 +226,20 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
 
             if self.llm_backend == "local_server":
                 model_name = os.path.basename(config.EXTERNAL_MODEL_PATH)
-                self.root.after(0, self.append_system_msg, f"Starting LLM server with {model_name}...")
-                self.root.after(0, self.update_status, "Starting LLM server...", THEME["warn"])
+                self.root.after(0, self.view.append_system_msg, f"Starting LLM server with {model_name}...")
+                self.root.after(0, self.view.update_status, "Starting LLM server...", THEME["warn"])
                 if not self.llm_server.start(self.llm_mgr):
-                    self.root.after(0, self.append_error_msg, "Error: LLM server failed to start. Check model path and GPU memory.")
-                    self.root.after(0, self.update_status, "LLM Server Error", THEME["bad"])
-                    self.root.after(0, self.update_instruction, "LLM server failed to start. Check the log and restart.")
+                    self.root.after(0, self.view.append_error_msg, "Error: LLM server failed to start. Check model path and GPU memory.")
+                    self.root.after(0, self.view.update_status, "LLM Server Error", THEME["bad"])
+                    self.root.after(0, self.view.update_instruction, "LLM server failed to start. Check the log and restart.")
                     return
-                self.root.after(0, self.append_system_msg, "LLM server is ready.")
+                self.root.after(0, self.view.append_system_msg, "LLM server is ready.")
             else:
                 self.llm_mgr.init_client()
                 if not self.llm_mgr.check_connection():
-                    self.root.after(0, self.append_error_msg, "Warning: LM Studio is offline. Start it to generate phrases!")
+                    self.root.after(0, self.view.append_error_msg, "Warning: LM Studio is offline. Start it to generate phrases!")
 
-            self.root.after(0, self.update_status, "Warming up models...", THEME["warn"])
+            self.root.after(0, self.view.update_status, "Warming up models...", THEME["warn"])
             self.tts_mgr.warm_up()
             pronounce.warm_up()
             logging.info("Models warmed up.")
@@ -248,8 +250,8 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
 
         except Exception as e:
             logging.exception("Error during initialization thread:")
-            self.root.after(0, self.append_error_msg, f"Initialization Error: {e}")
-            self.root.after(0, self.update_status, "Initialization Failed", THEME["bad"])
+            self.root.after(0, self.view.append_error_msg, f"Initialization Error: {e}")
+            self.root.after(0, self.view.update_status, "Initialization Failed", THEME["bad"])
 
     def load_practice_text(self):
         """Pre-fill the source panel from the practice text file (main thread)."""
@@ -261,8 +263,8 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             logging.warning(f"Could not read practice text file: {e}")
             text = "Hello and welcome to Mimora. Edit this text and click New phrase to begin."
 
-        self.source_text.delete("1.0", tk.END)
-        self.source_text.insert("1.0", text.strip())
+        self.view.source_text.delete("1.0", tk.END)
+        self.view.source_text.insert("1.0", text.strip())
 
     def on_open_practice_text(self):
         """Pick a practice text file via File → Open practice text… (main thread).
@@ -287,15 +289,15 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
                 text = f.read().strip()
         except (OSError, UnicodeDecodeError) as e:
             logging.warning(f"Could not read practice text file {path!r}: {e}")
-            self.append_error_msg(f"Could not read {os.path.basename(path)}: {e}")
+            self.view.append_error_msg(f"Could not read {os.path.basename(path)}: {e}")
             return
         if not text:
-            self.append_error_msg(f"{os.path.basename(path)} is empty — nothing to load.")
+            self.view.append_error_msg(f"{os.path.basename(path)} is empty — nothing to load.")
             return
 
-        self.source_text.delete("1.0", tk.END)
-        self.source_text.insert("1.0", text)
-        self.append_system_msg(f"Loaded practice text: {os.path.basename(path)}")
+        self.view.source_text.delete("1.0", tk.END)
+        self.view.source_text.insert("1.0", text)
+        self.view.append_system_msg(f"Loaded practice text: {os.path.basename(path)}")
         logging.info(f"Practice text loaded from {path!r}.")
 
         # Persist for the next launch. Files inside the project are stored
@@ -309,14 +311,14 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
 
     def make_app_ready(self):
         self.app_ready = True
-        self.draw_mic_button("idle")
-        self.update_status("Ready", THEME["ready"])
-        self.update_instruction("Edit the text, then click 'New phrase' to begin.")
-        self.generate_btn.config(state=tk.NORMAL)
-        self.append_system_msg("Ready. Generate a phrase, listen, then hold SPACE to repeat it.")
+        self.view.draw_mic_button("idle")
+        self.view.update_status("Ready", THEME["ready"])
+        self.view.update_instruction("Edit the text, then click 'New phrase' to begin.")
+        self.view.generate_btn.config(state=tk.NORMAL)
+        self.view.append_system_msg("Ready. Generate a phrase, listen, then hold SPACE to repeat it.")
         # Speak a personal greeting first, then auto-generate the first phrase.
         # The name is read here, on the main thread (Tk is not thread-safe).
-        name = self.user_name_var.get().strip()
+        name = self.view.user_name_var.get().strip()
         threading.Thread(target=self._greet_and_start, args=(name,), daemon=True).start()
 
     def _greet_and_start(self, name: str):
@@ -328,7 +330,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         """
         try:
             greeting = f"Hello {name}, listen and repeat." if name else "Hello, listen and repeat."
-            self.root.after(0, self.append_system_msg, greeting)
+            self.root.after(0, self.view.append_system_msg, greeting)
             audio = self.tts_mgr.synthesize(greeting, voice=self._selected_voice())
             if audio.size > 0:
                 self._play_with_face(audio, KOKORO_SAMPLE_RATE, self._new_playback_event())
@@ -347,14 +349,14 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
     def _selected_voice(self) -> str:
         """Return the currently selected Kokoro voice, falling back to the default."""
         try:
-            return self.voice_var.get() or config.KOKORO_VOICE
+            return self.view.voice_var.get() or config.KOKORO_VOICE
         except AttributeError:
             return config.KOKORO_VOICE
 
     def _persist_setting(self, key: str, value):
         """Save one UI setting to settings.json, reporting failure in the UI."""
         if not config.save_user_setting(key, value):
-            self.append_error_msg(f"Could not save {key} to settings.json.")
+            self.view.append_error_msg(f"Could not save {key} to settings.json.")
 
     def on_voice_changed(self, event=None):
         """Regenerate the phrase with the newly chosen voice.
@@ -373,35 +375,35 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
     def _selected_length(self) -> str:
         """Map the length selector label to generate_phrase's mode ('full'/'fragment')."""
         try:
-            return "fragment" if self.length_var.get() == LENGTH_FEW_WORDS else "full"
+            return "fragment" if self.view.length_var.get() == LENGTH_FEW_WORDS else "full"
         except AttributeError:
             return "full"
 
     def on_speed_changed(self, event=None):
         """Replay the reference at the newly selected speed so it is heard right away."""
-        logging.info(f"Reference speed changed to {self.playback_speed.get()!r}.")
+        logging.info(f"Reference speed changed to {self.view.playback_speed.get()!r}.")
         self._persist_setting("reference_speed", self._selected_speed())
         # Return focus to the window so the spacebar push-to-talk keeps working.
         self.root.focus_set()
         # Replay only when the Reference button is also allowed (a phrase is
         # ready and nothing is recording/analyzing).
-        if str(self.ref_btn["state"]) == str(tk.NORMAL):
+        if str(self.view.ref_btn["state"]) == str(tk.NORMAL):
             self.play_reference()
 
     def on_user_name_changed(self, event=None):
         """Persist the user name to settings.json once editing finishes (FocusOut)."""
-        name = self.user_name_var.get().strip()
+        name = self.view.user_name_var.get().strip()
         if name == self._saved_user_name:
             return  # unchanged — don't rewrite the file
         if config.save_user_setting("user_name", name):
             self._saved_user_name = name
             logging.info(f"User name saved: {name!r}.")
         else:
-            self.append_error_msg("Could not save the user name to settings.json.")
+            self.view.append_error_msg("Could not save the user name to settings.json.")
 
     def on_length_changed(self, event=None):
         """Regenerate the phrase when the desired length changes."""
-        logging.info(f"Phrase length changed to {self.length_var.get()!r}.")
+        logging.info(f"Phrase length changed to {self.view.length_var.get()!r}.")
         self._persist_setting("phrase_length", self._selected_length())
         # Return focus to the window so the spacebar push-to-talk keeps working.
         self.root.focus_set()
@@ -414,14 +416,14 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         Saving both keys on either toggle keeps this trivially simple; the
         extra write of an unchanged value is harmless.
         """
-        self._toggle_prosody_charts()
-        self._persist_setting("show_pitch_chart", bool(self.show_f0.get()))
-        self._persist_setting("show_energy_chart", bool(self.show_energy.get()))
+        self.view._toggle_prosody_charts()
+        self._persist_setting("show_pitch_chart", bool(self.view.show_f0.get()))
+        self._persist_setting("show_energy_chart", bool(self.view.show_energy.get()))
 
     def on_show_face_toggled(self):
         """Apply the face checkbox (show/hide the panel) and persist it."""
-        self._toggle_face()
-        self._persist_setting("show_face", bool(self.show_face.get()))
+        self.view._toggle_face()
+        self._persist_setting("show_face", bool(self.view.show_face.get()))
 
     def on_generate_phrase(self):
         if not self.app_ready or self.is_generating:
@@ -431,21 +433,21 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
                 return  # don't generate mid-analysis
 
         # Read the editable source text on the main thread (Tk is not thread-safe).
-        source_text = self.source_text.get("1.0", tk.END).strip()
+        source_text = self.view.source_text.get("1.0", tk.END).strip()
         if not source_text:
-            self.append_error_msg("Please enter some practice text first.")
+            self.view.append_error_msg("Please enter some practice text first.")
             return
 
         self.is_generating = True
         self.current_phrase = None
-        self.generate_btn.config(state=tk.DISABLED)
-        self.ref_btn.config(state=tk.DISABLED)
-        self.user_btn.config(state=tk.DISABLED)
-        self.test_btn.config(state=tk.DISABLED)
+        self.view.generate_btn.config(state=tk.DISABLED)
+        self.view.ref_btn.config(state=tk.DISABLED)
+        self.view.user_btn.config(state=tk.DISABLED)
+        self.view.test_btn.config(state=tk.DISABLED)
         self.last_user_audio = None
-        self.draw_mic_button("processing")
-        self.update_status("Generating phrase (LLM)...", THEME["info"])
-        self.update_instruction("Generating a new phrase...")
+        self.view.draw_mic_button("processing")
+        self.view.update_status("Generating phrase (LLM)...", THEME["info"])
+        self.view.update_instruction("Generating a new phrase...")
 
         threading.Thread(target=self._generate_and_prompt, args=(source_text,), daemon=True).start()
 
@@ -488,28 +490,28 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             self.root.after(0, self._phrase_generation_failed, f"Error: {e}")
 
     def _show_new_phrase(self, phrase: str):
-        self.phrase_label.config(text=phrase)
-        self.append_system_msg(f"New phrase: {phrase}")
-        self.update_status("Listen to the reference...", THEME["reference"])
-        self.draw_mic_button("speaking")
-        self.update_instruction("Listening to the example...")
+        self.view.phrase_label.config(text=phrase)
+        self.view.append_system_msg(f"New phrase: {phrase}")
+        self.view.update_status("Listen to the reference...", THEME["reference"])
+        self.view.draw_mic_button("speaking")
+        self.view.update_instruction("Listening to the example...")
 
     def _phrase_ready(self):
         self.is_generating = False
-        self.draw_mic_button("idle")
-        self.update_status("Your turn", THEME["ready"])
-        self.update_instruction("Hold SPACE or click the mic, then repeat the phrase.")
-        self.generate_btn.config(state=tk.NORMAL)
-        self.ref_btn.config(state=tk.NORMAL)  # reference can be replayed any time now
-        self.test_btn.config(state=tk.NORMAL)  # reference self-test available now
+        self.view.draw_mic_button("idle")
+        self.view.update_status("Your turn", THEME["ready"])
+        self.view.update_instruction("Hold SPACE or click the mic, then repeat the phrase.")
+        self.view.generate_btn.config(state=tk.NORMAL)
+        self.view.ref_btn.config(state=tk.NORMAL)  # reference can be replayed any time now
+        self.view.test_btn.config(state=tk.NORMAL)  # reference self-test available now
 
     def _phrase_generation_failed(self, message: str):
         self.is_generating = False
-        self.append_error_msg(message)
-        self.draw_mic_button("idle")
-        self.update_status("Ready", THEME["ready"])
-        self.update_instruction("Click 'New phrase' to try again.")
-        self.generate_btn.config(state=tk.NORMAL)
+        self.view.append_error_msg(message)
+        self.view.draw_mic_button("idle")
+        self.view.update_status("Ready", THEME["ready"])
+        self.view.update_instruction("Click 'New phrase' to try again.")
+        self.view.generate_btn.config(state=tk.NORMAL)
 
     # ------------------------------------------------------------------
     # Recording controls (shared recording path)
@@ -556,13 +558,13 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         # take: playing the reference (or the previous attempt) into an open
         # microphone would end up inside the recording and corrupt analysis.
         # Re-enabled in _show_feedback / _reset_to_retry.
-        self.generate_btn.config(state=tk.DISABLED)
-        self.ref_btn.config(state=tk.DISABLED)
-        self.user_btn.config(state=tk.DISABLED)
-        self.test_btn.config(state=tk.DISABLED)
-        self.root.after(0, self.draw_mic_button, "recording")
-        self.root.after(0, self.update_status, "Recording...", THEME["bad"])
-        self.root.after(0, self.update_instruction, "Release when finished speaking.")
+        self.view.generate_btn.config(state=tk.DISABLED)
+        self.view.ref_btn.config(state=tk.DISABLED)
+        self.view.user_btn.config(state=tk.DISABLED)
+        self.view.test_btn.config(state=tk.DISABLED)
+        self.root.after(0, self.view.draw_mic_button, "recording")
+        self.root.after(0, self.view.update_status, "Recording...", THEME["bad"])
+        self.root.after(0, self.view.update_instruction, "Release when finished speaking.")
 
     def trigger_recording_stop(self):
         if not self.recorder.stop():
@@ -578,8 +580,8 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
                 return
             self.is_processing_audio = True
 
-        self.root.after(0, self.draw_mic_button, "processing")
-        self.root.after(0, self.update_status, "Analyzing pronunciation...", THEME["warn"])
+        self.root.after(0, self.view.draw_mic_button, "processing")
+        self.root.after(0, self.view.update_status, "Analyzing pronunciation...", THEME["warn"])
         threading.Thread(target=self._finalize_recording, daemon=True).start()
 
     def _finalize_recording(self):
@@ -593,7 +595,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
                 # The capture thread is stuck (e.g. the device hangs on close)
                 # and its callback may still be appending chunks. Reading them
                 # now would race the writer — drop the take.
-                self.root.after(0, self.append_error_msg,
+                self.root.after(0, self.view.append_error_msg,
                                 "Audio device did not stop in time — take discarded, please try again.")
                 self.root.after(0, self._reset_to_retry)
                 return
@@ -608,7 +610,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         Route through the normal stop path on the main thread so the take is
         finalized and analyzed exactly like a manual stop.
         """
-        self.root.after(0, self.append_error_msg, "Reached maximum record limit — take cut off.")
+        self.root.after(0, self.view.append_error_msg, "Reached maximum record limit — take cut off.")
         self.root.after(0, self.trigger_recording_stop)
 
     def _on_record_stream_error(self):
@@ -619,7 +621,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         error status on top of the reset's default "Ready".
         """
         self.root.after(0, self._reset_to_retry)
-        self.root.after(0, self.update_status, "Recording Error", THEME["bad"])
+        self.root.after(0, self.view.update_status, "Recording Error", THEME["bad"])
 
     # ------------------------------------------------------------------
     # Analyze phase
@@ -648,14 +650,14 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         try:
             # Play the reference back first (fresh per-playback stop event;
             # see _new_playback_event).
-            self.root.after(0, self.draw_mic_button, "speaking")
-            self.root.after(0, self.update_status, "Playing reference...", THEME["reference"])
+            self.root.after(0, self.view.draw_mic_button, "speaking")
+            self.root.after(0, self.view.update_status, "Playing reference...", THEME["reference"])
             self._play_with_face(self.reference_audio, KOKORO_SAMPLE_RATE,
                                  self._new_playback_event())
 
             # Then run analysis with the reference as both inputs.
-            self.root.after(0, self.draw_mic_button, "processing")
-            self.root.after(0, self.update_status, "Testing with reference...", THEME["warn"])
+            self.root.after(0, self.view.draw_mic_button, "processing")
+            self.root.after(0, self.view.update_status, "Testing with reference...", THEME["warn"])
             result = pronounce.analyze(
                 user_audio=self.reference_audio,
                 expected_text=self.current_phrase,
@@ -664,10 +666,10 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
                 reference_sr=KOKORO_SAMPLE_RATE,
                 voice=self.current_voice,
             )
-            self.root.after(0, self._show_feedback, result)
+            self.root.after(0, self.view._show_feedback, result)
         except Exception:
             logging.exception("Reference self-test error:")
-            self.root.after(0, self.append_error_msg, "Reference test failed.")
+            self.root.after(0, self.view.append_error_msg, "Reference test failed.")
             self.root.after(0, self._reset_to_retry)
         finally:
             with self.processing_lock:
@@ -678,7 +680,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             audio = self.recorder.get_audio()
             if audio is None or len(audio) < config.AUDIO_SAMPLE_RATE * 0.2:
                 logging.warning("Captured audio too short or empty.")
-                self.root.after(0, self.append_error_msg, "Audio is too short. Hold the mic longer and try again.")
+                self.root.after(0, self.view.append_error_msg, "Audio is too short. Hold the mic longer and try again.")
                 self.root.after(0, self._reset_to_retry)
                 return
 
@@ -692,19 +694,19 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
                 dump_record_wav(audio, RECORD_NORMALIZED_FILE, config.AUDIO_SAMPLE_RATE)
 
             if self.current_phrase is None or self.reference_audio is None:
-                self.root.after(0, self.append_error_msg, "No active phrase to compare against.")
+                self.root.after(0, self.view.append_error_msg, "No active phrase to compare against.")
                 self.root.after(0, self._reset_to_retry)
                 return
 
             # Play the just-recorded audio back to the user right away, before the
             # (slower) pronunciation analysis runs (fresh per-playback stop event;
             # see _new_playback_event).
-            self.root.after(0, self.draw_mic_button, "speaking")
-            self.root.after(0, self.update_status, "Playing your recording...", THEME["reference"])
+            self.root.after(0, self.view.draw_mic_button, "speaking")
+            self.root.after(0, self.view.update_status, "Playing your recording...", THEME["reference"])
             self._play_with_face(self.last_user_audio, config.AUDIO_SAMPLE_RATE,
                                  self._new_playback_event())
-            self.root.after(0, self.draw_mic_button, "processing")
-            self.root.after(0, self.update_status, "Analyzing pronunciation...", THEME["warn"])
+            self.root.after(0, self.view.draw_mic_button, "processing")
+            self.root.after(0, self.view.update_status, "Analyzing pronunciation...", THEME["warn"])
 
             analyze_start = time.perf_counter()
             result = pronounce.analyze(
@@ -718,11 +720,11 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
             elapsed_ms = (time.perf_counter() - analyze_start) * 1000
             logging.info(f"Pronunciation analysis done in {elapsed_ms:.0f}ms. Score={result.score}")
 
-            self.root.after(0, self._show_feedback, result)
+            self.root.after(0, self.view._show_feedback, result)
 
         except Exception:
             logging.exception("Error in analyze_recording:")
-            self.root.after(0, self.append_error_msg, "Analysis error. Please try again.")
+            self.root.after(0, self.view.append_error_msg, "Analysis error. Please try again.")
             self.root.after(0, self._reset_to_retry)
 
     def _reset_to_retry(self):
@@ -731,17 +733,17 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         Also re-enables the buttons disabled while recording, according to what
         is actually available (phrase / last recording).
         """
-        self.draw_mic_button("idle")
-        self.update_status("Ready", THEME["ready"])
-        self.generate_btn.config(state=tk.NORMAL)
+        self.view.draw_mic_button("idle")
+        self.view.update_status("Ready", THEME["ready"])
+        self.view.generate_btn.config(state=tk.NORMAL)
         if self.current_phrase:
-            self.ref_btn.config(state=tk.NORMAL)
-            self.test_btn.config(state=tk.NORMAL)
-            self.update_instruction("Hold SPACE or click the mic to repeat the phrase.")
+            self.view.ref_btn.config(state=tk.NORMAL)
+            self.view.test_btn.config(state=tk.NORMAL)
+            self.view.update_instruction("Hold SPACE or click the mic to repeat the phrase.")
         else:
-            self.update_instruction("Click 'New phrase' to begin.")
+            self.view.update_instruction("Click 'New phrase' to begin.")
         if self.last_user_audio is not None and self.last_user_audio.size > 0:
-            self.user_btn.config(state=tk.NORMAL)
+            self.view.user_btn.config(state=tk.NORMAL)
 
     # ------------------------------------------------------------------
     # Playback (reference / own recording)
@@ -752,7 +754,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         Falls back to normal speed (1.0) if the value is missing or malformed.
         """
         try:
-            return float(self.playback_speed.get().rstrip("×"))
+            return float(self.view.playback_speed.get().rstrip("×"))
         except (ValueError, AttributeError):
             return 1.0
 
@@ -790,7 +792,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         """Play a waveform in a background thread, stopping any current playback first."""
         self.stop_playback()
         stop_event = self._new_playback_event()
-        self.update_status(status, THEME["reference"])
+        self.view.update_status(status, THEME["reference"])
 
         def _worker():
             self._play_with_face(waveform, sample_rate, stop_event)
@@ -820,7 +822,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
 
     def _start_face_track(self, waveform: np.ndarray, sample_rate: int):
         """Build the loudness track and hand it to the face. (Tk thread.)"""
-        face = getattr(self, "face", None)
+        face = getattr(self.view, "face", None)
         if face is None or waveform is None or getattr(waveform, "size", 0) == 0:
             return
         fps = face.fps
@@ -840,7 +842,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         _playback_finished). (Tk thread.)
         """
         if stop_event is self.playback_stop_event:
-            face = getattr(self, "face", None)
+            face = getattr(self.view, "face", None)
             if face is not None:
                 face.rest()
 
@@ -852,7 +854,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         playback's "Playing..." line).
         """
         if stop_event is self.playback_stop_event and not stop_event.is_set():
-            self.update_status("Ready", THEME["ready"])
+            self.view.update_status("Ready", THEME["ready"])
 
     def stop_playback(self):
         self.playback_stop_event.set()
@@ -860,7 +862,7 @@ class PronunciationTrainerGUI(PronunciationTrainerUI):
         # Close the mouth at once on an interrupt; a track left running would
         # keep flapping with no sound. A superseding playback calls this before
         # starting its own track, so the order (rest -> new track) is correct.
-        face = getattr(self, "face", None)
+        face = getattr(self.view, "face", None)
         if face is not None:
             face.rest()
 

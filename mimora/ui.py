@@ -1,11 +1,17 @@
 """View layer for the Mimora pronunciation trainer.
 
-This module holds the UI as a mixin (:class:`PronunciationTrainerUI`) that the
-main controller class inherits. The mixin only builds widgets and renders state;
-it relies on attributes (``self.root``, the sub-managers, per-phrase state)
-initialised by the controller in ``main.py``. Because it is a mixin, every
-``self.<handler>`` reference (e.g. ``self.on_generate_phrase``) still resolves to
-the controller's method at runtime.
+This module holds the UI as a standalone :class:`TrainerView`, composed into the
+controller (``self.view``) in ``main.py`` rather than inherited. The view owns
+every widget and renders state; the controller owns the application logic. The
+two directions across the boundary are explicit:
+
+* controller → view: the controller calls ``self.view.<method>`` /
+  ``self.view.<widget>`` to drive the UI.
+* view → controller: each widget callback forwards to ``self.controller.<handler>``
+  (e.g. ``self.controller.on_generate_phrase``).
+
+The view holds a back-reference to the controller, so the two objects form a
+cycle (the known trade-off of this composition step).
 """
 import logging
 import platform
@@ -39,8 +45,28 @@ _FONT_FAMILIES = {
 FONT_FAMILY = _FONT_FAMILIES.get(platform.system(), "DejaVu Sans")  # Linux/other
 
 
-class PronunciationTrainerUI:
-    """UI construction and rendering, mixed into the controller in main.py."""
+class TrainerView:
+    """UI construction and rendering, composed into the controller in main.py.
+
+    Owns the Tk widgets and builds them in ``__init__``. Widget callbacks are
+    forwarded to the controller via ``self.controller``; the controller drives
+    the UI through this object's public methods and widget attributes.
+    """
+
+    def __init__(self, root, controller):
+        """Build the UI under ``root`` and wire callbacks to ``controller``.
+
+        Args:
+            root: the Tk root window the widgets are placed in.
+            controller: the application controller (main.py); its ``on_*`` /
+                action methods are bound as the widget callbacks.
+        """
+        self.root = root
+        self.controller = controller
+        # Last analysis prosody, cached so the canvases can redraw on resize.
+        self._last_prosody = None
+        self.setup_styles()
+        self.build_ui()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -88,9 +114,9 @@ class PronunciationTrainerUI:
         menubar = tk.Menu(self.root)
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Open practice text…",
-                              command=self.on_open_practice_text)
+                              command=self.controller.on_open_practice_text)
         file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.quit_app)
+        file_menu.add_command(label="Exit", command=self.controller.quit_app)
         menubar.add_cascade(label="File", menu=file_menu)
         self.root.config(menu=menubar)
 
@@ -125,8 +151,8 @@ class PronunciationTrainerUI:
         self.btn_canvas = tk.Canvas(control_frame, width=100, height=100, bg=THEME["bg_main"],
                                     highlightthickness=0, cursor="hand2")
         self.btn_canvas.pack(pady=5)
-        self.btn_canvas.bind("<ButtonPress-1>", lambda e: self.on_gui_btn_press())
-        self.btn_canvas.bind("<ButtonRelease-1>", lambda e: self.on_gui_btn_release())
+        self.btn_canvas.bind("<ButtonPress-1>", lambda e: self.controller.on_gui_btn_press())
+        self.btn_canvas.bind("<ButtonRelease-1>", lambda e: self.controller.on_gui_btn_release())
         self.draw_mic_button("loading")
 
         self.instruction_label = tk.Label(control_frame, text="Loading components...",
@@ -156,7 +182,7 @@ class PronunciationTrainerUI:
                  fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.RIGHT, padx=(0, 6))
         # Save on focus loss; Enter just drops focus (which triggers the save
         # and returns the spacebar to push-to-talk duty).
-        self.user_name_entry.bind("<FocusOut>", self.on_user_name_changed)
+        self.user_name_entry.bind("<FocusOut>", self.controller.on_user_name_changed)
         self.user_name_entry.bind("<Return>", lambda e: self.root.focus_set())
 
         self.source_text = scrolledtext.ScrolledText(
@@ -182,7 +208,7 @@ class PronunciationTrainerUI:
             selectors_frame, textvariable=self.length_var, state="readonly",
             width=12, values=(LENGTH_FULL, LENGTH_FEW_WORDS))
         self.length_selector.pack(side=tk.LEFT, padx=(0, 12))
-        self.length_selector.bind("<<ComboboxSelected>>", self.on_length_changed)
+        self.length_selector.bind("<<ComboboxSelected>>", self.controller.on_length_changed)
 
         # Voice selector for the reference speech. Changing it regenerates the
         # phrase (see on_voice_changed) so the new voice is heard right away.
@@ -193,7 +219,7 @@ class PronunciationTrainerUI:
             selectors_frame, textvariable=self.voice_var, state="readonly",
             width=12, values=tuple(config.KOKORO_VOICES))
         self.voice_selector.pack(side=tk.LEFT, padx=(0, 12))
-        self.voice_selector.bind("<<ComboboxSelected>>", self.on_voice_changed)
+        self.voice_selector.bind("<<ComboboxSelected>>", self.controller.on_voice_changed)
 
         # Lower values slow the reference playback (see play_reference). Stored as
         # the displayed label and parsed back to a float by _selected_speed().
@@ -207,7 +233,7 @@ class PronunciationTrainerUI:
         self.speed_selector.pack(side=tk.LEFT)
         # Changing the speed replays the reference so the difference is heard
         # immediately (see on_speed_changed).
-        self.speed_selector.bind("<<ComboboxSelected>>", self.on_speed_changed)
+        self.speed_selector.bind("<<ComboboxSelected>>", self.controller.on_speed_changed)
 
         # 5. Current phrase card
         phrase_frame = tk.Frame(self.root, bg=THEME["bg_panel"])
@@ -229,7 +255,7 @@ class PronunciationTrainerUI:
         # the right-aligned items so it sits at the far right, after the legend.
         self.show_face = tk.BooleanVar(value=config.SHOW_FACE)
         tk.Checkbutton(prosody_header, text="Face", variable=self.show_face,
-                       command=self.on_show_face_toggled,
+                       command=self.controller.on_show_face_toggled,
                        font=(FONT_FAMILY, 8), fg=THEME["text_muted"], bg=THEME["bg_main"],
                        activebackground=THEME["bg_main"], activeforeground=THEME["text_dim"],
                        selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
@@ -314,7 +340,7 @@ class PronunciationTrainerUI:
 
         # Small diagnostic button: run the reference through analysis instead
         # of a recording (it should score near 100 against itself).
-        self.test_btn = tk.Button(action_frame, text="Test", command=self.on_test_reference,
+        self.test_btn = tk.Button(action_frame, text="Test", command=self.controller.on_test_reference,
                                   font=(FONT_FAMILY, 8), bg=THEME["bg_panel"], fg=THEME["text_muted"],
                                   activebackground=THEME["border"], activeforeground=THEME["info"],
                                   bd=0, padx=8, pady=3, cursor="hand2",
@@ -322,15 +348,15 @@ class PronunciationTrainerUI:
         self.test_btn.pack(side=tk.LEFT, padx=(0, 10))
         self.test_btn.config(state=tk.DISABLED)
 
-        self.user_btn = self._make_button(action_frame, "▶ My recording", self.play_user_recording)
+        self.user_btn = self._make_button(action_frame, "▶ My recording", self.controller.play_user_recording)
         self.user_btn.pack(side=tk.LEFT, padx=(0, 6))
         self.user_btn.config(state=tk.DISABLED)
 
-        self.ref_btn = self._make_button(action_frame, "▶ Reference", self.play_reference)
+        self.ref_btn = self._make_button(action_frame, "▶ Reference", self.controller.play_reference)
         self.ref_btn.pack(side=tk.LEFT, padx=(0, 6))
         self.ref_btn.config(state=tk.DISABLED)
 
-        self.generate_btn = self._make_button(action_frame, "🎲 New phrase", self.on_generate_phrase)
+        self.generate_btn = self._make_button(action_frame, "🎲 New phrase", self.controller.on_generate_phrase)
         self.generate_btn.pack(side=tk.LEFT)
         self.generate_btn.config(state=tk.DISABLED)
 
@@ -454,7 +480,7 @@ class PronunciationTrainerUI:
         main.py) so the new state is also persisted to settings.json.
         """
         return tk.Checkbutton(parent, text=text, variable=variable,
-                              command=self.on_prosody_charts_toggled,
+                              command=self.controller.on_prosody_charts_toggled,
                               font=(FONT_FAMILY, 8), fg=THEME["text_muted"], bg=THEME["bg_main"],
                               activebackground=THEME["bg_main"], activeforeground=THEME["text_dim"],
                               selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
@@ -519,7 +545,7 @@ class PronunciationTrainerUI:
         # First line: the expected phrase, with mispronounced words shown in red.
         error_words = {w.lower() for w in result.words_with_errors}
         self.feedback_display.insert(tk.END, "Phrase: ", "label")
-        for token in (self.current_phrase or "—").split():
+        for token in (self.controller.current_phrase or "—").split():
             is_error = token.lower().strip(".,!?;:\"") in error_words
             self.feedback_display.insert(tk.END, token + " ", "bad" if is_error else "text")
         self.feedback_display.insert(tk.END, "\n")
