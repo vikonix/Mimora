@@ -1,24 +1,27 @@
 """View layer for the Mimora pronunciation trainer.
 
-This module holds the UI as a standalone :class:`TrainerView`, composed into the
-controller (``self.view``) in ``main.py`` rather than inherited. The view owns
-every widget and renders state; the controller owns the application logic. The
-two directions across the boundary are explicit:
+This module holds the UI as a standalone, passive :class:`TrainerView`, composed
+into the controller (``self.view``) in ``main.py`` rather than inherited. The
+view owns every widget and renders state; the controller owns the application
+logic. Both directions across the boundary are explicit, typed contracts — the
+view shares no implicit namespace with the controller:
 
-* controller → view: the controller calls ``self.view.<method>`` /
-  ``self.view.<widget>`` to drive the UI.
-* view → controller: each widget callback forwards to ``self.controller.<handler>``
-  (e.g. ``self.controller.on_generate_phrase``).
-
-The view holds a back-reference to the controller, so the two objects form a
-cycle (the known trade-off of this composition step).
+* view → controller: widget callbacks call only ``self._cb.<handler>`` on a
+  :class:`ViewCallbacks` of plain callables passed in at construction. The view
+  never references the controller object, so the two sides form no cycle and the
+  view can be exercised with stand-in callbacks.
+* controller → view: the controller drives the UI through named *intent*
+  methods (``enter_recording``, ``enter_phrase_ready``, ``show_feedback`` …) and
+  small read accessors (``get_practice_text`` …). It never touches a widget or a
+  status/colour string directly — every UI state and its copy live here.
 """
 import logging
 import platform
 import tkinter as tk
 from tkinter import ttk
 from tkinter import scrolledtext
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Callable
 
 from mimora import config, prosody_utils
 from mimora.face_widget import FaceWidget
@@ -27,8 +30,33 @@ from mimora.face_widget import FaceWidget
 # "color_theme" setting in settings.json; see config.py.
 THEME = config.THEME
 
-if TYPE_CHECKING:  # only for the _show_feedback annotation; no runtime import
+if TYPE_CHECKING:  # only for the show_feedback annotation; no runtime import
     import pronounce
+
+
+@dataclass(frozen=True)
+class ViewCallbacks:
+    """Typed view→controller contract: the handlers the widgets invoke.
+
+    The view stores only this bundle of callables (never the controller object),
+    so the two sides share no implicit namespace. Event-bound handlers receive a
+    Tk event argument and are also called with none elsewhere, hence the
+    ``Callable[..., None]`` signatures for those.
+    """
+    on_open_practice_text: Callable[[], None]
+    quit_app: Callable[[], None]
+    on_gui_btn_press: Callable[[], None]
+    on_gui_btn_release: Callable[[], None]
+    on_user_name_changed: Callable[..., None]
+    on_length_changed: Callable[..., None]
+    on_voice_changed: Callable[..., None]
+    on_speed_changed: Callable[..., None]
+    on_show_face_toggled: Callable[[], None]
+    on_prosody_charts_toggled: Callable[[], None]
+    on_test_reference: Callable[[], None]
+    play_user_recording: Callable[[], None]
+    play_reference: Callable[[], None]
+    on_generate_phrase: Callable[[], None]
 
 # Phrase-length selector labels. The label maps to generate_phrase's ``length``
 # mode: LENGTH_FULL → "full" sentence, LENGTH_FEW_WORDS → "fragment".
@@ -46,23 +74,23 @@ FONT_FAMILY = _FONT_FAMILIES.get(platform.system(), "DejaVu Sans")  # Linux/othe
 
 
 class TrainerView:
-    """UI construction and rendering, composed into the controller in main.py.
+    """Passive view: builds the Tk widgets and renders UI state.
 
-    Owns the Tk widgets and builds them in ``__init__``. Widget callbacks are
-    forwarded to the controller via ``self.controller``; the controller drives
-    the UI through this object's public methods and widget attributes.
+    Owns the widgets (built in ``__init__``). Widget callbacks forward to the
+    :class:`ViewCallbacks` passed in (``self._cb``); the controller drives the UI
+    through the public intent methods and read accessors below. The view holds no
+    reference to the controller.
     """
 
-    def __init__(self, root, controller):
-        """Build the UI under ``root`` and wire callbacks to ``controller``.
+    def __init__(self, root, callbacks: ViewCallbacks):
+        """Build the UI under ``root``, wiring widgets to ``callbacks``.
 
         Args:
             root: the Tk root window the widgets are placed in.
-            controller: the application controller (main.py); its ``on_*`` /
-                action methods are bound as the widget callbacks.
+            callbacks: the view→controller handlers the widgets invoke.
         """
         self.root = root
-        self.controller = controller
+        self._cb = callbacks
         # Last analysis prosody, cached so the canvases can redraw on resize.
         self._last_prosody = None
         self.setup_styles()
@@ -114,9 +142,9 @@ class TrainerView:
         menubar = tk.Menu(self.root)
         file_menu = tk.Menu(menubar, tearoff=0)
         file_menu.add_command(label="Open practice text…",
-                              command=self.controller.on_open_practice_text)
+                              command=self._cb.on_open_practice_text)
         file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.controller.quit_app)
+        file_menu.add_command(label="Exit", command=self._cb.quit_app)
         menubar.add_cascade(label="File", menu=file_menu)
         self.root.config(menu=menubar)
 
@@ -151,8 +179,8 @@ class TrainerView:
         self.btn_canvas = tk.Canvas(control_frame, width=100, height=100, bg=THEME["bg_main"],
                                     highlightthickness=0, cursor="hand2")
         self.btn_canvas.pack(pady=5)
-        self.btn_canvas.bind("<ButtonPress-1>", lambda e: self.controller.on_gui_btn_press())
-        self.btn_canvas.bind("<ButtonRelease-1>", lambda e: self.controller.on_gui_btn_release())
+        self.btn_canvas.bind("<ButtonPress-1>", lambda e: self._cb.on_gui_btn_press())
+        self.btn_canvas.bind("<ButtonRelease-1>", lambda e: self._cb.on_gui_btn_release())
         self.draw_mic_button("loading")
 
         self.instruction_label = tk.Label(control_frame, text="Loading components...",
@@ -182,7 +210,7 @@ class TrainerView:
                  fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.RIGHT, padx=(0, 6))
         # Save on focus loss; Enter just drops focus (which triggers the save
         # and returns the spacebar to push-to-talk duty).
-        self.user_name_entry.bind("<FocusOut>", self.controller.on_user_name_changed)
+        self.user_name_entry.bind("<FocusOut>", self._cb.on_user_name_changed)
         self.user_name_entry.bind("<Return>", lambda e: self.root.focus_set())
 
         self.source_text = scrolledtext.ScrolledText(
@@ -208,7 +236,7 @@ class TrainerView:
             selectors_frame, textvariable=self.length_var, state="readonly",
             width=12, values=(LENGTH_FULL, LENGTH_FEW_WORDS))
         self.length_selector.pack(side=tk.LEFT, padx=(0, 12))
-        self.length_selector.bind("<<ComboboxSelected>>", self.controller.on_length_changed)
+        self.length_selector.bind("<<ComboboxSelected>>", self._cb.on_length_changed)
 
         # Voice selector for the reference speech. Changing it regenerates the
         # phrase (see on_voice_changed) so the new voice is heard right away.
@@ -219,7 +247,7 @@ class TrainerView:
             selectors_frame, textvariable=self.voice_var, state="readonly",
             width=12, values=tuple(config.KOKORO_VOICES))
         self.voice_selector.pack(side=tk.LEFT, padx=(0, 12))
-        self.voice_selector.bind("<<ComboboxSelected>>", self.controller.on_voice_changed)
+        self.voice_selector.bind("<<ComboboxSelected>>", self._cb.on_voice_changed)
 
         # Lower values slow the reference playback (see play_reference). Stored as
         # the displayed label and parsed back to a float by _selected_speed().
@@ -233,7 +261,7 @@ class TrainerView:
         self.speed_selector.pack(side=tk.LEFT)
         # Changing the speed replays the reference so the difference is heard
         # immediately (see on_speed_changed).
-        self.speed_selector.bind("<<ComboboxSelected>>", self.controller.on_speed_changed)
+        self.speed_selector.bind("<<ComboboxSelected>>", self._cb.on_speed_changed)
 
         # 5. Current phrase card
         phrase_frame = tk.Frame(self.root, bg=THEME["bg_panel"])
@@ -255,7 +283,7 @@ class TrainerView:
         # the right-aligned items so it sits at the far right, after the legend.
         self.show_face = tk.BooleanVar(value=config.SHOW_FACE)
         tk.Checkbutton(prosody_header, text="Face", variable=self.show_face,
-                       command=self.controller.on_show_face_toggled,
+                       command=self._cb.on_show_face_toggled,
                        font=(FONT_FAMILY, 8), fg=THEME["text_muted"], bg=THEME["bg_main"],
                        activebackground=THEME["bg_main"], activeforeground=THEME["text_dim"],
                        selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
@@ -267,7 +295,7 @@ class TrainerView:
 
         # Each chart title doubles as a checkbox: unchecking hides that chart's
         # canvas to free vertical space; checking restores it in place
-        # (see _toggle_prosody_charts). Initial state is the persisted setting.
+        # (see toggle_prosody_charts). Initial state is the persisted setting.
         # The Pitch title sits above the row so the face panel beside the charts
         # lines up with the chart areas, not the labels.
         self.show_f0 = tk.BooleanVar(value=config.SHOW_PITCH_CHART)
@@ -323,8 +351,8 @@ class TrainerView:
 
         # Both canvases and the face panel are packed above by default; hide
         # whichever the persisted checkbox state says is off.
-        self._toggle_prosody_charts()
-        self._toggle_face()
+        self.toggle_prosody_charts()
+        self.toggle_face()
 
         # 6. Action row directly under the result window: groups every action
         # button on one line — Test diagnostic, replay of the user's recording,
@@ -340,7 +368,7 @@ class TrainerView:
 
         # Small diagnostic button: run the reference through analysis instead
         # of a recording (it should score near 100 against itself).
-        self.test_btn = tk.Button(action_frame, text="Test", command=self.controller.on_test_reference,
+        self.test_btn = tk.Button(action_frame, text="Test", command=self._cb.on_test_reference,
                                   font=(FONT_FAMILY, 8), bg=THEME["bg_panel"], fg=THEME["text_muted"],
                                   activebackground=THEME["border"], activeforeground=THEME["info"],
                                   bd=0, padx=8, pady=3, cursor="hand2",
@@ -348,15 +376,15 @@ class TrainerView:
         self.test_btn.pack(side=tk.LEFT, padx=(0, 10))
         self.test_btn.config(state=tk.DISABLED)
 
-        self.user_btn = self._make_button(action_frame, "▶ My recording", self.controller.play_user_recording)
+        self.user_btn = self._make_button(action_frame, "▶ My recording", self._cb.play_user_recording)
         self.user_btn.pack(side=tk.LEFT, padx=(0, 6))
         self.user_btn.config(state=tk.DISABLED)
 
-        self.ref_btn = self._make_button(action_frame, "▶ Reference", self.controller.play_reference)
+        self.ref_btn = self._make_button(action_frame, "▶ Reference", self._cb.play_reference)
         self.ref_btn.pack(side=tk.LEFT, padx=(0, 6))
         self.ref_btn.config(state=tk.DISABLED)
 
-        self.generate_btn = self._make_button(action_frame, "🎲 New phrase", self.controller.on_generate_phrase)
+        self.generate_btn = self._make_button(action_frame, "🎲 New phrase", self._cb.on_generate_phrase)
         self.generate_btn.pack(side=tk.LEFT)
         self.generate_btn.config(state=tk.DISABLED)
 
@@ -403,6 +431,128 @@ class TrainerView:
         self.btn_canvas.create_oval(cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner,
                                     fill=bg_color, outline="")
         self.btn_canvas.create_text(cx, cy, text=emoji, font=(FONT_FAMILY, 20), fill=THEME["text_bright"])
+
+    # ------------------------------------------------------------------
+    # Read accessors (controller queries widget values through these)
+    # ------------------------------------------------------------------
+    def get_practice_text(self) -> str:
+        """Return the editable practice text (without trailing whitespace)."""
+        return self.source_text.get("1.0", tk.END).strip()
+
+    def set_practice_text(self, text: str):
+        """Replace the practice-text panel contents."""
+        self.source_text.delete("1.0", tk.END)
+        self.source_text.insert("1.0", text)
+
+    def get_user_name(self) -> str:
+        return self.user_name_var.get().strip()
+
+    def get_voice(self) -> str:
+        return self.voice_var.get()
+
+    def get_length_label(self) -> str:
+        return self.length_var.get()
+
+    def get_speed_label(self) -> str:
+        return self.playback_speed.get()
+
+    def is_reference_enabled(self) -> bool:
+        """True when the Reference replay button is currently clickable."""
+        return str(self.ref_btn["state"]) == str(tk.NORMAL)
+
+    def get_show_pitch(self) -> bool:
+        return bool(self.show_f0.get())
+
+    def get_show_energy(self) -> bool:
+        return bool(self.show_energy.get())
+
+    def get_show_face(self) -> bool:
+        return bool(self.show_face.get())
+
+    # ------------------------------------------------------------------
+    # Intent methods: named UI states the controller transitions into.
+    # Each owns the buttons, mic glyph, status and instruction copy for one
+    # state, so the controller only names the state. All run on the main
+    # thread (the controller schedules them via root.after from workers).
+    # ------------------------------------------------------------------
+    def _set_actions(self, *, generate=None, reference=None, user=None, test=None):
+        """Enable/disable action buttons; ``None`` leaves a button unchanged."""
+        def state(flag):
+            return tk.NORMAL if flag else tk.DISABLED
+        if generate is not None:
+            self.generate_btn.config(state=state(generate))
+        if reference is not None:
+            self.ref_btn.config(state=state(reference))
+        if user is not None:
+            self.user_btn.config(state=state(user))
+        if test is not None:
+            self.test_btn.config(state=state(test))
+
+    def enter_app_ready(self):
+        """Models loaded, no phrase yet: only New phrase is available."""
+        self.draw_mic_button("idle")
+        self.update_status("Ready", THEME["ready"])
+        self.update_instruction("Edit the text, then click 'New phrase' to begin.")
+        self._set_actions(generate=True)
+
+    def enter_generating(self):
+        """LLM is producing a phrase: every action is locked out."""
+        self._set_actions(generate=False, reference=False, user=False, test=False)
+        self.draw_mic_button("processing")
+        self.update_status("Generating phrase (LLM)...", THEME["info"])
+        self.update_instruction("Generating a new phrase...")
+
+    def enter_reference_playing(self, phrase: str):
+        """A fresh phrase is shown and its reference is being played."""
+        self.phrase_label.config(text=phrase)
+        self.update_status("Listen to the reference...", THEME["reference"])
+        self.draw_mic_button("speaking")
+        self.update_instruction("Listening to the example...")
+
+    def enter_phrase_ready(self):
+        """Reference done: the user can record, replay or self-test."""
+        self.draw_mic_button("idle")
+        self.update_status("Your turn", THEME["ready"])
+        self.update_instruction("Hold SPACE or click the mic, then repeat the phrase.")
+        self._set_actions(generate=True, reference=True, test=True)
+
+    def generation_failed(self, message: str):
+        """Phrase generation failed: surface the error and offer a retry."""
+        self.append_error_msg(message)
+        self.draw_mic_button("idle")
+        self.update_status("Ready", THEME["ready"])
+        self.update_instruction("Click 'New phrase' to try again.")
+        self._set_actions(generate=True)
+
+    def enter_recording(self):
+        """Microphone is open: lock out playback so it cannot bleed into the take."""
+        self._set_actions(generate=False, reference=False, user=False, test=False)
+        self.draw_mic_button("recording")
+        self.update_status("Recording...", THEME["bad"])
+        self.update_instruction("Release when finished speaking.")
+
+    def enter_analyzing(self, status: str = "Analyzing pronunciation..."):
+        """Analysis is running (also used for the reference self-test)."""
+        self.draw_mic_button("processing")
+        self.update_status(status, THEME["warn"])
+
+    def enter_playing(self, status: str):
+        """Reference or recorded take is being played back during a flow."""
+        self.draw_mic_button("speaking")
+        self.update_status(status, THEME["reference"])
+
+    def enter_retry(self, *, has_phrase: bool, has_recording: bool):
+        """Return to a recordable idle state, enabling only what is available."""
+        self.draw_mic_button("idle")
+        self.update_status("Ready", THEME["ready"])
+        self._set_actions(generate=True)
+        if has_phrase:
+            self._set_actions(reference=True, test=True)
+            self.update_instruction("Hold SPACE or click the mic to repeat the phrase.")
+        else:
+            self.update_instruction("Click 'New phrase' to begin.")
+        if has_recording:
+            self._set_actions(user=True)
 
     # ------------------------------------------------------------------
     # Feedback / status helpers (always called on the main thread)
@@ -480,13 +630,13 @@ class TrainerView:
         main.py) so the new state is also persisted to settings.json.
         """
         return tk.Checkbutton(parent, text=text, variable=variable,
-                              command=self.controller.on_prosody_charts_toggled,
+                              command=self._cb.on_prosody_charts_toggled,
                               font=(FONT_FAMILY, 8), fg=THEME["text_muted"], bg=THEME["bg_main"],
                               activebackground=THEME["bg_main"], activeforeground=THEME["text_dim"],
                               selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
                               cursor="hand2")
 
-    def _toggle_prosody_charts(self):
+    def toggle_prosody_charts(self):
         """Show/hide each prosody canvas to match its title checkbox."""
         # Return focus to the window so the spacebar push-to-talk keeps working
         # (a focused checkbox would otherwise capture the spacebar and toggle).
@@ -505,7 +655,7 @@ class TrainerView:
         elif not self.show_energy.get() and en_shown:
             self.en_canvas.pack_forget()
 
-    def _toggle_face(self):
+    def toggle_face(self):
         """Show/hide the face panel; the charts column reflows to the free width."""
         self.root.focus_set()
         shown = self.face_frame.winfo_manager() == "pack"
@@ -535,7 +685,7 @@ class TrainerView:
     # ------------------------------------------------------------------
     # Feedback rendering
     # ------------------------------------------------------------------
-    def _show_feedback(self, result: "pronounce.PronunciationResult"):
+    def show_feedback(self, result: "pronounce.PronunciationResult", current_phrase):
         # Reflect the score on the face: above 50 smiles, below frowns, 50 flat.
         self.face.set_score(result.score)
         self.feedback_display.configure(state=tk.NORMAL)
@@ -545,7 +695,7 @@ class TrainerView:
         # First line: the expected phrase, with mispronounced words shown in red.
         error_words = {w.lower() for w in result.words_with_errors}
         self.feedback_display.insert(tk.END, "Phrase: ", "label")
-        for token in (self.controller.current_phrase or "—").split():
+        for token in (current_phrase or "—").split():
             is_error = token.lower().strip(".,!?;:\"") in error_words
             self.feedback_display.insert(tk.END, token + " ", "bad" if is_error else "text")
         self.feedback_display.insert(tk.END, "\n")
@@ -577,10 +727,7 @@ class TrainerView:
 
         # Re-enable everything disabled while recording: replay buttons (both
         # signals exist now), the self-test and new-phrase generation.
-        self.ref_btn.config(state=tk.NORMAL)
-        self.user_btn.config(state=tk.NORMAL)
-        self.test_btn.config(state=tk.NORMAL)
-        self.generate_btn.config(state=tk.NORMAL)
+        self._set_actions(generate=True, reference=True, user=True, test=True)
         self.draw_mic_button("idle")
 
         if result.passed:
