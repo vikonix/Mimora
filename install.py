@@ -619,6 +619,36 @@ def step_gpu_torch(
     run_or_fail(cmd, log, report, "torch (CUDA)", series)
 
 
+def step_cpu_llama(
+    log: Logger, confirmer: Confirmer, report: StepReport
+) -> None:
+    """Install the prebuilt CPU wheel of llama-cpp-python.
+
+    Recent llama-cpp-python releases publish no CPU wheel on PyPI (only an
+    sdist), and Step 4 installs requirements with --only-binary, which forbids
+    a source build. abetlen's wheel index ships a CPU-only build, so we pull it
+    here — BEFORE Step 4 — and the requirements.txt constraint is then already
+    satisfied, so pip never reaches for the missing PyPI wheel.
+    """
+    index = LLAMA_INDEX_URL.format(series="cpu")
+    # --extra-index-url (not --index-url) keeps PyPI reachable for other deps.
+    cmd = PIP + ["install", "--no-cache-dir",
+                 "llama-cpp-python", "--extra-index-url", index]
+    # Presence-only check: metadata can't tell a CPU build from a CUDA one, so
+    # any installed llama-cpp-python triggers the reinstall/skip prompt.
+    installed = is_installed("llama-cpp-python")
+    desc = ("Install prebuilt CPU wheel of llama-cpp-python from abetlen's "
+            "index (no CPU wheel exists on PyPI; avoids a doomed source build).")
+    if installed:
+        log.log(f"    llama-cpp-python already installed "
+                f"({dist_version('llama-cpp-python')}).")
+    if not confirmer.confirm(desc, " ".join(cmd), installed=installed):
+        report.add("llama-cpp-python (CPU)", SKIPPED,
+                   "already installed" if installed else "")
+        return
+    run_or_fail(cmd, log, report, "llama-cpp-python (CPU)")
+
+
 def step_gpu_llama(
     log: Logger, confirmer: Confirmer, report: StepReport,
     driver_cuda: tuple[int, int] | None,
@@ -946,16 +976,18 @@ def main() -> int:
         report.add("GPU detection", DONE,
                    gpu_name or ("forced" if args.gpu else "none"))
 
-        # Step 3: GPU-specific CUDA builds, installed BEFORE requirements so the
+        # Step 3: hardware-specific builds, installed BEFORE requirements so the
         # llama-cpp-python / torch constraints in requirements.txt are already
         # satisfied (avoids a doomed CPU source-build of llama-cpp-python).
+        # torch ships CPU wheels on PyPI, so the CPU path only needs llama here.
         if use_gpu:
             log.banner("Step 3/8 — GPU (CUDA) builds")
             step_gpu_torch(log, confirmer, report, driver_cuda)
             step_gpu_llama(log, confirmer, report, driver_cuda)
         else:
+            log.banner("Step 3/8 — CPU builds")
             report.add("torch (CUDA)", SKIPPED, "CPU-only")
-            report.add("llama-cpp-python (CUDA)", SKIPPED, "CPU-only")
+            step_cpu_llama(log, confirmer, report)
 
         # Step 4: project dependencies.
         step_install_requirements(log, confirmer, report)

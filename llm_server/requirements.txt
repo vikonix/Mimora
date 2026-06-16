@@ -1,8 +1,12 @@
 # LLM Server dependencies
 # Install with: python -m pip install -r requirements.txt
 #
-# NOTE: this installs the CPU-only build of llama-cpp-python (recent versions
-# have no prebuilt wheels on PyPI, so pip silently compiles without CUDA).
+# NOTE: recent llama-cpp-python releases publish no CPU wheel on PyPI (only an
+# sdist), and install.py installs requirements with --only-binary, which blocks
+# a source build. install.py therefore pre-installs a prebuilt CPU wheel from
+# abetlen's index in Step 3 so this constraint is already satisfied. If you run
+# this file directly (outside install.py), install that wheel first:
+#   python -m pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 # For GPU (CUDA) support install the prebuilt CUDA wheel INSTEAD — see
 # "llama-cpp-python with CUDA Support" in README.md:
 #   python -m pip install llama-cpp-python==0.3.4 --force-reinstall --no-cache-dir --only-binary=:all: --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
