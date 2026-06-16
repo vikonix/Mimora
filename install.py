@@ -749,19 +749,29 @@ def _linux_espeak_command() -> list[str] | None:
 
 
 def configure_hf_symlink_fallback(log: Logger) -> None:
-    """On Windows without symlink privilege, make HF copy files instead.
+    """On Windows, keep HF off the hf-xet path that crashes without symlinks.
 
-    huggingface_hub's cache normally points snapshots/ at blobs/ via symlinks.
-    Creating a symlink on Windows needs Developer Mode or admin rights; without
-    them the native hf-xet downloader fails hard with WinError 1314 (it does not
-    fall back to copying the way the pure-Python path does). Detect the missing
-    privilege here and, when absent, disable hf-xet so downloads fall back to
-    plain file copies (uses more disk, but always works). Must run before
+    huggingface_hub's cache points snapshots/ at blobs/ via symlinks. Creating a
+    symlink on Windows needs Developer Mode or admin rights.
+
+    The native hf-xet downloader links files into the cache itself and fails hard
+    with WinError 1314 when that privilege is missing — and, unlike the pure-
+    Python HTTP path, it does NOT fall back to copying. Crucially it can hit this
+    even when a plain symlink probe passes (the privilege can be present at probe
+    time yet unavailable to xet's linker), so a probe is not a reliable gate.
+
+    We therefore disable hf-xet on every Windows run. Downloads then take the
+    HTTP path, which checks symlink support itself and copies into the cache when
+    symlinks are unavailable (uses more disk, but always works). Must run before
     huggingface_hub is first imported.
     """
     if sys.platform != "win32":
         return
     MODEL_CACHE_DIR.mkdir(exist_ok=True)
+
+    # Unconditional: xet is the only path that raises 1314 without a copy
+    # fallback, and it can do so regardless of the symlink probe below.
+    os.environ["HF_HUB_DISABLE_XET"] = "1"
 
     import tempfile
     supported = True
@@ -777,10 +787,9 @@ def configure_hf_symlink_fallback(log: Logger) -> None:
         supported = False
 
     if supported:
-        log.log("    Symlink support: OK.")
+        log.log("    Symlink support: OK (hf-xet disabled on Windows for safety).")
         return
 
-    os.environ["HF_HUB_DISABLE_XET"] = "1"
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
     log.log("    Symlinks unavailable (no Developer Mode / admin): HF downloads")
     log.log("    will COPY into the cache instead of symlinking (more disk use).")
