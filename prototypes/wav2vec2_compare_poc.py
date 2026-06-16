@@ -48,6 +48,7 @@ Run
 from __future__ import annotations
 
 import argparse
+import logging
 from typing import Optional, Tuple
 
 import numpy as np
@@ -121,14 +122,17 @@ def run_wav2vec2(
 
 
 def _print_wav2vec2(result: "pronounce.PronunciationResult") -> None:
-    print("=== Wav2Vec2 core (pronounce.analyze) ===")
-    print(f"score          : {result.score} / 100  (passed={result.passed})")
-    print(f"transcription  : {result.transcription!r}")
-    print(f"acoustic/step  : {result.acoustic_per_step:.4f} "
-          f"(baseline={result.acoustic_baseline:.4f})")
+    logging.info("=" * 60)  # visually separate runs in the appended log
+    logging.info("=== Wav2Vec2 core (pronounce.analyze) ===")
+    logging.info("score          : %s / 100  (passed=%s)", result.score, result.passed)
+    logging.info("transcription  : %r", result.transcription)
+    logging.info("acoustic/step  : %.4f (baseline=%.4f)",
+                 result.acoustic_per_step, result.acoustic_baseline)
     if result.words_with_errors:
-        print(f"words w/ errors: {', '.join(result.words_with_errors)}")
-    print(f"feedback       : {result.feedback}")
+        logging.info("words w/ errors: %s", ", ".join(result.words_with_errors))
+    logging.info("feedback       : %s", result.feedback)
+    logging.info("=" * 60)  # visually separate runs in the appended log
+    logging.info("")
 
 
 def _print_light_pipeline(audio: str, text: str, lang: str, asr: str, device: str) -> None:
@@ -140,14 +144,16 @@ def _print_light_pipeline(audio: str, text: str, lang: str, asr: str, device: st
     import allosaurus_pronounce_poc as poc
 
     spec = poc.LANGUAGES[lang]
-    reference = poc.reference_phonemes(text, spec.espeak)
+    reference_words = poc.reference_word_phonemes(text, spec.espeak)
+    reference = [phone for word in reference_words for phone in word]
     spoken = poc.spoken_phonemes(audio, spec, backend=asr, device=device)
-    result = poc.align_and_score(reference, spoken)
+    result = poc.align_and_score(reference, spoken, reference_words)
 
-    print(f"\n=== Light pipeline (espeak -> {asr} -> edit distance) ===")
-    print(f"score          : {result.score} / 100")
-    print(f"reference IPA  : {' '.join(reference)}")
-    print(f"spoken IPA     : {' '.join(spoken)}")
+    logging.info("=== Light pipeline (espeak -> %s -> edit distance) ===", asr)
+    logging.info("score          : %s / 100  (phonemes %s, words %.0f%%)",
+                 result.score, result.phoneme_score, result.word_recall * 100)
+    logging.info("reference IPA  : %s", " ".join(reference))
+    logging.info("spoken IPA     : %s", " ".join(spoken))
 
 
 def main() -> None:
@@ -188,6 +194,9 @@ def main() -> None:
         help="also run the light pipeline (espeak -> phoneme ASR -> edit distance)",
     )
     args = parser.parse_args()
+
+    # Tee all output below to the screen and append a dated copy to prototype.log.
+    _bootstrap.setup_logging()
 
     # Fall back to the phrase that ships with the sample recording.
     text = args.text if args.text is not None else DEFAULT_PHRASE_FILE.read_text(

@@ -22,9 +22,12 @@ It also exposes ``PROJECT_ROOT`` so prototypes can build default paths (e.g. to
 Finally, it points ``phonemizer`` at the bundled espeak-ng on import (see
 ``_register_espeak``), so prototypes using espeak work without a system install.
 
-All side effects happen on import; there is nothing to call.
+Path and espeak setup happen on import. The one thing to call explicitly is
+``setup_logging()`` (from a prototype's ``main()``), which tees all output to the
+screen and appends a dated copy to ``prototype.log``.
 """
 
+import logging
 import sys
 from pathlib import Path
 
@@ -56,3 +59,38 @@ def _register_espeak() -> None:
 
 
 _register_espeak()
+
+
+# Single, shared log file for all prototypes; lives next to the scripts and is
+# only ever appended to, so successive runs accumulate for later analysis.
+LOG_FILE = Path(__file__).resolve().parent / "prototype.log"
+
+
+def setup_logging() -> logging.Logger:
+    """Tee all output to the screen *and* append a dated copy to ``prototype.log``.
+
+    Call once at the start of a prototype's ``main()``. Idempotent: a prototype may
+    import a sibling that also calls this, so repeated calls must not stack
+    duplicate handlers (which would double every line). The file is opened in
+    append mode and never truncated; each line there is timestamped for easy
+    analysis, while the console stays clean (message only). Handlers are attached
+    to the root logger so library logs (e.g. ``pronounce.analyze``) are captured
+    alongside the prototype's own ``logging.info`` output.
+    """
+    root = logging.getLogger()
+    if getattr(setup_logging, "_configured", False):
+        return root
+    root.setLevel(logging.INFO)
+
+    file_handler = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(message)s",
+                          datefmt="%Y-%m-%d %H:%M:%S")
+    )
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(logging.Formatter("%(message)s"))
+
+    root.addHandler(file_handler)
+    root.addHandler(console)
+    setup_logging._configured = True
+    return root

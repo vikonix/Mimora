@@ -28,8 +28,11 @@ rhotic ``r``/``ɹ`` cost little. Because that distance is the *fraction* of
 differing features, even unrelated phones score well below 1, so the per-phone
 distance is rescaled against a per-utterance "completely wrong" baseline (see
 ``_bad_baseline``) -- the same good/bad anchoring the production core uses --
-instead of an absolute scale that would let garbage score ~60. Language-general,
-so it works for Spanish unchanged.
+instead of an absolute scale that would let garbage score ~60. That anchored
+distance is then blended with a **word-recall** signal (the fraction of reference
+words actually spoken, see ``_word_recall``) so a partial reading is told apart
+from a wholly different phrase -- both of which the distance alone collapses to
+~0. Language-general, so it works for Spanish unchanged.
 
 Both keep the pipeline **text-only** -- the reference phonemes come from espeak,
 so no per-phrase TTS audio is needed (unlike the production core).
@@ -75,6 +78,7 @@ Run
 from __future__ import annotations
 
 import argparse
+import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import List, Tuple
@@ -134,6 +138,30 @@ def reference_phonemes(text: str, espeak_lang: str) -> List[str]:
         separator=Separator(phone=" ", word="\n", syllable=""),
     )
     return _normalize_phones(_tokenize_ipa(ipa))
+
+
+def reference_word_phonemes(text: str, espeak_lang: str) -> List[List[str]]:
+    """Phonemize ``text`` but keep the phones grouped per word.
+
+    Same espeak call as ``reference_phonemes`` (which flattens the result), except
+    we preserve espeak's word boundaries (the ``word="\\n"`` separator). The word
+    grouping powers the word-recall signal (see ``_word_recall``): it lets the
+    scorer tell a *partial* reading (some words dropped) apart from a *wholly
+    different* phrase -- a distinction the per-phone distance alone cannot make.
+    Flatten with ``[p for word in words for p in word]`` to get the same sequence
+    ``reference_phonemes`` returns.
+    """
+    ipa = phonemize(
+        text,
+        language=espeak_lang,
+        backend="espeak",
+        strip=True,
+        with_stress=False,
+        preserve_punctuation=False,
+        separator=Separator(phone=" ", word="\n", syllable=""),
+    )
+    words = (_normalize_phones(_tokenize_ipa(word)) for word in ipa.split("\n"))
+    return [word for word in words if word]
 
 
 # ---------------------------------------------------------------------------
@@ -224,19 +252,38 @@ BAD_MIN_SPAN = 0.10         # keep bad strictly above good (avoids divide-by-tin
                             # when reference and spoken happen to be near-identical).
 BAD_BASELINE_DEFAULT = 0.5  # fallback ceiling when a sequence is empty.
 
+# Word-recall signal (the second scoring axis). The anchored phoneme distance
+# alone collapses anything-not-good to ~0, so it cannot tell a partial reading
+# (some words dropped) from a wholly different phrase -- both land near 0. For
+# each reference *word* we ask whether its phone sequence appears as a close
+# matching run in the spoken phones; the fraction that do is a language-agnostic
+# "word recall" derived from the phonemes we already have (no second, per-language
+# word recognizer needed). The final score blends the two axes, mirroring the
+# production core's split of pronunciation quality vs word correctness.
+WORD_PRESENT_MAX_DIST = 0.20  # mean per-phone feature distance below which a word
+                              # counts as actually spoken. Strict (below panphon's
+                              # ~0.3 floor for unrelated phones) so a near-but-wrong
+                              # run is not mistaken for the word being present.
+WEIGHT_PHONEME = 0.7          # final = 0.7 * phoneme quality + 0.3 * word recall,
+WEIGHT_WORD = 0.3             # echoing the core's ~70/30 pronunciation/word split.
+
 
 @dataclass
 class ScoreResult:
-    score: float                       # 0-100, higher is better
+    score: float                       # 0-100 final (phoneme quality + word recall)
     pairs: List[Tuple[str, str]]       # aligned (reference, spoken); "" == gap
     per_phone_distance: float          # observed feature distance per reference phone
     bad_baseline: float                # per-utterance "completely wrong" anchor
+    phoneme_score: float               # 0-100 pronunciation-quality component
+    word_recall: float                 # 0-1 fraction of reference words actually spoken
 
 
-def align_and_score(reference: List[str], spoken: List[str]) -> ScoreResult:
-    """Align ``spoken`` against ``reference`` by edit distance and score it.
+def align_and_score(
+    reference: List[str], spoken: List[str], reference_words: List[List[str]]
+) -> ScoreResult:
+    """Align ``spoken`` against ``reference`` and score it on two axes.
 
-    Scoring proceeds in two steps:
+    Axis 1 -- pronunciation quality (``phoneme_score``):
 
     1. A feature-weighted edit distance aligns the two phone sequences.
        Substitutions cost the **articulatory feature distance** (0..1) between the
@@ -249,7 +296,16 @@ def align_and_score(reference: List[str], spoken: List[str]) -> ScoreResult:
        even for unrelated phones, so without the anchor a completely wrong reading
        scores ~60 rather than ~0. Mirrors the core's good/bad normalization.
 
-    Both steps are language-independent, so this works for Spanish unchanged.
+    Axis 2 -- word recall (``word_recall``): the fraction of reference *words*
+    whose phones were actually spoken (see ``_word_recall``). This separates a
+    partial reading (some words dropped) from a wholly different phrase, which
+    axis 1 alone cannot -- both collapse to ~0.
+
+    The final score blends the two (``WEIGHT_PHONEME``/``WEIGHT_WORD``). Both axes
+    are language-independent, so this works for Spanish unchanged.
+
+    ``reference_words`` is the per-word grouping of ``reference`` (from
+    ``reference_word_phonemes``); ``reference`` must be its flattening.
     """
     if not reference:
         raise ValueError("empty reference phoneme sequence")
@@ -258,12 +314,19 @@ def align_and_score(reference: List[str], spoken: List[str]) -> ScoreResult:
 
     per_phone_distance = distance / len(reference)
     bad = _bad_baseline(reference, spoken)
-    score = _score_from_distance(per_phone_distance, bad)
+    phoneme_score = _score_from_distance(per_phone_distance, bad)
+
+    word_recall = _word_recall(reference_words, spoken)
+    score = round(
+        WEIGHT_PHONEME * phoneme_score + WEIGHT_WORD * word_recall * 100.0, 1
+    )
     return ScoreResult(
         score=score,
         pairs=pairs,
         per_phone_distance=per_phone_distance,
         bad_baseline=bad,
+        phoneme_score=phoneme_score,
+        word_recall=word_recall,
     )
 
 
@@ -295,6 +358,37 @@ def _score_from_distance(
     span = max(bad - good, BAD_MIN_SPAN)
     accuracy = 1.0 - (per_phone_distance - good) / span
     return round(max(0.0, min(1.0, accuracy)) * 100.0, 1)
+
+
+def _word_recall(reference_words: List[List[str]], spoken: List[str]) -> float:
+    """Fraction of reference words whose phones appear as a close run in ``spoken``.
+
+    A language-agnostic stand-in for "did the speaker say the right words", built
+    from the phonemes already on hand. Empty input -> 0.0 (nothing recalled).
+    """
+    if not reference_words:
+        return 0.0
+    present = sum(1 for word in reference_words if _word_is_present(word, spoken))
+    return present / len(reference_words)
+
+
+def _word_is_present(word: List[str], spoken: List[str]) -> bool:
+    """True if ``word``'s phones closely match some same-length window of ``spoken``.
+
+    We slide a window of the word's own length and take the lowest mean feature
+    distance; a word counts as spoken when that best window is below
+    ``WORD_PRESENT_MAX_DIST``. Same-length only -- a deliberate prototype
+    simplification that ignores within-word insertions/deletions; the averaged,
+    feature-based threshold keeps it forgiving enough in practice.
+    """
+    n = len(word)
+    if n == 0 or n > len(spoken):
+        return False
+    best = min(
+        sum(_substitution_cost(word[k], spoken[i + k]) for k in range(n)) / n
+        for i in range(len(spoken) - n + 1)
+    )
+    return best < WORD_PRESENT_MAX_DIST
 
 
 # ---------------------------------------------------------------------------
@@ -478,30 +572,40 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Tee all output below to the screen and append a dated copy to prototype.log.
+    _bootstrap.setup_logging()
+
     # Fall back to the phrase that ships with the sample recording.
     text = args.text if args.text is not None else DEFAULT_PHRASE_FILE.read_text(
         encoding="utf-8"
     ).strip()
 
     spec = LANGUAGES[args.lang]
-    reference = reference_phonemes(text, spec.espeak)
+    reference_words = reference_word_phonemes(text, spec.espeak)
+    reference = [phone for word in reference_words for phone in word]
     spoken = spoken_phonemes(args.audio, spec, backend=args.asr, device=args.device)
-    result = align_and_score(reference, spoken)
+    result = align_and_score(reference, spoken, reference_words)
 
-    print(f"language   : {args.lang}  (asr={args.asr})")
-    print(f"reference  : {' '.join(reference)}")
-    print(f"spoken     : {' '.join(spoken)}")
-    print(f"score      : {result.score} / 100")
-    print(f"distance   : {result.per_phone_distance:.3f}/phone "
-          f"(bad-anchor={result.bad_baseline:.3f}, score 0 at >= this)")
-    print("alignment  : ref | spoken   (~ = near, * = mismatch)")
+    logging.info("=" * 60)  # visually separate runs in the appended log
+    logging.info("language   : %s  (asr=%s)", args.lang, args.asr)
+    logging.info("reference  : %s", " ".join(reference))
+    logging.info("spoken     : %s", " ".join(spoken))
+    logging.info("score      : %s / 100", result.score)
+    logging.info("  components: phonemes %s / 100, words %.0f%% recalled",
+                 result.phoneme_score, result.word_recall * 100)
+    logging.info("distance   : %.3f/phone (bad-anchor=%.3f, phoneme score 0 at >= this)",
+                 result.per_phone_distance, result.bad_baseline)
+    logging.info("alignment  : ref | spoken   (~ = near, * = mismatch)")
     for ref_sym, hyp_sym in result.pairs:
         if not ref_sym or not hyp_sym:
             flag = "  *"                       # insertion / deletion
         else:
             cost = _substitution_cost(ref_sym, hyp_sym)
             flag = "" if cost == 0 else ("  ~" if cost < 0.34 else "  *")
-        print(f"             {ref_sym or '_':<4} | {hyp_sym or '_':<4}{flag}")
+        logging.info("             %-4s | %-4s%s", ref_sym or "_", hyp_sym or "_", flag)
+
+    logging.info("=" * 60)  # visually separate runs in the appended log
+    logging.info("")
 
 
 if __name__ == "__main__":
