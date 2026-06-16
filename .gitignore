@@ -21,6 +21,7 @@ env/
 Thumbs.db
 
 # Audio
+records/
 *.wav
 *.mp3
 *.flac
@@ -49,4 +50,4 @@ model_cache/
 config/settings.json
 
 # Custom tests
-texts
+texts/
