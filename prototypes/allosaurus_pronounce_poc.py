@@ -24,7 +24,11 @@ production core scores ~95). So the default backend is now a stronger one:
 * ``allosaurus``: the original universal recognizer, kept for comparison.
 
 Scoring uses an articulatory feature distance (panphon), so near-misses like the
-rhotic ``r``/``ɹ`` cost little while unrelated swaps cost ~1 -- language-general,
+rhotic ``r``/``ɹ`` cost little. Because that distance is the *fraction* of
+differing features, even unrelated phones score well below 1, so the per-phone
+distance is rescaled against a per-utterance "completely wrong" baseline (see
+``_bad_baseline``) -- the same good/bad anchoring the production core uses --
+instead of an absolute scale that would let garbage score ~60. Language-general,
 so it works for Spanish unchanged.
 
 Both keep the pipeline **text-only** -- the reference phonemes come from espeak,
@@ -201,33 +205,96 @@ def _allosaurus_model():
 # ---------------------------------------------------------------------------
 # Step 3 -- align the two phoneme sequences and derive a coarse score.
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Scoring anchors. A raw error rate ``1 - distance/len(reference)`` floors far
+# too high: panphon's substitution cost is the *fraction* of differing
+# articulatory features, and two unrelated phones still share most of their
+# features, so the edit DP can align a completely wrong reading at ~0.15-0.4 per
+# phone and report a misleading ~60/100 for garbage. We fix this exactly the way
+# the production core does (see pronounce.speech.compute_pronunciation_score):
+# rescale the observed per-phone distance from a [good, bad] window onto
+# [100, 0], where ``bad`` is a per-utterance "completely wrong" baseline derived
+# from random phone pairings (see _bad_baseline). This stays language-agnostic.
+# ---------------------------------------------------------------------------
+PHONEME_GOOD = 0.0          # per-phone feature distance scored as 100. Kept at 0
+                            # for the prototype (no calibration data); raise it
+                            # (~0.05-0.10) once good-read samples exist to sharpen
+                            # the top end, mirroring acoustic_good in the core.
+BAD_MIN_SPAN = 0.10         # keep bad strictly above good (avoids divide-by-tiny
+                            # when reference and spoken happen to be near-identical).
+BAD_BASELINE_DEFAULT = 0.5  # fallback ceiling when a sequence is empty.
+
+
 @dataclass
 class ScoreResult:
     score: float                       # 0-100, higher is better
     pairs: List[Tuple[str, str]]       # aligned (reference, spoken); "" == gap
+    per_phone_distance: float          # observed feature distance per reference phone
+    bad_baseline: float                # per-utterance "completely wrong" anchor
 
 
 def align_and_score(reference: List[str], spoken: List[str]) -> ScoreResult:
     """Align ``spoken`` against ``reference`` by edit distance and score it.
 
-    The score is ``1 - feature_error_rate``, where the rate is the weighted edit
-    distance divided by the reference length, mapped to 0-100.
+    Scoring proceeds in two steps:
 
-    Substitutions cost the **articulatory feature distance** (0..1) between the two
-    phones via panphon, so a notational/near-miss like the rhotic ``r``/``ɹ`` or a
-    rounded/unrounded vowel costs little, while an unrelated swap costs ~1.
-    Insertions and deletions cost a full 1 (a phone wholly missing or extra). This
-    is language-independent, so it works for Spanish unchanged.
+    1. A feature-weighted edit distance aligns the two phone sequences.
+       Substitutions cost the **articulatory feature distance** (0..1) between the
+       two phones via panphon, so a notational/near-miss like the rhotic
+       ``r``/``ɹ`` or a rounded/unrounded vowel costs little. Insertions and
+       deletions cost a full 1 (a phone wholly missing or extra).
+    2. The resulting per-phone distance is rescaled against a per-utterance
+       ``bad`` baseline (see ``_bad_baseline``) instead of being read off an
+       absolute scale. This matters because panphon substitution costs are small
+       even for unrelated phones, so without the anchor a completely wrong reading
+       scores ~60 rather than ~0. Mirrors the core's good/bad normalization.
+
+    Both steps are language-independent, so this works for Spanish unchanged.
     """
     if not reference:
         raise ValueError("empty reference phoneme sequence")
 
     pairs, distance = _edit_alignment(reference, spoken)
 
-    # Feature error rate relative to the reference length, mapped to 0-100.
-    accuracy = 1.0 - (distance / len(reference))
-    score = round(max(0.0, accuracy) * 100.0, 1)
-    return ScoreResult(score=score, pairs=pairs)
+    per_phone_distance = distance / len(reference)
+    bad = _bad_baseline(reference, spoken)
+    score = _score_from_distance(per_phone_distance, bad)
+    return ScoreResult(
+        score=score,
+        pairs=pairs,
+        per_phone_distance=per_phone_distance,
+        bad_baseline=bad,
+    )
+
+
+def _bad_baseline(reference: List[str], spoken: List[str]) -> float:
+    """Per-utterance "completely wrong" anchor for the score.
+
+    The mean feature distance over *all* (reference phone, spoken phone) pairs
+    approximates the cost of pairing unrelated content, giving each utterance its
+    own automatic ceiling. This is the phoneme-space analog of
+    ``pronounce.speech._random_pair_baseline`` (which samples random frame pairs
+    of two embeddings); here the sequences are short, so we average exactly --
+    deterministic and no sampling seed needed. ``_substitution_cost`` is cached,
+    so the full product is cheap.
+    """
+    if not reference or not spoken:
+        return BAD_BASELINE_DEFAULT
+    total = sum(_substitution_cost(r, s) for r in reference for s in spoken)
+    return total / (len(reference) * len(spoken))
+
+
+def _score_from_distance(
+    per_phone_distance: float, bad: float, good: float = PHONEME_GOOD
+) -> float:
+    """Map an observed per-phone distance onto 0-100 against the [good, bad] window.
+
+    ``good`` distance -> 100, ``bad`` distance -> 0, clamped outside the window.
+    Mirrors the acoustic mapping in ``pronounce.speech.compute_pronunciation_score``.
+    """
+    span = max(bad - good, BAD_MIN_SPAN)
+    accuracy = 1.0 - (per_phone_distance - good) / span
+    return round(max(0.0, min(1.0, accuracy)) * 100.0, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -425,6 +492,8 @@ def main() -> None:
     print(f"reference  : {' '.join(reference)}")
     print(f"spoken     : {' '.join(spoken)}")
     print(f"score      : {result.score} / 100")
+    print(f"distance   : {result.per_phone_distance:.3f}/phone "
+          f"(bad-anchor={result.bad_baseline:.3f}, score 0 at >= this)")
     print("alignment  : ref | spoken   (~ = near, * = mismatch)")
     for ref_sym, hyp_sym in result.pairs:
         if not ref_sym or not hyp_sym:
