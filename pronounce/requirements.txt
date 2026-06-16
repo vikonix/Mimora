@@ -8,7 +8,8 @@
 #   macOS   : brew install espeak-ng
 #   Linux   : sudo apt-get install espeak-ng
 
-transformers>=4.30.0
+# >=5.3 closes CVE-2026-4372 (config-injection RCE); kept in sync with the root requirements.txt.
+transformers>=5.3
 torch>=2.0.0
 torchaudio>=2.0.0
 librosa>=0.10.0
