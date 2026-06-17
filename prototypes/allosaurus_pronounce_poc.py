@@ -424,10 +424,41 @@ _DIACRITIC_CODEPOINTS = (
 _STRIP_DIACRITICS = dict.fromkeys(_DIACRITIC_CODEPOINTS)
 
 
+# Inventory fold. The espeak reference (en-us) and the wav2vec2 recognizer emit
+# the *same sounds* under different IPA conventions, and the mismatch recurs in
+# every utterance -- depressing the phoneme score even on good reads (observed:
+# reference ``p ɹ æ k`` vs recognizer ``p r a k``). We canonicalize both
+# sequences toward the cardinal symbols the recognizer uses, applied symmetrically
+# so a reference phone and its recognizer counterpart land on the same token.
+#
+# Each fold drops an English-allophonic distinction the recognizer does not mark:
+#   rhotic approximant/flap -> trill ``r``; near-open/central -> open ``a``;
+#   reduced high vowel -> ``ɪ``; r-colored schwa -> plain schwa (the rhotic color
+#   is recovered by recall, not penalized twice); the GOAT diphthong -> ``o``.
+# This is **Spanish-safe**: Spanish espeak already emits these cardinal symbols,
+# so the table is (near-)identity there -- it only simplifies English detail.
+# It is a single, explicit place to tune during calibration.
+_PHONE_FOLD = {
+    "ɹ": "r", "ɾ": "r", "ɻ": "r",     # rhotic approximant / flap / retroflex -> r
+    "æ": "a", "ɐ": "a",               # near-open front / near-open central -> a
+    "ᵻ": "ɪ", "ɨ": "ɪ",              # reduced / central high vowel -> ɪ
+    "ɚ": "ə", "ɝ": "ə",              # r-colored schwa -> plain schwa
+    "oʊ": "o", "əʊ": "o",            # GA / RP "goat" diphthong -> o
+}
+
+
 def _normalize_phones(tokens: List[str]) -> List[str]:
-    """Drop suprasegmental diacritics so the two inventories line up better."""
+    """Drop suprasegmental diacritics and fold the inventory so both sides align.
+
+    Two steps, in order: strip the suprasegmental diacritics one recognizer marks
+    and the other does not, then map each token through ``_PHONE_FOLD`` to
+    canonicalize notational/allophonic variants that otherwise inflate the
+    distance. Applied to reference and spoken sequences alike (both pass through
+    here), so equivalent phones collapse to one symbol on both sides.
+    """
     cleaned = (tok.translate(_STRIP_DIACRITICS) for tok in tokens)
-    return [tok for tok in cleaned if tok]
+    folded = (_PHONE_FOLD.get(tok, tok) for tok in cleaned)
+    return [tok for tok in folded if tok]
 
 
 # ---------------------------------------------------------------------------

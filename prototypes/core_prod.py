@@ -14,7 +14,7 @@ Status: prototype evaluation tooling. Not wired into the GUI.
 
 from __future__ import annotations
 
-from typing import Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 import soundfile as sf
@@ -77,6 +77,17 @@ class ProdEngine:
                 "acoustic_baseline": float(result.acoustic_baseline),
             },
         )
+
+    def config(self) -> Dict[str, object]:
+        """Parameters this engine ran with -- logged so each run records its setup."""
+        cfg = pronounce.get_config()
+        return {
+            "model": cfg.model_name,
+            "device": cfg.device,
+            "espeak": cfg.espeak_language,
+            "score_threshold": cfg.score_threshold,
+            "acoustic_good": cfg.acoustic_good,
+        }
 
     def close(self) -> None:
         """Nothing to release; model weights are cached in the ``pronounce`` module."""

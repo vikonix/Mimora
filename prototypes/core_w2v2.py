@@ -15,6 +15,8 @@ Status: prototype evaluation tooling. Not wired into the GUI.
 
 from __future__ import annotations
 
+from typing import Dict, List, Tuple
+
 # Side-effect import: project root on sys.path + espeak registration. First.
 import _bootstrap  # noqa: F401
 
@@ -41,6 +43,7 @@ class W2V2Engine:
         lang: str = "en",
         device: str = "cpu",
         threshold: float = DEFAULT_THRESHOLD,
+        verbose: bool = False,
     ) -> None:
         if lang not in light.LANGUAGES:
             raise ValueError(
@@ -49,6 +52,7 @@ class W2V2Engine:
         self.lang = lang
         self.device = device
         self.threshold = threshold
+        self.verbose = verbose          # include the full alignment table in detail
         self._spec = light.LANGUAGES[lang]
 
     def init(self) -> None:
@@ -67,16 +71,57 @@ class W2V2Engine:
         )
         result = light.align_and_score(reference, spoken)
 
+        detail = f"ref={' '.join(reference)} | spoken={' '.join(spoken)}"
+        if self.verbose:
+            detail += "\n" + _alignment_table(result.pairs)
+
         return EngineResult(
             score=float(result.score),
             passed=result.score >= self.threshold,
-            detail=f"ref={' '.join(reference)} | spoken={' '.join(spoken)}",
+            detail=detail,
             extra={
+                # Score components plus the raw distances calibration tunes against:
+                # PHONEME_GOOD is set relative to per_phone_distance on good reads,
+                # and the score is anchored against bad_baseline.
                 "phoneme_score": float(result.phoneme_score),
                 "recall": float(result.recall),
+                "per_phone_distance": float(result.per_phone_distance),
+                "bad_baseline": float(result.bad_baseline),
             },
         )
+
+    def config(self) -> Dict[str, object]:
+        """Parameters this engine ran with -- logged so each run records its setup."""
+        return {
+            "model": light.W2V2_PHONEME_MODEL,
+            "lang": self.lang,
+            "espeak": self._spec.espeak,
+            "device": self.device,
+            "threshold": self.threshold,
+            "phoneme_good": light.PHONEME_GOOD,
+            "recall_max_dist": light.RECALL_MAX_DIST,
+            "weight_phoneme": light.WEIGHT_PHONEME,
+            "weight_word": light.WEIGHT_WORD,
+        }
 
     def close(self) -> None:
         """Nothing to release; the model lives in the spike module's cache."""
         return None
+
+
+def _alignment_table(pairs: List[Tuple[str, str]]) -> str:
+    """Render the phone alignment as ``ref hyp flag`` rows (verbose diagnostics).
+
+    Mirrors the original spike's table: ``~`` marks a near-miss (small feature
+    distance), ``*`` an insertion/deletion or a far substitution, blank an exact
+    match. Makes systematic inventory mismatches visible at a glance.
+    """
+    rows = []
+    for ref_sym, hyp_sym in pairs:
+        if not ref_sym or not hyp_sym:
+            flag = "*"                       # insertion / deletion
+        else:
+            cost = light._substitution_cost(ref_sym, hyp_sym)
+            flag = "" if cost == 0 else ("~" if cost < 0.34 else "*")
+        rows.append(f"                {ref_sym or '_':<4} {hyp_sym or '_':<4} {flag}")
+    return "\n".join(rows)

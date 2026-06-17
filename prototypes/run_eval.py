@@ -100,6 +100,11 @@ def _score_dataset(
             results[engine.name] = result
             row[f"{engine.name}_score"] = None if result is None else result.score
             row[f"{engine.name}_passed"] = None if result is None else result.passed
+            if result is not None:
+                # Sub-scores (e.g. per_phone_distance, recall) get their own
+                # columns so calibration can be done offline from the CSV.
+                for key, value in result.extra.items():
+                    row[f"{engine.name}_{key}"] = value
         _log_sample(name, sample, engines, results)
         rows.append(row)
 
@@ -136,6 +141,24 @@ def _setup_logging(log_path: Path) -> None:
     console.setFormatter(logging.Formatter("%(message)s"))
     root.addHandler(file_handler)
     root.addHandler(console)
+
+
+def _log_config(engines: List[Engine]) -> None:
+    """Log every engine's parameters at the top of the run.
+
+    When iterating on calibration this is essential: the log must record which
+    thresholds / weights / models produced its numbers, otherwise results from
+    different parameter sets are indistinguishable after the fact.
+    """
+    logging.info("#" * 60)
+    logging.info("RUN CONFIG")
+    for engine in engines:
+        get_config = getattr(engine, "config", None)
+        if get_config is None:
+            continue
+        params = ", ".join(f"{k}={v}" for k, v in get_config().items())
+        logging.info("  %-10s: %s", engine.name, params)
+    logging.info("#" * 60)
 
 
 def _log_sample(
@@ -268,13 +291,27 @@ def _report_discrimination(
 
 
 def _write_csv(path: Path, rows: List[Row], engines: List[Engine]) -> None:
-    """Write all per-sample rows to ``path`` (one row per sample, all datasets)."""
+    """Write all per-sample rows to ``path`` (one row per sample, all datasets).
+
+    Columns: the sample identity, then per engine its score, verdict and every
+    sub-score it reported (discovered from the rows, stable order). Missing cells
+    (an engine that failed on a sample) are left blank.
+    """
     fieldnames = ["dataset", "id", "text"]
     for engine in engines:
-        fieldnames += [f"{engine.name}_score", f"{engine.name}_passed"]
+        base = [f"{engine.name}_score", f"{engine.name}_passed"]
+        prefix = f"{engine.name}_"
+        # Extra sub-score columns for this engine, in first-seen order.
+        extra_keys: List[str] = []
+        for row in rows:
+            for key in row:
+                if (key.startswith(prefix) and key not in base
+                        and key not in extra_keys):
+                    extra_keys.append(key)
+        fieldnames += base + extra_keys
 
     with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, restval="")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -302,6 +339,8 @@ def main() -> None:
                        help="dataset names that are GOOD speech (for AUC/separability)")
     parser.add_argument("--bad", nargs="*", default=[], metavar="DATASET",
                        help="dataset names that are BAD speech (for AUC/separability)")
+    parser.add_argument("--verbose", action="store_true",
+                       help="log the full phone alignment table per sample (w2v2)")
     parser.add_argument("--csv", default=str(_bootstrap.PROJECT_ROOT
                                              / "prototypes" / "logs" / "eval_results.csv"),
                        help="per-sample CSV (overwritten each run)")
@@ -325,7 +364,8 @@ def main() -> None:
 
     reference: Engine = ProdEngine()
     test_engines: List[Engine] = [
-        W2V2Engine(lang=args.lang, device=args.device, threshold=args.threshold),
+        W2V2Engine(lang=args.lang, device=args.device,
+                   threshold=args.threshold, verbose=args.verbose),
     ]
     all_engines = [reference, *test_engines]
 
@@ -333,6 +373,7 @@ def main() -> None:
     logging.info("initializing engines: %s", ", ".join(e.name for e in all_engines))
     for engine in all_engines:
         engine.init()
+    _log_config(all_engines)
 
     # Expand each given path into the datasets it contains: a path may itself be
     # a dataset (subfolders are samples) or a collection (subfolders are datasets,

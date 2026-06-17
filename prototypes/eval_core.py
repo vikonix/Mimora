@@ -74,6 +74,10 @@ class Engine(Protocol):
         """Score one ``Sample`` and return a normalized ``EngineResult``."""
         ...
 
+    def config(self) -> Dict[str, object]:
+        """Return the parameters this engine runs with (logged in the run header)."""
+        ...
+
     def close(self) -> None:
         """Release any resources. Called once, after the last ``parse``."""
         ...

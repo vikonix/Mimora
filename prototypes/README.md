@@ -112,7 +112,11 @@ from small, swappable pieces:
   `pronounce.analyze` (Wav2Vec2 + cosine-DTW). Needs the reference recording.
 - `core_w2v2.py` — the **test** engine: a thin adapter over
   `allosaurus_pronounce_poc` (espeak reference → wav2vec2 phonemes → edit
-  distance). Text-only; ignores the reference recording.
+  distance). Text-only; ignores the reference recording. The espeak reference and
+  the recognizer use slightly different IPA conventions for the same sounds, so
+  `allosaurus_pronounce_poc._PHONE_FOLD` canonicalizes both sides (e.g. `ɹ→r`,
+  `æ→a`, `ɚ→ə`, `oʊ→o`) — Spanish-safe (near-identity there) and the main lever
+  to tune during calibration.
 
 Adding another engine = one more `core_*.py` exposing `init`/`parse`/`close`,
 then listing it in `run_eval.py`'s `test_engines`.
@@ -147,14 +151,21 @@ python prototypes/run_eval.py "C:/VOICE_DATASET/ENGLISH/VKO" --good mic --bad mi
 python prototypes/run_eval.py vko_mic vko_bt --device cuda --limit 5
 ```
 
-**What the log shows.** Per sample, a block with each engine's score, verdict and
-own detail (w2v2: reference/spoken IPA, phoneme score, recall; prod: its
-`[pronounce]` line with the ASR transcription and acoustic distance). Then, per
-dataset and pooled across all datasets, the agreement of each test engine vs the
-`core_prod` reference (Pearson, Spearman, MAE, bias, verdict agreement). Finally,
-if `--good`/`--bad` are given, **class separability** for every engine: the
-good-vs-bad ROC-AUC (ranking quality, ignores score offset) and the
-single best threshold with its accuracy.
+**What the log shows.** First a **RUN CONFIG** header recording each engine's
+parameters (models, device, thresholds, weights) so the numbers are reproducible.
+Then, per sample, a block with each engine's score, verdict and sub-scores
+(w2v2: reference/spoken IPA, phoneme score, recall, per-phone distance, bad
+baseline; prod: its `[pronounce]` line). With `--verbose`, the w2v2 block also
+prints the full `ref hyp flag` alignment table (`~` near-miss, `*` mismatch) for
+spotting systematic inventory differences. Then, per dataset and pooled across
+all datasets, the agreement of each test engine vs the `core_prod` reference
+(Pearson, Spearman, MAE, bias, verdict agreement). Finally, if `--good`/`--bad`
+are given, **class separability** for every engine: the good-vs-bad ROC-AUC
+(ranking quality, ignores score offset) and the best threshold with its accuracy.
+
+The CSV carries the same sub-scores as extra columns
+(`<engine>_score`, `<engine>_passed`, `<engine>_<subscore>`), so calibration can
+be done offline from the CSV without re-running the models.
 
 Output (both **overwritten each run**, unlike the shared appending
 `prototype.log`): a per-sample `eval_results.csv` (every engine's score +
