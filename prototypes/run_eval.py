@@ -70,6 +70,7 @@ def _score_dataset(
     test_engines: List[Engine],
     layout: Dict[str, str],
     limit: Optional[int],
+    run_ceiling: bool = False,
 ) -> List[Row]:
     """Run every engine over one dataset directory and collect per-sample rows.
 
@@ -105,7 +106,32 @@ def _score_dataset(
                 # columns so calibration can be done offline from the CSV.
                 for key, value in result.extra.items():
                     row[f"{engine.name}_{key}"] = value
-        _log_sample(name, sample, engines, results)
+
+        # Ceiling ("TTS reference") test, opt-in via --ceiling. Score the reference
+        # take (model.wav) as if it were the user attempt, to read off the highest
+        # score each engine can reach on a flawless rendering -- the anchor for
+        # calibration. Run for the TEST engines only: the reference engine compares
+        # audio against audio, so feeding it model.wav as both sides is tautological
+        # (~100 by construction) and only wastes a heavy forward pass.
+        ceiling_results: Optional[Dict[str, Optional[EngineResult]]] = None
+        if run_ceiling:
+            ceiling_sample = Sample(
+                id=sample.id,
+                text=sample.text,
+                user_audio=sample.reference_audio,
+                reference_audio=sample.reference_audio,
+            )
+            ceiling_results = {}
+            for engine in test_engines:
+                c_result = _safe_parse(engine, ceiling_sample)
+                ceiling_results[engine.name] = c_result
+                row[f"{engine.name}_ceiling_score"] = None if c_result is None else c_result.score
+                row[f"{engine.name}_ceiling_passed"] = None if c_result is None else c_result.passed
+                if c_result is not None:
+                    for key, value in c_result.extra.items():
+                        row[f"{engine.name}_ceiling_{key}"] = value
+
+        _log_sample(name, sample, engines, results, ceiling_results)
         rows.append(row)
 
     if skipped:
@@ -166,6 +192,7 @@ def _log_sample(
     sample: Sample,
     engines: List[Engine],
     results: Dict[str, Optional[EngineResult]],
+    ceiling_results: Optional[Dict[str, Optional[EngineResult]]] = None,
 ) -> None:
     """Log a per-phrase block: every engine's score, verdict and own details.
 
@@ -179,12 +206,21 @@ def _log_sample(
         result = results.get(engine.name)
         if result is None:
             logging.info("  %-10s: FAILED", engine.name)
-            continue
-        verdict = "pass" if result.passed else "fail"
-        extras = "  ".join(f"{k}={v:.3g}" for k, v in result.extra.items())
-        logging.info("  %-10s: %5.1f (%s)  %s", engine.name, result.score, verdict, extras)
-        if result.detail:
-            logging.info("              %s", result.detail)
+        else:
+            verdict = "pass" if result.passed else "fail"
+            extras = "  ".join(f"{k}={v:.3g}" for k, v in result.extra.items())
+            logging.info("  %-10s: %5.1f (%s)  %s", engine.name, result.score, verdict, extras)
+            if result.detail:
+                logging.info("              %s", result.detail)
+
+        if ceiling_results is not None and engine.name in ceiling_results:
+            c_result = ceiling_results.get(engine.name)
+            if c_result is None:
+                logging.info("  %-10s (ceiling): FAILED", engine.name)
+            else:
+                c_verdict = "pass" if c_result.passed else "fail"
+                c_extras = "  ".join(f"{k}={v:.3g}" for k, v in c_result.extra.items())
+                logging.info("  %-10s (ceiling): %5.1f (%s)  %s", engine.name, c_result.score, c_verdict, c_extras)
 
 
 def _safe_parse(engine: Engine, sample: Sample) -> Optional[EngineResult]:
@@ -300,6 +336,12 @@ def _write_csv(path: Path, rows: List[Row], engines: List[Engine]) -> None:
     fieldnames = ["dataset", "id", "text"]
     for engine in engines:
         base = [f"{engine.name}_score", f"{engine.name}_passed"]
+        # Ceiling columns only for engines that actually ran the ceiling test
+        # (data-driven, like the extra sub-scores below), so the reference engine --
+        # which skips it -- gets no empty ceiling columns.
+        ceiling_score_key = f"{engine.name}_ceiling_score"
+        if any(ceiling_score_key in row for row in rows):
+            base += [ceiling_score_key, f"{engine.name}_ceiling_passed"]
         prefix = f"{engine.name}_"
         # Extra sub-score columns for this engine, in first-seen order.
         extra_keys: List[str] = []
@@ -341,6 +383,11 @@ def main() -> None:
                        help="dataset names that are BAD speech (for AUC/separability)")
     parser.add_argument("--verbose", action="store_true",
                        help="log the full phone alignment table per sample (w2v2)")
+    parser.add_argument("--ceiling", action=argparse.BooleanOptionalAction, default=True,
+                       help="also score each reference take (model.wav) as if it were "
+                            "the attempt -- the TTS 'ceiling' a test engine can reach "
+                            "on a flawless rendering, the anchor for calibration. On by "
+                            "default; pass --no-ceiling to skip it (faster smoke runs).")
     parser.add_argument("--csv", default=str(_bootstrap.PROJECT_ROOT
                                              / "prototypes" / "logs" / "eval_results.csv"),
                        help="per-sample CSV (overwritten each run)")
@@ -403,7 +450,8 @@ def main() -> None:
     try:
         for name, path in datasets:
             logging.info("scoring dataset: %s  (%s)", name, path)
-            rows = _score_dataset(name, path, reference, test_engines, layout, args.limit)
+            rows = _score_dataset(name, path, reference, test_engines, layout,
+                                  args.limit, args.ceiling)
             _report_dataset(name, rows, reference, test_engines)
             all_rows.extend(rows)
     finally:

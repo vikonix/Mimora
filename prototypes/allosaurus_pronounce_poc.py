@@ -82,6 +82,7 @@ import argparse
 import logging
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import List, Tuple
 
 # Side-effect import: adds the project root to sys.path and exposes PROJECT_ROOT.
@@ -571,6 +572,18 @@ def _edit_alignment(
     return pairs, cost[n][m]
 
 
+def _log_alignment(pairs: List[Tuple[str, str]]) -> None:
+    """Log the phone alignment table (``~`` = near-miss, ``*`` = insertion/deletion/far)."""
+    logging.info("alignment  : ref | spoken   (~ = near, * = mismatch)")
+    for ref_sym, hyp_sym in pairs:
+        if not ref_sym or not hyp_sym:
+            flag = "  *"                       # insertion / deletion
+        else:
+            cost = _substitution_cost(ref_sym, hyp_sym)
+            flag = "" if cost == 0 else ("  ~" if cost < 0.34 else "  *")
+        logging.info("             %-4s | %-4s%s", ref_sym or "_", hyp_sym or "_", flag)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -617,6 +630,18 @@ def main() -> None:
     spoken = spoken_phonemes(args.audio, spec, backend=args.asr, device=args.device)
     result = align_and_score(reference, spoken)
 
+    # Ceiling Test (using the reference audio file, e.g. model.wav in the same directory)
+    audio_path = Path(args.audio)
+    model_audio_path = audio_path.parent / "model.wav"
+    ceiling_result = None
+    ceiling_spoken = None
+    if model_audio_path.is_file() and model_audio_path.resolve() != audio_path.resolve():
+        try:
+            ceiling_spoken = spoken_phonemes(str(model_audio_path), spec, backend=args.asr, device=args.device)
+            ceiling_result = align_and_score(reference, ceiling_spoken)
+        except Exception as exc:
+            logging.warning("Ceiling test failed: %s", exc)
+
     logging.info("=" * 60)  # visually separate runs in the appended log
     logging.info("language   : %s  (asr=%s)", args.lang, args.asr)
     logging.info("reference  : %s", " ".join(reference))
@@ -626,14 +651,18 @@ def main() -> None:
                  result.phoneme_score, result.recall * 100)
     logging.info("distance   : %.3f/phone (bad-anchor=%.3f, phoneme score 0 at >= this)",
                  result.per_phone_distance, result.bad_baseline)
-    logging.info("alignment  : ref | spoken   (~ = near, * = mismatch)")
-    for ref_sym, hyp_sym in result.pairs:
-        if not ref_sym or not hyp_sym:
-            flag = "  *"                       # insertion / deletion
-        else:
-            cost = _substitution_cost(ref_sym, hyp_sym)
-            flag = "" if cost == 0 else ("  ~" if cost < 0.34 else "  *")
-        logging.info("             %-4s | %-4s%s", ref_sym or "_", hyp_sym or "_", flag)
+    _log_alignment(result.pairs)
+
+    if ceiling_result is not None:
+        logging.info("-" * 60)
+        logging.info("CEILING TEST (model.wav):")
+        logging.info("spoken     : %s", " ".join(ceiling_spoken))
+        logging.info("score      : %s / 100", ceiling_result.score)
+        logging.info("  components: phonemes %s / 100, %.0f%% of reference phones recalled",
+                     ceiling_result.phoneme_score, ceiling_result.recall * 100)
+        logging.info("distance   : %.3f/phone (bad-anchor=%.3f)",
+                     ceiling_result.per_phone_distance, ceiling_result.bad_baseline)
+        _log_alignment(ceiling_result.pairs)
 
     logging.info("=" * 60)  # visually separate runs in the appended log
     logging.info("")
