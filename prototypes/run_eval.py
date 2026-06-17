@@ -120,6 +120,8 @@ def _setup_logging(log_path: Path) -> None:
     lines, and library logs (e.g. ``pronounce``'s per-phrase line) are still
     captured because they propagate to the root.
     """
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     for handler in list(root.handlers):
@@ -301,10 +303,10 @@ def main() -> None:
     parser.add_argument("--bad", nargs="*", default=[], metavar="DATASET",
                        help="dataset names that are BAD speech (for AUC/separability)")
     parser.add_argument("--csv", default=str(_bootstrap.PROJECT_ROOT
-                                             / "prototypes" / "eval_results.csv"),
+                                             / "prototypes" / "logs" / "eval_results.csv"),
                        help="per-sample CSV (overwritten each run)")
     parser.add_argument("--log", default=str(_bootstrap.PROJECT_ROOT
-                                            / "prototypes" / "eval_run.log"),
+                                            / "prototypes" / "logs" / "eval_run.log"),
                        help="run log (overwritten each run)")
     parser.add_argument("--user-name", default="normalized.wav",
                        help="user-take filename inside each subfolder")
@@ -375,6 +377,7 @@ def main() -> None:
             logging.info("(pass --good/--bad dataset names for AUC/separability)")
 
         csv_path = Path(args.csv)
+        csv_path.parent.mkdir(parents=True, exist_ok=True)
         _write_csv(csv_path, all_rows, all_engines)
         logging.info("wrote %d rows to %s", len(all_rows), csv_path)
 
