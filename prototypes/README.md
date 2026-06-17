@@ -97,3 +97,68 @@ python prototypes/wav2vec2_compare_poc.py user.wav reference.wav \
     --model facebook/wav2vec2-large-xlsr-53-spanish --espeak es \
     --device cuda --compare
 ```
+
+### Evaluation harness — score many recordings, compare engines
+
+`run_eval.py` runs every engine over a whole **dataset** instead of a single
+recording, so an engine can be judged on statistics, not one phrase. It is built
+from small, swappable pieces:
+
+- `eval_core.py` — the shared contracts (`Sample`, `EngineResult`, the `Engine`
+  protocol: `init` / `parse` / `close`), the dataset walker, and the comparison
+  statistics (Pearson, Spearman, MAE, bias, verdict agreement). Stdlib + numpy
+  only.
+- `core_prod.py` — the **reference** engine: a thin wrapper over the production
+  `pronounce.analyze` (Wav2Vec2 + cosine-DTW). Needs the reference recording.
+- `core_w2v2.py` — the **test** engine: a thin adapter over
+  `allosaurus_pronounce_poc` (espeak reference → wav2vec2 phonemes → edit
+  distance). Text-only; ignores the reference recording.
+
+Adding another engine = one more `core_*.py` exposing `init`/`parse`/`close`,
+then listing it in `run_eval.py`'s `test_engines`.
+
+**Dataset layout.** A *sample folder* is a copy of `records/`
+(`normalized.wav` = attempt scored, `model.wav` = reference take, `phrase.txt` =
+text). A *dataset* is a folder of sample folders; a *collection* is a folder of
+datasets. The harness figures out which is which **by content, not by name**, so
+folder names are free:
+
+```
+VKO/                         <- collection (pass this)
+  mic/                       <- dataset
+    001/{normalized.wav, model.wav, phrase.txt}
+    002/{...}
+  bt/                        <- dataset
+    001/{...}
+  mistakes/                  <- dataset
+    001/{...}
+```
+
+Filenames are overridable (`--user-name` etc.); a reference recording is
+currently **required** (the prod engine needs it), so sample folders missing one
+are skipped with a note (e.g. an empty `bt/004`).
+
+```bash
+# Point at the top level; mic/bt/mistakes are discovered automatically.
+# --good/--bad label classes so the run also reports ROC-AUC + best threshold:
+python prototypes/run_eval.py "C:/VOICE_DATASET/ENGLISH/VKO" --good mic --bad mistakes
+
+# Or name datasets directly. GPU, capped for a quick smoke run:
+python prototypes/run_eval.py vko_mic vko_bt --device cuda --limit 5
+```
+
+**What the log shows.** Per sample, a block with each engine's score, verdict and
+own detail (w2v2: reference/spoken IPA, phoneme score, recall; prod: its
+`[pronounce]` line with the ASR transcription and acoustic distance). Then, per
+dataset and pooled across all datasets, the agreement of each test engine vs the
+`core_prod` reference (Pearson, Spearman, MAE, bias, verdict agreement). Finally,
+if `--good`/`--bad` are given, **class separability** for every engine: the
+good-vs-bad ROC-AUC (ranking quality, ignores score offset) and the
+single best threshold with its accuracy.
+
+Output (both **overwritten each run**, unlike the shared appending
+`prototype.log`): a per-sample `eval_results.csv` (every engine's score +
+pass/fail) and a full `eval_run.log` (per-phrase blocks + per-dataset, pooled and
+separability summaries). Paths overridable via `--csv` / `--log`. English only
+for now (the reference core is calibrated on English). TTS-generated references
+and mp3 datasets (Forvo, etc.) are a later, separate task.

@@ -28,6 +28,7 @@ records/
 
 # Logs
 *.log
+*.csv
 logs/
 
 # Per-machine pronunciation calibration (voice/mic specific)
