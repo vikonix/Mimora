@@ -15,7 +15,7 @@ Status: prototype evaluation tooling. Not wired into the GUI.
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 # Side-effect import: project root on sys.path + espeak registration. First.
 import _bootstrap  # noqa: F401
@@ -32,6 +32,12 @@ from eval_core import EngineResult, Sample
 # = 70) so the verdict-agreement metric compares like with like.
 DEFAULT_THRESHOLD = 70.0
 
+# GOOD-anchor modes for the phoneme-quality axis (see W2V2Engine.parse):
+#   "global"  -- the single PHONEME_GOOD constant (original behavior).
+#   "ceiling" -- variant A: per-phrase GOOD = the TTS reference's own distance, so a
+#                flawless read maps to 100 for each phrase (calibration-by-reference).
+GOOD_MODES = ("global", "ceiling")
+
 
 class W2V2Engine:
     """espeak reference + wav2vec2 phoneme ASR + feature-weighted edit distance."""
@@ -44,15 +50,19 @@ class W2V2Engine:
         device: str = "cpu",
         threshold: float = DEFAULT_THRESHOLD,
         verbose: bool = False,
+        good_mode: str = "ceiling",
     ) -> None:
         if lang not in light.LANGUAGES:
             raise ValueError(
                 f"unknown language {lang!r}; known: {sorted(light.LANGUAGES)}"
             )
+        if good_mode not in GOOD_MODES:
+            raise ValueError(f"unknown good_mode {good_mode!r}; known: {GOOD_MODES}")
         self.lang = lang
         self.device = device
         self.threshold = threshold
         self.verbose = verbose          # include the full alignment table in detail
+        self.good_mode = good_mode      # "global" PHONEME_GOOD, or per-phrase "ceiling"
         self._spec = light.LANGUAGES[lang]
 
     def init(self) -> None:
@@ -64,12 +74,23 @@ class W2V2Engine:
         light._w2v2_model(self.device)  # populates the lru_cache
 
     def parse(self, sample: Sample) -> EngineResult:
-        """Score the user attempt from text + audio only (reference audio unused)."""
+        """Score the user attempt from text + audio.
+
+        The reference *text* always supplies the espeak phonemes. In the default
+        ``good_mode="ceiling"`` (variant A) the TTS reference (``model.wav``) is
+        recognized once to get this phrase's own per-phone distance, used as the GOOD
+        anchor so a flawless read maps to 100 per phrase; that recognition is cached
+        by path, so model.wav is decoded only once even when the harness also scores
+        it standalone for the ceiling columns. In ``good_mode="global"`` the reference
+        *audio* is unused (a pure text-only engine on the global ``PHONEME_GOOD``).
+        """
         reference = light.reference_phonemes(sample.text, self._spec.espeak)
         spoken = light.spoken_phonemes(
             str(sample.user_audio), self._spec, backend="w2v2", device=self.device
         )
-        result = light.align_and_score(reference, spoken)
+
+        good = self._ceiling_good(reference, sample)
+        result = light.align_and_score(reference, spoken, good=good)
 
         detail = f"ref={' '.join(reference)} | spoken={' '.join(spoken)}"
         if self.verbose:
@@ -81,14 +102,32 @@ class W2V2Engine:
             detail=detail,
             extra={
                 # Score components plus the raw distances calibration tunes against:
-                # PHONEME_GOOD is set relative to per_phone_distance on good reads,
-                # and the score is anchored against bad_baseline.
+                # good_anchor is the GOOD actually used (per-phrase in ceiling mode);
+                # the score is anchored between it and bad_baseline.
                 "phoneme_score": float(result.phoneme_score),
                 "recall": float(result.recall),
                 "per_phone_distance": float(result.per_phone_distance),
                 "bad_baseline": float(result.bad_baseline),
+                "good_anchor": float(result.good),
             },
         )
+
+    def _ceiling_good(self, reference: List[str], sample: Sample) -> Optional[float]:
+        """Per-phrase GOOD anchor from the TTS reference, or None for global mode.
+
+        Returns the ``model.wav`` per-phone distance (variant A) when ``good_mode`` is
+        "ceiling" and the reference take exists; otherwise None, which leaves the
+        scorer on the global ``PHONEME_GOOD``. A missing reference audio silently falls
+        back to global, so the engine never fails just because a sample lacks model.wav.
+        """
+        if self.good_mode != "ceiling" or not sample.reference_audio.is_file():
+            return None
+        ceiling_spoken = light.spoken_phonemes(
+            str(sample.reference_audio), self._spec, backend="w2v2", device=self.device
+        )
+        if not ceiling_spoken:
+            return None
+        return light.align_and_score(reference, ceiling_spoken).per_phone_distance
 
     def config(self) -> Dict[str, object]:
         """Parameters this engine ran with -- logged so each run records its setup."""
@@ -98,6 +137,7 @@ class W2V2Engine:
             "espeak": self._spec.espeak,
             "device": self.device,
             "threshold": self.threshold,
+            "good_mode": self.good_mode,
             "phoneme_good": light.PHONEME_GOOD,
             "recall_max_dist": light.RECALL_MAX_DIST,
             "weight_phoneme": light.WEIGHT_PHONEME,

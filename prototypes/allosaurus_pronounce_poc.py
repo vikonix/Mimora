@@ -83,7 +83,7 @@ import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 # Side-effect import: adds the project root to sys.path and exposes PROJECT_ROOT.
 import _bootstrap
@@ -205,8 +205,14 @@ def _w2v2_model(device: str):
     return processor, model
 
 
+@lru_cache(maxsize=64)
 def _recognize_w2v2(wav_path: str, device: str) -> str:
-    """Greedy CTC decode -> space-separated espeak/IPA phonemes."""
+    """Greedy CTC decode -> space-separated espeak/IPA phonemes.
+
+    Cached by (path, device): within one run the same file (notably each
+    ``model.wav``) is recognized only once, even though variant A's per-phrase
+    ceiling and the harness's standalone ceiling block both ask for it.
+    """
     import librosa
     import torch
 
@@ -287,9 +293,12 @@ class ScoreResult:
     bad_baseline: float                # per-utterance "completely wrong" anchor
     phoneme_score: float               # 0-100 pronunciation-quality component
     recall: float                      # 0-1 phoneme-weighted recall of reference phones
+    good: float = PHONEME_GOOD         # GOOD anchor actually used (per-phrase in variant A)
 
 
-def align_and_score(reference: List[str], spoken: List[str]) -> ScoreResult:
+def align_and_score(
+    reference: List[str], spoken: List[str], good: Optional[float] = None
+) -> ScoreResult:
     """Align ``spoken`` against ``reference`` and score it on two axes.
 
     Axis 1 -- pronunciation quality (``phoneme_score``):
@@ -312,6 +321,11 @@ def align_and_score(reference: List[str], spoken: List[str]) -> ScoreResult:
 
     The final score blends the two (``WEIGHT_PHONEME``/``WEIGHT_WORD``). Both axes
     are language-independent, so this works for Spanish unchanged.
+
+    ``good`` overrides the GOOD anchor of the phoneme axis: ``None`` uses the global
+    ``PHONEME_GOOD``; a supplied value (variant A) is the per-phrase ceiling distance
+    (the TTS reference's own per-phone distance), so a flawless read maps to 100 for
+    each phrase regardless of per-phrase recognizer/espeak quirks.
     """
     if not reference:
         raise ValueError("empty reference phoneme sequence")
@@ -320,7 +334,11 @@ def align_and_score(reference: List[str], spoken: List[str]) -> ScoreResult:
 
     per_phone_distance = distance / len(reference)
     bad = _bad_baseline(reference, spoken)
-    phoneme_score = _score_from_distance(per_phone_distance, bad)
+    # GOOD anchor: the global PHONEME_GOOD by default, or a caller-supplied per-phrase
+    # value (variant A). per_phone_distance itself is independent of GOOD, so passing a
+    # ceiling distance here only rescales the score, not the measured distance.
+    good_anchor = PHONEME_GOOD if good is None else good
+    phoneme_score = _score_from_distance(per_phone_distance, bad, good_anchor)
 
     recall = _phoneme_recall(pairs)
     score = round(
@@ -333,6 +351,7 @@ def align_and_score(reference: List[str], spoken: List[str]) -> ScoreResult:
         bad_baseline=bad,
         phoneme_score=phoneme_score,
         recall=recall,
+        good=good_anchor,
     )
 
 

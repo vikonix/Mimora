@@ -388,6 +388,11 @@ def main() -> None:
                             "the attempt -- the TTS 'ceiling' a test engine can reach "
                             "on a flawless rendering, the anchor for calibration. On by "
                             "default; pass --no-ceiling to skip it (faster smoke runs).")
+    parser.add_argument("--good-mode", choices=["global", "ceiling"], default="ceiling",
+                       help="phoneme-quality GOOD anchor for core_w2v2: 'ceiling' "
+                            "(default, variant A) anchors GOOD per phrase to the TTS "
+                            "reference's own distance (calibration-by-reference); "
+                            "'global' uses the flat PHONEME_GOOD constant (baseline).")
     parser.add_argument("--csv", default=str(_bootstrap.PROJECT_ROOT
                                              / "prototypes" / "logs" / "eval_results.csv"),
                        help="per-sample CSV (overwritten each run)")
@@ -412,7 +417,8 @@ def main() -> None:
     reference: Engine = ProdEngine()
     test_engines: List[Engine] = [
         W2V2Engine(lang=args.lang, device=args.device,
-                   threshold=args.threshold, verbose=args.verbose),
+                   threshold=args.threshold, verbose=args.verbose,
+                   good_mode=args.good_mode),
     ]
     all_engines = [reference, *test_engines]
 
