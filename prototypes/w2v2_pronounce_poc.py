@@ -77,8 +77,10 @@ library on import, same as the main app does via Kokoro.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from functools import lru_cache
+from pathlib import Path
 from typing import List, Optional, Tuple
 
 # Side-effect import: adds the project root to sys.path and registers the bundled
@@ -226,10 +228,39 @@ def _recognize_w2v2(wav_path: str, device: str) -> str:
 # [100, 0], where ``bad`` is a per-utterance "completely wrong" baseline derived
 # from random phone pairings (see _bad_baseline). This stays language-agnostic.
 # ---------------------------------------------------------------------------
-PHONEME_GOOD = 0.0          # per-phone feature distance scored as 100. Kept at 0
-                            # for the prototype (no calibration data); raise it
-                            # (~0.05-0.10) once good-read samples exist to sharpen
-                            # the top end, mirroring acoustic_good in the core.
+
+# Optional, data-derived calibration overrides. ``recall_ablation.py`` writes a
+# small JSON (a native-take percentile for PHONEME_GOOD, optional weights) next to
+# this module; when present we read the tunable constants from it, otherwise the
+# literal defaults below stand. This keeps calibration out of the source and shared
+# with the eval harness, without changing the engine's behavior when no file exists.
+_CALIBRATION_PATH = Path(__file__).resolve().parent / "calibration.json"
+
+
+def _load_calibration() -> dict:
+    """Return the calibration dict from ``calibration.json``, or ``{}`` if absent/bad.
+
+    Deliberately forgiving: a missing or malformed file must never break scoring,
+    so any read/parse error degrades silently to the built-in defaults. Top-level
+    keys prefixed with ``_`` (``_meta``, ``_suggested``) are informational and are
+    ignored by the ``.get`` lookups below.
+    """
+    try:
+        with _CALIBRATION_PATH.open(encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+_CALIB = _load_calibration()
+
+PHONEME_GOOD = _CALIB.get("phoneme_good", 0.0)
+                            # per-phone feature distance scored as 100. Default 0
+                            # for the prototype (no calibration data); calibration
+                            # .json -- written by recall_ablation.py from a native-
+                            # take percentile -- overrides it (~0.05-0.10) so the
+                            # text-only path stops under-scoring good speech.
 BAD_MIN_SPAN = 0.10         # keep bad strictly above good (avoids divide-by-tiny
                             # when reference and spoken happen to be near-identical).
 BAD_BASELINE_DEFAULT = 0.5  # fallback ceiling when a sequence is empty.
@@ -245,7 +276,8 @@ BAD_BASELINE_DEFAULT = 0.5  # fallback ceiling when a sequence is empty.
 # alignment is monotonic, so scattered look-alike matches cannot inflate it). No
 # second, per-language word recognizer needed. The final score blends the two axes,
 # mirroring the production core's split of pronunciation quality vs word correctness.
-RECALL_MAX_DIST = 0.13        # per-phone feature distance below which an aligned
+RECALL_MAX_DIST = _CALIB.get("recall_max_dist", 0.13)
+                              # per-phone feature distance below which an aligned
                               # reference phone counts as recalled. Strict (below
                               # panphon's ~0.3 floor for unrelated phones) so a
                               # near-miss like r/ɹ counts but an unrelated phone does
@@ -254,8 +286,8 @@ RECALL_MAX_DIST = 0.13        # per-phone feature distance below which an aligne
                               # alignment -- not a free sliding window -- supplies the
                               # match, so the same 0.20 no longer over-credits short
                               # words.
-WEIGHT_PHONEME = 0.7          # final = 0.7 * phoneme quality + 0.3 * recall,
-WEIGHT_WORD = 0.3             # echoing the core's ~70/30 pronunciation/word split.
+WEIGHT_PHONEME = _CALIB.get("weight_phoneme", 0.7)  # final = w_p * phoneme + w_w * recall;
+WEIGHT_WORD = _CALIB.get("weight_word", 0.3)        # core's ~70/30 quality/word split default.
 
 
 @dataclass

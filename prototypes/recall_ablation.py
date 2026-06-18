@@ -18,13 +18,23 @@ blended score for every recall weight ``w`` in a sweep and see how each choice
 tracks the reference engine (Pearson/Spearman) and separates good from bad
 speech (ROC-AUC). w=0 is the ablation (recall removed); w=0.30 is today's engine.
 
+It also calibrates the global ``PHONEME_GOOD`` anchor (on by default): from the
+native takes' own per-phone distances it recommends the anchor a clean native read
+actually hits, shows the good/bad phoneme-mean shift, and writes it to
+``calibration.json`` -- which ``w2v2_pronounce_poc`` reads at import (falling back
+to its built-in defaults when the file is absent). So the test produces the
+config; the POC consumes it.
+
 This is intentionally a thin, reusable calibration tool, not a one-off:
   * Reuses ``eval_core``'s statistics verbatim, so numbers match ``run_eval.py``.
   * The score model is one small linear function (``blended_score``); adding a
     third axis later (duration penalty, posterior confidence) is a local change.
   * ``--out-csv`` dumps the full sweep (one row per weight) for plotting/fitting.
+  * ``--good-percentile`` tunes the anchor; ``--no-write-config`` previews without
+    touching the JSON; ``--config`` points at a different file.
 
-NO MODELS, NO AUDIO. Reads a CSV, writes a report. Safe to run repeatedly.
+NO MODELS, NO AUDIO. Reads a CSV, writes a report (+ calibration.json). Safe to
+run repeatedly.
 
 USAGE
 -----
@@ -38,6 +48,9 @@ USAGE
 
     # Score the model-take ceiling instead of the user take:
     python prototypes/recall_ablation.py --variant ceiling
+
+    # Calibrate PHONEME_GOOD at a stricter percentile, preview without writing:
+    python prototypes/recall_ablation.py --good-percentile 90 --no-write-config
 """
 
 from __future__ import annotations
@@ -46,16 +59,22 @@ import _bootstrap  # noqa: F401  (puts project root on sys.path; see README)
 
 import argparse
 import csv
+import json
 import logging
 import math
 import sys
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 from eval_core import _pearson, _spearman, agreement, discrimination
+
+# Mirrors ``w2v2_pronounce_poc.BAD_MIN_SPAN`` -- keep in sync if it changes there.
+# Used to replay the POC's phoneme-score mapping offline (see ``_phoneme_score``).
+BAD_MIN_SPAN = 0.10
 
 
 def _setup_logging(log_path: Path) -> None:
@@ -459,6 +478,179 @@ def component_diagnostics(
                  "phoneme axis vs prod may mean prod itself is recall-dominated.)")
 
 
+# ---------------------------------------------------------------------------
+# PHONEME_GOOD calibration. The text-only POC path (no reference recording) scores
+# the phoneme axis against a single global GOOD anchor, ``PHONEME_GOOD``, which
+# defaults to 0.0 -- so only a *perfect* read maps to 100 and real good speech is
+# under-scored. We derive a data-driven anchor from the native takes' own per-phone
+# distances (the ``_ceiling_per_phone_distance`` column, i.e. each phrase's
+# model.wav scored through the same pipeline): a percentile of that distribution is
+# the distance a clean native read actually achieves, which is what should map to
+# 100. We then replay the POC's mapping offline to show how good/bad phoneme means
+# shift -- good should rise toward 100 while bad stays near 0 (separation kept).
+# ---------------------------------------------------------------------------
+@dataclass
+class Calibration:
+    ok: bool
+    note: str = ""
+    good_percentile: float = 0.0
+    phoneme_good: float = 0.0           # recommended global PHONEME_GOOD
+    n_native: int = 0
+    native_p50: float = math.nan        # context: median native distance
+    native_p90: float = math.nan
+    good_phon_before: float = math.nan  # good-class mean phoneme score, good=0.0
+    good_phon_after: float = math.nan   # ... and at the recommended anchor
+    bad_phon_before: float = math.nan
+    bad_phon_after: float = math.nan
+
+
+def _phoneme_score(per_phone_distance: float, bad: float, good: float) -> float:
+    """Replay ``w2v2_pronounce_poc._score_from_distance`` exactly, offline.
+
+    ``good`` -> 100, ``bad`` -> 0, clamped, with a floor on the span so a tiny
+    good/bad gap can't blow up. Lets us recompute phoneme scores for any candidate
+    GOOD anchor straight from the CSV's distance + baseline columns.
+    """
+    span = max(bad - good, BAD_MIN_SPAN)
+    accuracy = 1.0 - (per_phone_distance - good) / span
+    return round(max(0.0, min(1.0, accuracy)) * 100.0, 1)
+
+
+def compute_calibration(
+    csv_path: Path,
+    engine: str,
+    good_percentile: float,
+    good_sets: Sequence[str],
+    bad_sets: Sequence[str],
+) -> Calibration:
+    """Recommend a global ``PHONEME_GOOD`` from native-take distances + show its effect.
+
+    Always reads the *user-take* distance/baseline columns (the text-only path this
+    anchor governs) and the *ceiling* native distances, independent of ``--variant``.
+    Best-effort: if a required column is absent, returns ``ok=False`` with a note so
+    the rest of the run is unaffected.
+    """
+    col_native = f"{engine}_ceiling_per_phone_distance"
+    col_dist = f"{engine}_per_phone_distance"
+    col_bad = f"{engine}_bad_baseline"
+
+    with csv_path.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        fields = reader.fieldnames or []
+        missing = [c for c in (col_native, col_dist, col_bad) if c not in fields]
+        if missing:
+            return Calibration(
+                ok=False,
+                note=f"calibration skipped: CSV lacks column(s) {', '.join(missing)}",
+            )
+        native: List[float] = []
+        takes: List[Tuple[str, float, float]] = []  # (dataset, distance, bad)
+        for raw in reader:
+            nv = _to_float(raw[col_native])
+            if nv is not None:
+                native.append(nv)
+            d, b = _to_float(raw[col_dist]), _to_float(raw[col_bad])
+            if d is not None and b is not None:
+                takes.append((raw.get("dataset", "?"), d, b))
+
+    if not native:
+        return Calibration(ok=False, note="calibration skipped: no native distances")
+
+    arr = np.asarray(native, dtype=float)
+    recommended = float(np.percentile(arr, good_percentile))
+
+    def class_mean(datasets: Sequence[str], good: float) -> float:
+        vals = [_phoneme_score(d, b, good) for ds, d, b in takes if ds in datasets]
+        return float(np.mean(vals)) if vals else math.nan
+
+    return Calibration(
+        ok=True,
+        good_percentile=good_percentile,
+        phoneme_good=recommended,
+        n_native=len(native),
+        native_p50=float(np.percentile(arr, 50)),
+        native_p90=float(np.percentile(arr, 90)),
+        good_phon_before=class_mean(good_sets, 0.0),
+        good_phon_after=class_mean(good_sets, recommended),
+        bad_phon_before=class_mean(bad_sets, 0.0),
+        bad_phon_after=class_mean(bad_sets, recommended),
+    )
+
+
+def print_calibration(cal: Calibration) -> None:
+    logging.info("")
+    logging.info("PHONEME_GOOD CALIBRATION  (global anchor for the text-only path)")
+    logging.info("-" * 60)
+    if not cal.ok:
+        logging.info(f"  {cal.note}")
+        return
+    logging.info(f"  native per-phone distance: n={cal.n_native}  "
+                 f"p50={_fmt(cal.native_p50)}  "
+                 f"p{cal.good_percentile:g}={_fmt(cal.phoneme_good)}  "
+                 f"p90={_fmt(cal.native_p90)}")
+    logging.info(f"  -> recommended PHONEME_GOOD = {cal.phoneme_good:.4f}  "
+                 f"(was 0.0)")
+    logging.info(f"  good-class phoneme mean: {_fmt(cal.good_phon_before, 1)} "
+                 f"-> {_fmt(cal.good_phon_after, 1)}   "
+                 f"(should rise toward 100)")
+    logging.info(f"  bad-class  phoneme mean: {_fmt(cal.bad_phon_before, 1)} "
+                 f"-> {_fmt(cal.bad_phon_after, 1)}   "
+                 f"(should stay near 0)")
+
+
+def write_calibration_config(
+    path: Path,
+    cal: Calibration,
+    csv_path: Path,
+    suggested_weight_word: Optional[float],
+) -> None:
+    """Merge the recommended anchor into ``calibration.json`` (the POC reads it).
+
+    Loads any existing file first so human-set keys (e.g. a hand-tuned
+    ``weight_word``) survive; only ``phoneme_good`` and the informational
+    ``_meta``/``_suggested`` blocks are (re)written. ``_suggested.weight_word`` is
+    recorded but NOT applied, because the sweep that produced it (a) optimizes
+    agreement with prod, not human truth, and (b) was computed under the OLD
+    phoneme calibration -- re-run the sweep after this anchor takes effect before
+    trusting it.
+    """
+    existing: dict = {}
+    if path.exists():
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                existing = loaded
+        except ValueError:
+            existing = {}
+
+    existing["phoneme_good"] = round(cal.phoneme_good, 6)
+    existing["_meta"] = {
+        "generated_by": "recall_ablation.py",
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source_csv": str(csv_path),
+        "good_percentile": cal.good_percentile,
+        "n_native": cal.n_native,
+        "good_phoneme_mean_before": round(cal.good_phon_before, 1)
+        if not math.isnan(cal.good_phon_before) else None,
+        "good_phoneme_mean_after": round(cal.good_phon_after, 1)
+        if not math.isnan(cal.good_phon_after) else None,
+    }
+    if suggested_weight_word is not None:
+        existing["_suggested"] = {
+            "weight_word": round(suggested_weight_word, 4),
+            "note": "best Spearman vs prod on the current sweep; NOT applied "
+                    "automatically -- fit to prod, not human truth, and computed "
+                    "under the pre-calibration phoneme anchor. Re-run the sweep "
+                    "after phoneme_good takes effect, and validate on an accented "
+                    "(right words, bad pronunciation) set, before changing weights.",
+        }
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(existing, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+
+
 def write_sweep_csv(path: Path, metrics: List[WeightMetrics]) -> None:
     fields = ["weight", "phoneme_weight", "recall_weight", "n", "pearson",
               "spearman", "mae", "bias", "verdict_agreement", "test_mean",
@@ -534,6 +726,14 @@ def main() -> None:
     ap.add_argument("--log", type=Path, default=here / "logs" / "recall_ablation.log",
                     help="report log file, overwritten each run (sits next to "
                          "run_eval's eval_run.log)")
+    ap.add_argument("--good-percentile", type=float, default=75.0,
+                    help="percentile of native-take per-phone distances used as "
+                         "the recommended global PHONEME_GOOD")
+    ap.add_argument("--config", type=Path, default=here / "calibration.json",
+                    help="calibration JSON the POC reads; recommended phoneme_good "
+                         "is written here (next to the scripts)")
+    ap.add_argument("--no-write-config", action="store_true",
+                    help="compute and print calibration but do not write the JSON")
     args = ap.parse_args()
 
     if not args.csv.exists():
@@ -603,6 +803,31 @@ def main() -> None:
     verdict_summary(by_weight, ablated_w=0.0,
                     current_w=CURRENT_RECALL_WEIGHT, has_classes=has_classes)
     component_diagnostics(rows, good_sets, bad_sets, has_classes)
+
+    cal = compute_calibration(args.csv, args.engine, args.good_percentile,
+                              good_sets, bad_sets)
+    print_calibration(cal)
+
+    # Final recommended-values block, then the optional config write.
+    logging.info("")
+    logging.info("RECOMMENDED CALIBRATION")
+    logging.info("-" * 60)
+    if cal.ok:
+        logging.info(f"  phoneme_good = {cal.phoneme_good:.4f}   "
+                     f"(p{args.good_percentile:g} of native distances; written below)")
+    else:
+        logging.info(f"  phoneme_good : {cal.note}")
+    if best_spear is not None:
+        logging.info(f"  weight_word  = {best_spear.weight:.2f}   "
+                     f"(suggested by best Spearman; NOT auto-applied -- see config note)")
+
+    if cal.ok and not args.no_write_config:
+        write_calibration_config(
+            args.config, cal, args.csv,
+            suggested_weight_word=best_spear.weight if best_spear else None,
+        )
+        logging.info("")
+        logging.info(f"wrote calibration to {args.config}")
 
     if args.out_csv:
         write_sweep_csv(args.out_csv, metrics)
