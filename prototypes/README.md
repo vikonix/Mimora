@@ -25,7 +25,7 @@ before committing them to `pronounce/`, `mimora/`, etc.
 ```bash
 pip install -r requirements.txt             # project root
 pip install -r pronounce/requirements.txt   # pronounce core
-pip install -r prototypes/requirements.txt  # extras for the prototypes (allosaurus)
+pip install -r prototypes/requirements.txt  # extras for the prototypes (panphon)
 ```
 
 The espeak-ng native binary must be on PATH (already required by `pronounce/`).
@@ -35,7 +35,7 @@ All scripts default to the sample data in `records/` (`normalized.wav` user take
 
 ## Current prototypes
 
-### `allosaurus_pronounce_poc.py` — multi-language pronunciation scoring
+### `w2v2_pronounce_poc.py` — multi-language pronunciation scoring
 
 A lighter, fully language-parametrized alternative to the current Wav2Vec2 +
 embedding-DTW core:
@@ -51,25 +51,21 @@ per-phrase TTS reference). Scoring uses an **articulatory feature distance**
 (panphon), so near-misses like the rhotic `r`/`ɹ` cost little while unrelated
 swaps cost ~1 — language-general, works for Spanish unchanged.
 
-Two recognizer backends, picked with `--asr`:
+Recognizer: **`w2v2`** — `facebook/wav2vec2-xlsr-53-espeak-cv-ft`, a wav2vec2 CTC
+model that emits espeak-style IPA. Accurate and its phone inventory matches the
+espeak reference. Beyond the project deps it needs only panphon. (An earlier
+universal phone recognizer was tried and dropped as too noisy — ~16/100 where the
+core scores ~95.)
 
-- **`w2v2`** (default): `facebook/wav2vec2-xlsr-53-espeak-cv-ft`, a wav2vec2 CTC
-  model that emits espeak-style IPA. Accurate and its phone inventory matches the
-  espeak reference. Beyond the project deps it needs only panphon.
-- **`allosaurus`**: the original universal recognizer. An English baseline check
-  (below) showed it is too noisy (~16/100 where the core scores ~95), so it is
-  kept only for comparison and additionally needs `allosaurus`.
-
-Install both extras with `pip install -r prototypes/requirements.txt`.
+Install the extra with `pip install -r prototypes/requirements.txt`.
 
 ```bash
-# No args — w2v2 backend on the English sample in records/:
-python prototypes/allosaurus_pronounce_poc.py
+# No args — runs on the English sample in records/:
+python prototypes/w2v2_pronounce_poc.py
 
-# GPU, Allosaurus backend, or your own audio/text:
-python prototypes/allosaurus_pronounce_poc.py --device cuda
-python prototypes/allosaurus_pronounce_poc.py --asr allosaurus
-python prototypes/allosaurus_pronounce_poc.py user.wav --text "hola, ¿cómo estás?" --lang es
+# GPU, or your own audio/text:
+python prototypes/w2v2_pronounce_poc.py --device cuda
+python prototypes/w2v2_pronounce_poc.py user.wav --text "hola, ¿cómo estás?" --lang es
 ```
 
 ### `wav2vec2_compare_poc.py` — run the existing core, compare side-by-side
@@ -111,10 +107,10 @@ from small, swappable pieces:
 - `core_prod.py` — the **reference** engine: a thin wrapper over the production
   `pronounce.analyze` (Wav2Vec2 + cosine-DTW). Needs the reference recording.
 - `core_w2v2.py` — the **test** engine: a thin adapter over
-  `allosaurus_pronounce_poc` (espeak reference → wav2vec2 phonemes → edit
+  `w2v2_pronounce_poc` (espeak reference → wav2vec2 phonemes → edit
   distance). Text-only; ignores the reference recording. The espeak reference and
   the recognizer use slightly different IPA conventions for the same sounds, so
-  `allosaurus_pronounce_poc._PHONE_FOLD` canonicalizes both sides (e.g. `ɹ→r`,
+  `w2v2_pronounce_poc._PHONE_FOLD` canonicalizes both sides (e.g. `ɹ→r`,
   `æ→a`, `ɚ→ə`, `oʊ→o`) — Spanish-safe (near-identity there) and the main lever
   to tune during calibration.
 

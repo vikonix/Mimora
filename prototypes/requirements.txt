@@ -10,10 +10,6 @@
 #   macOS   : brew install espeak-ng
 #   Linux   : sudo apt-get install espeak-ng
 
-# Articulatory feature distance for phoneme scoring (allosaurus_pronounce_poc.py).
-# Pure-Python, CPU, light. Used by both recognizer backends, so it is required.
+# Articulatory feature distance for phoneme scoring (w2v2_pronounce_poc.py).
+# Pure-Python, CPU, light. Required for scoring.
 panphon>=0.20.0
-
-# Universal phone recognizer, only for `--asr allosaurus` (the default `--asr w2v2`
-# backend needs nothing beyond the project deps + panphon). CPU-friendly, multilingual.
-allosaurus>=1.0.2

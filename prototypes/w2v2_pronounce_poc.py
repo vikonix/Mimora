@@ -11,17 +11,14 @@ fully language-parametrized alternative:
                                                 +-- edit distance --> score + diff
     user audio --phoneme ASR--> spoken phonemes +
 
-Recognizer backends (``--asr``)
--------------------------------
-An English baseline comparison (see ``wav2vec2_compare_poc.py``) showed the
-universal Allosaurus recognizer is too noisy to be useful (~16/100 where the
-production core scores ~95). So the default backend is now a stronger one:
-
-* ``w2v2`` (default): ``facebook/wav2vec2-xlsr-53-espeak-cv-ft``, a wav2vec2 CTC
-  model that emits espeak-style IPA. More accurate, and its phone inventory
-  matches the espeak reference (no inventory mismatch). Needs only project deps
-  plus panphon (used for scoring; see ``requirements.txt``).
-* ``allosaurus``: the original universal recognizer, kept for comparison.
+Recognizer
+----------
+Spoken phonemes come from ``w2v2``: ``facebook/wav2vec2-xlsr-53-espeak-cv-ft``, a
+wav2vec2 CTC model that emits espeak-style IPA. It is accurate and its phone
+inventory matches the espeak reference (no inventory mismatch). Needs only project
+deps plus panphon (used for scoring; see ``requirements.txt``). An earlier
+universal phone recognizer was tried and dropped as too noisy to be useful
+(~16/100 where the production core scores ~95).
 
 Scoring uses an articulatory feature distance (panphon), so near-misses like the
 rhotic ``r``/``ɹ`` cost little. Because that distance is the *fraction* of
@@ -35,7 +32,7 @@ partial reading is told apart from a wholly different phrase -- both of which th
 distance alone collapses to ~0. Language-general, so it works for Spanish
 unchanged.
 
-Both keep the pipeline **text-only** -- the reference phonemes come from espeak,
+This keeps the pipeline **text-only** -- the reference phonemes come from espeak,
 so no per-phrase TTS audio is needed (unlike the production core).
 
 Why this shape
@@ -53,7 +50,7 @@ Why this shape
 Adding a language later == adding a row to ``LANGUAGES`` below. Nothing else.
 
 Status: throwaway prototype. Not wired into the GUI, not optimized. It is meant
-as a starting point to evaluate Allosaurus quality on real recordings before
+as a starting point to evaluate this pipeline's quality on real recordings before
 deciding whether fine-tuning (on a CUDA GPU) is needed at all.
 
 Tip: validate this pipeline in English first (``--lang en``) against the trusted
@@ -62,18 +59,17 @@ baseline, trust it for Spanish.
 
 Run
 ---
-    # Install panphon (scoring); the w2v2 backend itself needs no extra packages:
-    pip install -r prototypes/requirements.txt   # panphon (+ allosaurus, optional)
+    # Install panphon (scoring); the w2v2 recognizer itself needs no extra packages:
+    pip install -r prototypes/requirements.txt   # panphon
     # espeak-ng needs no system install: _bootstrap registers the bundled
     # espeakng_loader library, same as the main app does via Kokoro.
 
-    # No arguments: w2v2 backend on the English sample in records/.
-    python prototypes/allosaurus_pronounce_poc.py
+    # No arguments: runs on the English sample in records/.
+    python prototypes/w2v2_pronounce_poc.py
 
-    # On GPU, or with the Allosaurus backend, or your own audio/text:
-    python prototypes/allosaurus_pronounce_poc.py --device cuda
-    python prototypes/allosaurus_pronounce_poc.py --asr allosaurus
-    python prototypes/allosaurus_pronounce_poc.py path/to/user.wav --text "..." --lang es
+    # On GPU, or with your own audio/text:
+    python prototypes/w2v2_pronounce_poc.py --device cuda
+    python prototypes/w2v2_pronounce_poc.py path/to/user.wav --text "..." --lang es
 """
 
 from __future__ import annotations
@@ -102,18 +98,16 @@ DEFAULT_PHRASE_FILE = RECORDS_DIR / "phrase.txt"
 # ---------------------------------------------------------------------------
 # Language table. This is the ONLY place that needs a new entry per language.
 #   espeak : voice id passed to espeak-ng (grapheme -> phoneme).
-#   allosaurus : ISO 639-3 lang_id passed to Allosaurus (audio -> phoneme).
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class LanguageSpec:
     espeak: str
-    allosaurus: str
 
 
 LANGUAGES = {
-    "es": LanguageSpec(espeak="es", allosaurus="spa"),          # European Spanish
-    "es-419": LanguageSpec(espeak="es-419", allosaurus="spa"),  # Latin-American
-    "en": LanguageSpec(espeak="en-us", allosaurus="eng"),       # for parity checks
+    "es": LanguageSpec(espeak="es"),          # European Spanish
+    "es-419": LanguageSpec(espeak="es-419"),  # Latin-American
+    "en": LanguageSpec(espeak="en-us"),       # for parity checks
 }
 
 
@@ -125,7 +119,7 @@ def reference_phonemes(text: str, espeak_lang: str) -> List[str]:
 
     Crucially we ask espeak for a **per-phone** separator. Its default only
     separates *words* by spaces (phones within a word are glued together), which
-    would leave the reference at a coarser granularity than Allosaurus's
+    would leave the reference at a coarser granularity than the recognizer's
     per-phone output and make the alignment meaningless.
     """
     ipa = phonemize(
@@ -168,30 +162,28 @@ def reference_word_phonemes(text: str, espeak_lang: str) -> List[List[str]]:
 
 
 # ---------------------------------------------------------------------------
-# Step 2 -- spoken phonemes from audio. Two interchangeable recognizer backends:
-#   "w2v2"       : facebook/wav2vec2-xlsr-53-espeak-cv-ft -- a wav2vec2 CTC model
-#                  that emits espeak-style IPA. Much more accurate than Allosaurus
-#                  here, and its phone inventory matches the espeak reference, so
-#                  there is no inventory mismatch. Uses only project deps
-#                  (transformers / torch / librosa). Recommended default.
-#   "allosaurus" : universal phone recognizer (needs `pip install allosaurus`).
-#                  Kept for comparison; in practice too noisy for English.
-# Both keep the pipeline text-only: no per-phrase TTS reference is needed.
+# Step 2 -- spoken phonemes from audio via the w2v2 recognizer:
+#   facebook/wav2vec2-xlsr-53-espeak-cv-ft -- a wav2vec2 CTC model that emits
+#   espeak-style IPA. Its phone inventory matches the espeak reference, so there
+#   is no inventory mismatch. Uses only project deps (transformers / torch /
+#   librosa). Keeps the pipeline text-only: no per-phrase TTS reference is needed.
 # ---------------------------------------------------------------------------
-RECOGNIZERS = ("w2v2", "allosaurus")
 W2V2_PHONEME_MODEL = "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
 
 
 def spoken_phonemes(
     wav_path: str, spec: LanguageSpec, backend: str = "w2v2", device: str = "cpu"
 ) -> List[str]:
-    """Recognize the phonemes the speaker actually produced, via ``backend``."""
-    if backend == "w2v2":
-        raw = _recognize_w2v2(wav_path, device)
-    elif backend == "allosaurus":
-        raw = _recognize_allosaurus(wav_path, spec.allosaurus)
-    else:
-        raise ValueError(f"unknown recognizer backend: {backend!r}")
+    """Recognize the phonemes the speaker actually produced.
+
+    ``backend`` is retained for call-site compatibility but only ``"w2v2"`` is
+    supported now that the universal recognizer has been removed.
+    """
+    if backend != "w2v2":
+        raise ValueError(
+            f"unknown recognizer backend: {backend!r} (only 'w2v2' is supported)"
+        )
+    raw = _recognize_w2v2(wav_path, device)
     return _normalize_phones(_tokenize_ipa(raw))
 
 
@@ -224,19 +216,6 @@ def _recognize_w2v2(wav_path: str, device: str) -> str:
         logits = model(inputs.input_values.to(device)).logits
     predicted_ids = logits.argmax(dim=-1)
     return processor.batch_decode(predicted_ids)[0]
-
-
-def _recognize_allosaurus(wav_path: str, lang_id: str) -> str:
-    """Universal phone recognizer; allosaurus is imported lazily, only when used."""
-    return _allosaurus_model().recognize(wav_path, lang_id=lang_id)
-
-
-@lru_cache(maxsize=1)
-def _allosaurus_model():
-    """Load the Allosaurus recognizer once (cached on disk after first download)."""
-    from allosaurus.app import read_recognizer
-
-    return read_recognizer()
 
 
 # ---------------------------------------------------------------------------
@@ -418,8 +397,8 @@ def _phoneme_recall(pairs: List[Tuple[str, str]]) -> float:
 def _tokenize_ipa(ipa: str) -> List[str]:
     """Split an IPA string into phone symbols.
 
-    Both espeak (with the per-phone separator above) and Allosaurus separate
-    phones with whitespace; when they don't, we fall back to one Unicode
+    Both espeak (with the per-phone separator above) and the w2v2 recognizer
+    separate phones with whitespace; when they don't, we fall back to one Unicode
     character per phone, a reasonable approximation for a prototype.
     """
     ipa = ipa.strip()
@@ -428,8 +407,8 @@ def _tokenize_ipa(ipa: str) -> List[str]:
     return [ch for ch in ipa if not ch.isspace()]
 
 
-# Suprasegmental diacritics that one recognizer marks and the other does not
-# (espeak vs Allosaurus). Stripping them removes spurious mismatches such as an
+# Suprasegmental diacritics that one side marks and the other does not
+# (espeak vs the w2v2 recognizer). Stripping them removes spurious mismatches such as an
 # aspirated vs plain stop, or a long vs short vowel. Written as \u escapes so no
 # bare combining marks appear in the source. Code points: 02D0 long, 02D1
 # half-long, 02B0 aspiration, 02C0 glottalization, 02C8/02CC primary/secondary
@@ -623,16 +602,10 @@ def main() -> None:
         help="language key (default: en, matching the sample data in records/)",
     )
     parser.add_argument(
-        "--asr",
-        default="w2v2",
-        choices=RECOGNIZERS,
-        help="recognizer backend for the spoken audio (default: w2v2)",
-    )
-    parser.add_argument(
         "--device",
         default="cpu",
         choices=["cpu", "cuda"],
-        help="device for the w2v2 backend (default: cpu)",
+        help="device for the w2v2 recognizer (default: cpu)",
     )
     args = parser.parse_args()
 
@@ -646,7 +619,7 @@ def main() -> None:
 
     spec = LANGUAGES[args.lang]
     reference = reference_phonemes(text, spec.espeak)
-    spoken = spoken_phonemes(args.audio, spec, backend=args.asr, device=args.device)
+    spoken = spoken_phonemes(args.audio, spec, device=args.device)
     result = align_and_score(reference, spoken)
 
     # Ceiling Test (using the reference audio file, e.g. model.wav in the same directory)
@@ -656,13 +629,13 @@ def main() -> None:
     ceiling_spoken = None
     if model_audio_path.is_file() and model_audio_path.resolve() != audio_path.resolve():
         try:
-            ceiling_spoken = spoken_phonemes(str(model_audio_path), spec, backend=args.asr, device=args.device)
+            ceiling_spoken = spoken_phonemes(str(model_audio_path), spec, device=args.device)
             ceiling_result = align_and_score(reference, ceiling_spoken)
         except Exception as exc:
             logging.warning("Ceiling test failed: %s", exc)
 
     logging.info("=" * 60)  # visually separate runs in the appended log
-    logging.info("language   : %s  (asr=%s)", args.lang, args.asr)
+    logging.info("language   : %s  (asr=w2v2)", args.lang)
     logging.info("reference  : %s", " ".join(reference))
     logging.info("spoken     : %s", " ".join(spoken))
     logging.info("score      : %s / 100", result.score)

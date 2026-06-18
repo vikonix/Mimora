@@ -141,7 +141,7 @@ def _print_light_pipeline(audio: str, text: str, lang: str, asr: str, device: st
     Imported lazily so the Wav2Vec2-only path never loads it. The sibling module
     sits in this same folder (on sys.path when run as a script).
     """
-    import allosaurus_pronounce_poc as poc
+    import w2v2_pronounce_poc as poc
 
     spec = poc.LANGUAGES[lang]
     reference_words = poc.reference_word_phonemes(text, spec.espeak)

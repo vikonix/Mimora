@@ -5,10 +5,10 @@ phrase **text** (the reference phonemes come from espeak-ng), not a reference
 recording -- which is what makes adding languages cheap. The harness compares its
 scores against ``core_prod`` to see whether it is "not worse" on English.
 
-It is a thin adapter: all the real logic lives in ``allosaurus_pronounce_poc``
+It is a thin adapter: all the real logic lives in ``w2v2_pronounce_poc``
 (the original spike), which this module reuses unchanged so there is a single
-source of truth for the scoring. Backend is fixed to ``w2v2`` (the accurate one;
-the allosaurus backend was shown to be too noisy).
+source of truth for the scoring. The recognizer is ``w2v2``; an earlier universal
+recognizer was tried and dropped as too noisy.
 
 Status: prototype evaluation tooling. Not wired into the GUI.
 """
@@ -23,7 +23,7 @@ import _bootstrap  # noqa: F401
 # The spike module holds the pipeline (phonemize, recognize, align, score). It
 # sits in this same folder, which is on sys.path when a prototype is run as a
 # script, so the bare import resolves.
-import allosaurus_pronounce_poc as light
+import w2v2_pronounce_poc as light
 
 from eval_core import EngineResult, Sample
 
