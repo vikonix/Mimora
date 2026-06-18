@@ -57,42 +57,36 @@ Tip: validate this pipeline in English first (``--lang en``) against the trusted
 ``pronounce`` core (the eval harness ``run_eval.py`` does this across a dataset);
 once it tracks that baseline, trust it for Spanish.
 
-Run
----
-    # Install panphon (scoring); the w2v2 recognizer itself needs no extra packages:
-    pip install -r prototypes/requirements.txt   # panphon
-    # espeak-ng needs no system install: _bootstrap registers the bundled
-    # espeakng_loader library, same as the main app does via Kokoro.
+Usage
+-----
+This module is a pure engine: import it and drive the pipeline directly (e.g. the
+``core_w2v2`` eval engine does exactly this)::
 
-    # No arguments: runs on the English sample in records/.
-    python prototypes/w2v2_pronounce_poc.py
+    import _bootstrap  # noqa: F401  (project root on sys.path + espeak setup)
+    from w2v2_pronounce_poc import LANGUAGES, reference_phonemes, spoken_phonemes, align_and_score
 
-    # On GPU, or with your own audio/text:
-    python prototypes/w2v2_pronounce_poc.py --device cuda
-    python prototypes/w2v2_pronounce_poc.py path/to/user.wav --text "..." --lang es
+    spec = LANGUAGES["en"]
+    reference = reference_phonemes(text, spec.espeak)
+    spoken = spoken_phonemes(wav_path, spec, device="cpu")
+    result = align_and_score(reference, spoken)
+
+Scoring needs panphon (``pip install -r prototypes/requirements.txt``); espeak-ng
+needs no system install -- ``_bootstrap`` registers the bundled espeakng_loader
+library on import, same as the main app does via Kokoro.
 """
 
 from __future__ import annotations
 
-import argparse
-import logging
 from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 from typing import List, Optional, Tuple
 
-# Side-effect import: adds the project root to sys.path and exposes PROJECT_ROOT.
-import _bootstrap
+# Side-effect import: adds the project root to sys.path and registers the bundled
+# espeak-ng on import (phonemize needs it). Imported for the side effects only.
+import _bootstrap  # noqa: F401
 
 from phonemizer import phonemize  # provided by phonemizer-fork (project dep)
 from phonemizer.separator import Separator
-
-
-# Default sample data so the prototype runs with no arguments. records/ holds a
-# normalized user take, the model (reference) audio and the phrase that was read.
-RECORDS_DIR = _bootstrap.PROJECT_ROOT / "records"
-DEFAULT_AUDIO = RECORDS_DIR / "normalized.wav"
-DEFAULT_PHRASE_FILE = RECORDS_DIR / "phrase.txt"
 
 
 # ---------------------------------------------------------------------------
@@ -568,97 +562,3 @@ def _edit_alignment(
 
     pairs.reverse()
     return pairs, cost[n][m]
-
-
-def _log_alignment(pairs: List[Tuple[str, str]]) -> None:
-    """Log the phone alignment table (``~`` = near-miss, ``*`` = insertion/deletion/far)."""
-    logging.info("alignment  : ref | spoken   (~ = near, * = mismatch)")
-    for ref_sym, hyp_sym in pairs:
-        if not ref_sym or not hyp_sym:
-            flag = "  *"                       # insertion / deletion
-        else:
-            cost = _substitution_cost(ref_sym, hyp_sym)
-            flag = "" if cost == 0 else ("  ~" if cost < 0.34 else "  *")
-        logging.info("             %-4s | %-4s%s", ref_sym or "_", hyp_sym or "_", flag)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "audio",
-        nargs="?",
-        default=str(DEFAULT_AUDIO),
-        help=f"user's recording, 16 kHz mono wav (default: {DEFAULT_AUDIO.name} in records/)",
-    )
-    parser.add_argument(
-        "--text",
-        default=None,
-        help="reference text the user read (default: contents of records/phrase.txt)",
-    )
-    parser.add_argument(
-        "--lang",
-        default="en",
-        choices=sorted(LANGUAGES),
-        help="language key (default: en, matching the sample data in records/)",
-    )
-    parser.add_argument(
-        "--device",
-        default="cpu",
-        choices=["cpu", "cuda"],
-        help="device for the w2v2 recognizer (default: cpu)",
-    )
-    args = parser.parse_args()
-
-    # Tee all output below to the screen and append a dated copy to prototype.log.
-    _bootstrap.setup_logging()
-
-    # Fall back to the phrase that ships with the sample recording.
-    text = args.text if args.text is not None else DEFAULT_PHRASE_FILE.read_text(
-        encoding="utf-8"
-    ).strip()
-
-    spec = LANGUAGES[args.lang]
-    reference = reference_phonemes(text, spec.espeak)
-    spoken = spoken_phonemes(args.audio, spec, device=args.device)
-    result = align_and_score(reference, spoken)
-
-    # Ceiling Test (using the reference audio file, e.g. model.wav in the same directory)
-    audio_path = Path(args.audio)
-    model_audio_path = audio_path.parent / "model.wav"
-    ceiling_result = None
-    ceiling_spoken = None
-    if model_audio_path.is_file() and model_audio_path.resolve() != audio_path.resolve():
-        try:
-            ceiling_spoken = spoken_phonemes(str(model_audio_path), spec, device=args.device)
-            ceiling_result = align_and_score(reference, ceiling_spoken)
-        except Exception as exc:
-            logging.warning("Ceiling test failed: %s", exc)
-
-    logging.info("=" * 60)  # visually separate runs in the appended log
-    logging.info("language   : %s  (asr=w2v2)", args.lang)
-    logging.info("reference  : %s", " ".join(reference))
-    logging.info("spoken     : %s", " ".join(spoken))
-    logging.info("score      : %s / 100", result.score)
-    logging.info("  components: phonemes %s / 100, %.0f%% of reference phones recalled",
-                 result.phoneme_score, result.recall * 100)
-    logging.info("distance   : %.3f/phone (bad-anchor=%.3f, phoneme score 0 at >= this)",
-                 result.per_phone_distance, result.bad_baseline)
-    _log_alignment(result.pairs)
-
-    if ceiling_result is not None:
-        logging.info("-" * 60)
-        logging.info("CEILING TEST (model.wav):")
-        logging.info("spoken     : %s", " ".join(ceiling_spoken))
-        logging.info("score      : %s / 100", ceiling_result.score)
-        logging.info("  components: phonemes %s / 100, %.0f%% of reference phones recalled",
-                     ceiling_result.phoneme_score, ceiling_result.recall * 100)
-        logging.info("distance   : %.3f/phone (bad-anchor=%.3f)",
-                     ceiling_result.per_phone_distance, ceiling_result.bad_baseline)
-        _log_alignment(ceiling_result.pairs)
-
-    logging.info("=" * 60)  # visually separate runs in the appended log
-    logging.info("")
-
-
-if __name__ == "__main__":
-    main()
