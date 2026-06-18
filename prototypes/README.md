@@ -68,32 +68,6 @@ python prototypes/w2v2_pronounce_poc.py --device cuda
 python prototypes/w2v2_pronounce_poc.py user.wav --text "hola, ¿cómo estás?" --lang es
 ```
 
-### `wav2vec2_compare_poc.py` — run the existing core, compare side-by-side
-
-Runs the production `pronounce.analyze` (Wav2Vec2 embeddings + cosine-DTW + CTC
-ASR) on a recording so its score can be compared with the light pipeline. Note
-the asymmetry: the Wav2Vec2 core needs a **reference audio** of the phrase, the
-light route needs only the **text**.
-
-**Compare in English first.** The core is calibrated on English, so the fair
-experiment is to run *both* pipelines on the same English recordings (where
-Wav2Vec2 is a trusted reference) and check that the lighter route reproduces its
-good/bad verdicts. Only then switch the core to Spanish via `--model` /
-`--espeak` / `--lang es` (`--device cuda` on a CUDA GPU). `--compare` runs the
-light pipeline (`--asr w2v2` by default) on the same user audio and prints both
-scores.
-
-```bash
-# Step 1 — fair baseline on the bundled English sample (records/), no args:
-python prototypes/wav2vec2_compare_poc.py --compare
-
-# Step 2 — only after step 1 looks good: move the core to Spanish.
-python prototypes/wav2vec2_compare_poc.py user.wav reference.wav \
-    --text "hola, ¿cómo estás?" --lang es \
-    --model facebook/wav2vec2-large-xlsr-53-spanish --espeak es \
-    --device cuda --compare
-```
-
 ### Evaluation harness — score many recordings, compare engines
 
 `run_eval.py` runs every engine over a whole **dataset** instead of a single

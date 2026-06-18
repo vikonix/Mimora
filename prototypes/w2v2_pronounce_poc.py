@@ -54,8 +54,8 @@ as a starting point to evaluate this pipeline's quality on real recordings befor
 deciding whether fine-tuning (on a CUDA GPU) is needed at all.
 
 Tip: validate this pipeline in English first (``--lang en``) against the trusted
-``pronounce`` core (see ``wav2vec2_compare_poc.py``); once it tracks that
-baseline, trust it for Spanish.
+``pronounce`` core (the eval harness ``run_eval.py`` does this across a dataset);
+once it tracks that baseline, trust it for Spanish.
 
 Run
 ---
