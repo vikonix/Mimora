@@ -39,7 +39,6 @@ import librosa
 import Levenshtein
 from fastdtw import fastdtw
 from scipy.spatial.distance import cosine
-from sklearn.preprocessing import MinMaxScaler
 from transformers import Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2ForCTC
 from phonemizer import phonemize
 
@@ -215,7 +214,7 @@ class PronunciationResult:
 
     score: float                                  # 0-100 overall pronunciation score
     word_errors: List[Dict[str, Any]]             # per-word expected/actual phonemes
-    prosody: Dict[str, List[float]]               # {"f0": [...], "energy": [...]}
+    prosody: Dict[str, List[float]]               # filled by the host (mimora/prosody.py); engine returns {}
     transcription: str                            # what the ASR recognised
     passed: bool = False                          # score >= configured score_threshold
     feedback: str = ""                            # human-readable summary
@@ -637,39 +636,10 @@ def compute_pronunciation_score(acoustic_per_step: float,
     return round(final_score, 2)
 
 
-# =====================================================================
-# Prosody (pitch & energy contours)
-# =====================================================================
-def extract_f0(audio_waveform: np.ndarray, sr: int = TARGET_SAMPLE_RATE) -> np.ndarray:
-    """Extract the fundamental frequency (F0) contour; NaNs -> 0.
-
-    fmax must cover the intonation peaks of female reference voices (Kokoro
-    af_*/bf_*: median ~200-220 Hz, expressive peaks 300-400 Hz) — anything above
-    fmax is marked unvoiced and would be flattened by interpolation.
-    """
-    f0, _voiced_flag, _voiced_probs = librosa.pyin(audio_waveform, fmin=50, fmax=450, sr=sr)
-    return np.nan_to_num(f0)
-
-
-def extract_energy(audio_waveform: np.ndarray) -> np.ndarray:
-    """Extract the RMS energy contour, MinMax-scaled per utterance.
-
-    Scaling each signal to its own full range erases the level difference
-    between user and reference on purpose: the capture path peak-normalizes the
-    recording anyway, so only the stress/rhythm *shape* is comparable.
-    """
-    energy = librosa.feature.rms(y=audio_waveform)
-    scaler = MinMaxScaler(feature_range=(0, 250))
-    return scaler.fit_transform(energy.T).flatten()
-
-
-def interpolate_f0(f0: np.ndarray) -> np.ndarray:
-    """Interpolate missing (zero) F0 values to avoid gaps in the contour."""
-    f0 = np.array(f0)
-    mask = f0 > 0
-    if not mask.any():  # fully unvoiced/silent input -> nothing to interpolate
-        return f0
-    return np.interp(np.arange(len(f0)), np.where(mask)[0], f0[mask])
+# Prosody (pitch & energy contours) is no longer owned by this engine. It moved
+# to the engine-agnostic ``mimora/prosody.py`` and is computed in ``main.py`` from
+# the raw user/reference waveforms, so the same charts work for every engine.
+# ``analyze`` returns an empty ``prosody`` dict; the host fills it in.
 
 
 def clean_transcription(text: str) -> str:
@@ -683,17 +653,18 @@ def clean_transcription(text: str) -> str:
 # Reference feature cache
 # =====================================================================
 # A phrase is repeated many times against the same Kokoro reference, but the
-# reference-side waveform, embeddings, F0 and energy never change between
-# attempts. Cache the most recent reference (one phrase is practiced at a time)
-# so repeats skip the Wav2Vec2 pass and pyin pitch tracking on the reference.
-# The lock makes concurrent analyze() calls safe; in the app they are already
-# serialized by the GUI's is_processing_audio guard, so it is uncontended.
+# reference-side waveform and embeddings never change between attempts. Cache the
+# most recent reference (one phrase is practiced at a time) so repeats skip the
+# Wav2Vec2 pass on the reference. (Reference prosody is cached separately in
+# mimora/prosody.py, which now owns the F0/energy contours.) The lock makes
+# concurrent analyze() calls safe; in the app they are already serialized by the
+# GUI's is_processing_audio guard, so it is uncontended.
 _reference_cache: Dict[str, Any] = {}
 _reference_cache_lock = threading.Lock()
 
 
 def _reference_features(reference_audio: np.ndarray, reference_sr: int) -> Dict[str, Any]:
-    """Return the prepared waveform, embeddings and prosody of the reference."""
+    """Return the prepared waveform and embeddings of the reference."""
     global _reference_cache
     arr = np.asarray(reference_audio)
     key = (reference_sr, arr.shape, hash(arr.tobytes()))
@@ -704,8 +675,6 @@ def _reference_features(reference_audio: np.ndarray, reference_sr: int) -> Dict[
                 "key": key,
                 "wav": wav,
                 "embeddings": extract_embeddings(wav),
-                "f0": interpolate_f0(extract_f0(wav, TARGET_SAMPLE_RATE)),
-                "energy": extract_energy(wav),
             }
         return _reference_cache
 
@@ -817,20 +786,13 @@ def analyze(user_audio: np.ndarray,
         "score": score,
     })
 
-    # Prosody contours from the user's audio, plus the reference for overlay so
-    # the GUI can show "you vs reference" pitch and energy on the same axes.
-    energy = extract_energy(user_wav)
-    f0 = interpolate_f0(extract_f0(user_wav, TARGET_SAMPLE_RATE))
-    ref_energy = reference["energy"]
-    ref_f0 = reference["f0"]
-
+    # Prosody is the engine-agnostic audio layer (mimora/prosody.py), computed by
+    # the host from the raw waveforms. The engine returns it empty; the host fills
+    # it before handing the result to the UI.
     return PronunciationResult(
         score=score,
         word_errors=differences["errors"],
-        prosody={
-            "f0": f0.tolist(), "energy": energy.tolist(),
-            "ref_f0": ref_f0.tolist(), "ref_energy": ref_energy.tolist(),
-        },
+        prosody={},
         transcription=transcription,
         passed=score >= get_config().score_threshold,
         feedback=differences["feedback"],

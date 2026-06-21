@@ -31,7 +31,7 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 warnings.filterwarnings("ignore", message="dropout option adds dropout.*")
 warnings.filterwarnings("ignore", message=".*weight_norm.*deprecated.*")
 
-from mimora import config
+from mimora import config, prosody
 # Whisper STT is disabled: mimora/stt.py is not imported, so faster-whisper
 # is never loaded and no VRAM/start-up time is spent on it. Transcription is
 # done by Wav2Vec2 in pronounce/. Re-enable by importing STTManager again.
@@ -649,6 +649,14 @@ class PronunciationTrainerGUI:
                 reference_sr=KOKORO_SAMPLE_RATE,
                 voice=self.current_voice,
             )
+            # Prosody is the engine-agnostic audio layer: compute it here from the
+            # same waveforms so the charts work identically across engines.
+            result.prosody = prosody.compute_prosody(
+                user_audio=self.reference_audio,
+                user_sr=KOKORO_SAMPLE_RATE,
+                reference_audio=self.reference_audio,
+                reference_sr=KOKORO_SAMPLE_RATE,
+            )
             self.root.after(0, self.view.show_feedback, result, self.current_phrase)
         except Exception:
             logging.exception("Reference self-test error:")
@@ -700,6 +708,15 @@ class PronunciationTrainerGUI:
             )
             elapsed_ms = (time.perf_counter() - analyze_start) * 1000
             logging.info(f"Pronunciation analysis done in {elapsed_ms:.0f}ms. Score={result.score}")
+
+            # Prosody is the engine-agnostic audio layer: compute it here from the
+            # same waveforms so the charts work identically across engines.
+            result.prosody = prosody.compute_prosody(
+                user_audio=audio,
+                user_sr=config.AUDIO_SAMPLE_RATE,
+                reference_audio=self.reference_audio,
+                reference_sr=KOKORO_SAMPLE_RATE,
+            )
 
             self.root.after(0, self.view.show_feedback, result, self.current_phrase)
 

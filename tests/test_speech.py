@@ -82,17 +82,6 @@ class TestPureLogic(unittest.TestCase):
     def test_clean_transcription_normalises_text(self):
         self.assertEqual(speech.clean_transcription("  Hello, WORLD!! "), "hello world")
 
-    def test_interpolate_f0_fills_gaps(self):
-        f0 = np.array([0.0, 100.0, 0.0, 200.0, 0.0])
-        out = speech.interpolate_f0(f0)
-        self.assertEqual(len(out), len(f0))
-        self.assertTrue((out > 0).all())  # zeros between voiced frames get filled
-
-    def test_interpolate_f0_handles_all_silent(self):
-        f0 = np.zeros(5)
-        out = speech.interpolate_f0(f0)
-        self.assertEqual(len(out), 5)  # no crash on fully unvoiced input
-
     def test_prepare_waveform_downmixes_and_resamples(self):
         # 2 channels of 24 kHz audio -> mono 16 kHz.
         stereo_24k = np.ones((2, 24_000), dtype=np.float32)
@@ -149,8 +138,10 @@ class TestPureLogic(unittest.TestCase):
         self.assertTrue(all(t["correct"] for t in tags))
 
 
-# Note: the prosody-visualisation helpers (to_semitones, resample_series) moved
-# to mimora/prosody_utils.py; their tests live in tests/test_prosody_utils.py.
+# Note: the prosody-visualisation helpers (to_semitones, resample_series) live in
+# mimora/prosody_utils.py (tests: tests/test_prosody_utils.py). The prosody
+# *extraction* (extract_f0/energy, interpolate_f0) moved to mimora/prosody.py
+# (tests: tests/test_prosody.py) — this engine no longer owns prosody.
 
 
 def _run_end_to_end(user_path: str, reference_path: Optional[str]) -> None:
