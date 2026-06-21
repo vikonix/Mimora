@@ -4,7 +4,7 @@ Pitch (F0) and energy contours describe *how* something was said (intonation,
 stress, rhythm), independent of *which* pronunciation engine scores the words.
 So they live here, in a light module computed from the raw user and reference
 waveforms in ``main.py`` regardless of the active engine — not inside any single
-engine. Both the acoustic (``pronounce/``) and the future phoneme engine show
+engine. Both the acoustic (``pronunciation/acoustic/``) and the future phoneme engine show
 the exact same two charts because neither computes prosody anymore.
 
 Why a separate module from ``mimora/prosody_utils.py``: that file holds *pure*
@@ -15,8 +15,8 @@ free of ``torch``/``transformers`` (the heavy engine stack), so computing
 prosody never forces the recognition model to load.
 
 The waveform-prep helpers (``_prepare_waveform`` / ``_trim_silence``) mirror the
-ones in ``pronounce/speech.py`` on purpose: the prosody must be measured on the
-same prepared signal the acoustic engine used, yet ``pronounce`` is meant to stay
+ones in ``pronunciation/acoustic/speech.py`` on purpose: the prosody must be measured on the
+same prepared signal the acoustic engine used, yet ``pronunciation.acoustic`` is meant to stay
 application-agnostic and must not import from ``mimora``. The two copies are a
 handful of lines of pure numpy/librosa and carry no torch dependency.
 """
@@ -31,13 +31,13 @@ from sklearn.preprocessing import MinMaxScaler
 # F0/energy are analysed at 16 kHz (the recognition sample rate); both user and
 # reference waveforms are resampled to this before any contour is taken.
 TARGET_SAMPLE_RATE = 16_000
-# Silence-trim threshold relative to the peak, in dB. Matches pronounce/speech.py
+# Silence-trim threshold relative to the peak, in dB. Matches pronunciation/acoustic/speech.py
 # so the trimmed signal — and therefore the contours — line up with the engine's.
 TRIM_TOP_DB = 30
 
 
 # =====================================================================
-# Waveform preparation (kept torch-free; mirrors pronounce/speech.py)
+# Waveform preparation (kept torch-free; mirrors pronunciation/acoustic/speech.py)
 # =====================================================================
 def _prepare_waveform(waveform: np.ndarray, orig_sr: int) -> np.ndarray:
     """Return a 1-D float32 mono waveform resampled to TARGET_SAMPLE_RATE."""
@@ -111,7 +111,7 @@ def interpolate_f0(f0: np.ndarray) -> np.ndarray:
 # reference waveform — and therefore its F0/energy — never changes between
 # attempts. Cache the most recent reference (one phrase is practised at a time)
 # so repeats skip the pyin pitch tracking on the reference. This mirrors the
-# embedding cache in pronounce/speech.py. The lock makes concurrent compute
+# embedding cache in pronunciation/acoustic/speech.py. The lock makes concurrent compute
 # calls safe; in the app they are already serialized by the GUI's
 # is_processing_audio guard, so it is uncontended.
 _reference_cache: Dict[str, Any] = {}

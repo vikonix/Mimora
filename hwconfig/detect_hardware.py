@@ -104,7 +104,7 @@ def detect_gpu(warnings: list) -> dict:
     - llama-cpp-python ships its own CUDA runtime, fully independent of torch.
       ``llama_gpu_offload`` reflects its own capability probe (None when the
       probe is unavailable — physical GPU presence is the fallback signal).
-    - torch (used only by Wav2Vec2 in pronounce/) reports CUDA via
+    - torch (used only by Wav2Vec2 in pronunciation/acoustic/) reports CUDA via
       ``torch_cuda``. A CPU-only torch build is normal here and only means
       pronunciation analysis runs on CPU; it says nothing about the LLM.
 
@@ -320,7 +320,7 @@ def build_config(hardware: dict) -> dict:
     else:
         n_gpu_layers = 0
 
-    # torch side (pronounce/Wav2Vec2): needs a CUDA-enabled torch build, plus
+    # torch side (pronunciation/acoustic/Wav2Vec2): needs a CUDA-enabled torch build, plus
     # VRAM headroom so it does not fight the LLM for the same card.
     torch_vram = (gpu["vram_gb"] or 0) if gpu["torch_cuda"] else 0
 

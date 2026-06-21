@@ -1,7 +1,7 @@
 """Engine-neutral result type shared by the pronunciation engines.
 
-Both ``pronounce/`` (acoustic) and ``pronounce_phoneme/`` (text-only phoneme)
-return the *same* :class:`PronunciationResult` so the GUI reads one stable shape
+Both ``pronunciation.acoustic`` and ``pronunciation.phoneme`` (text-only) return
+the *same* :class:`PronunciationResult` so the GUI reads one stable shape
 regardless of which engine the dispatcher (``mimora/engine.py``) selected -- this
 is the "общий тип результата, который понимает UI" of the productionization task
 (§3). Keeping it in its own tiny package (not inside either engine) avoids a
@@ -56,12 +56,12 @@ class PronunciationResult:
     # engine; the GUI renders both the same way, so the "Heard" line works for both.
     recognized_units: List[Dict[str, Any]] = field(default_factory=list)
 
-    # --- Acoustic-engine diagnostics (pronounce/); safe to ignore elsewhere. ---
+    # --- Acoustic-engine diagnostics (pronunciation.acoustic); safe to ignore elsewhere. ---
     acoustic_distance: int = 0                     # total Wav2Vec2-embedding DTW distance
     acoustic_per_step: float = 0.0                 # DTW distance per alignment step (scored)
     acoustic_baseline: float = 0.0                 # random-pair distance (per-utterance ceiling)
 
-    # --- Phoneme-engine diagnostics (pronounce_phoneme/); safe to ignore elsewhere. ---
+    # --- Phoneme-engine diagnostics (pronunciation.phoneme); safe to ignore elsewhere. ---
     per_phone_distance: float = 0.0               # observed feature distance per reference phone
     bad_baseline: float = 0.0                     # per-utterance "completely wrong" anchor
     phoneme_score: float = 0.0                    # 0-100 pronunciation-quality component

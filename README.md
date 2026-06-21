@@ -25,7 +25,7 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 - 🎙️ **Push-to-talk recording** with peak normalization and silence gating.
 - 🗣️ **Single voice everywhere** — the reference phrase is synthesized by Kokoro, the same engine used for prompts (no second TTS).
 - 🧠 **LLM-generated phrases** built from an editable *practice text* panel — paste your own paragraph, song, or sentences to drill.
-- 📊 **Pronunciation scoring** combining acoustic similarity — per-step cosine DTW over Wav2Vec2 embeddings (40%) — with phoneme error rate (30%) and word error rate (30%). All components are length-invariant; the acoustic floor is calibrated to your voice with `python pronounce/calibrate.py`.
+- 📊 **Pronunciation scoring** combining acoustic similarity — per-step cosine DTW over Wav2Vec2 embeddings (40%) — with phoneme error rate (30%) and word error rate (30%). All components are length-invariant; the acoustic floor is calibrated to your voice with `python pronunciation/acoustic/calibrate.py`.
 - 🔁 **Replay reference vs. your recording** to compare.
 - 😀 **Articulation face** — a schematic mouth opens and closes with the speech as a reference or your recording plays, and shows a smiley reflecting your score while idle.
 - 🧵 **Responsive UI** — analysis and model loading run in daemon threads; the GUI is updated only via `root.after()`.
@@ -38,9 +38,9 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 | File | Responsibility |
 |---|---|
 | `main.py` | `PronunciationTrainerGUI` — Tkinter GUI, recording, the Prompt→Record→Analyze→Feedback→Loop state machine, threading orchestration, LLM-server subprocess management. |
-| `pronounce/speech.py` | Pronunciation analysis core (adapted from OpenPronounce). Single entry point `analyze(...)`; Wav2Vec2 embeddings + DTW, phoneme comparison, scoring. No GUI dependency. |
+| `pronunciation/acoustic/speech.py` | Pronunciation analysis core (adapted from OpenPronounce). Single entry point `analyze(...)`; Wav2Vec2 embeddings + DTW, phoneme comparison, scoring. No GUI dependency. |
 | `mimora/prosody.py` | Engine-agnostic prosody layer: F0/energy contour extraction (no torch). Computed in `main.py` from the raw user/reference audio so the pitch/energy charts work the same across engines. |
-| `pronounce/calibrate.py` | On-request scoring calibration: reads the per-attempt samples from `logs/pronounce_samples.jsonl` and writes the acoustic floor to `pronounce/calibration.json`. |
+| `pronunciation/acoustic/calibrate.py` | On-request scoring calibration: reads the per-attempt samples from `logs/pronounce_samples.jsonl` and writes the acoustic floor to `pronunciation/acoustic/calibration.json`. |
 | `mimora/tts.py` | `TTSManager` — Kokoro TTS. `synthesize()` returns the waveform; `play_array()` plays any waveform (reference at 24 kHz, your recording at 16 kHz). `loudness_envelope()` precomputes the per-frame mouth-openness track used by the face. |
 | `mimora/face_widget.py` | `FaceWidget` — schematic articulation face (Tk Canvas). Talking mouth driven from a precomputed loudness track while audio plays; smiley reflecting the score when idle. Stdlib `tkinter` only. |
 | `mimora/stt.py` | `STTManager` — faster-whisper speech-to-text (loaded at startup; kept available for future use). |
@@ -126,7 +126,7 @@ pip install -r requirements.txt
 pip install -r llm_server/requirements.txt
 
 # 3. Pronunciation module dependencies (Wav2Vec2, phonemizer, DTW, etc.)
-pip install -r pronounce/requirements.txt
+pip install -r pronunciation/acoustic/requirements.txt
 ```
 
 ### Install espeak-ng (required for phoneme analysis)
@@ -199,14 +199,14 @@ Key options in [`mimora/config.py`](mimora/config.py) (overridable via [`config/
 
 ## Using the pronunciation core as a library
 
-The `pronounce/` package is GUI-agnostic and can be used on its own:
+The `pronunciation/acoustic/` package is GUI-agnostic and can be used on its own:
 
 ```python
-import pronounce
+from pronunciation import acoustic   # or: from pronunciation import phoneme
 
-pronounce.load_models()   # load Wav2Vec2 once (and warm_up() to remove first-call latency)
+acoustic.load_models()   # load Wav2Vec2 once (and warm_up() to remove first-call latency)
 
-result = pronounce.analyze(
+result = acoustic.analyze(
     user_audio=user_waveform,        # np.ndarray, 16 kHz mono
     expected_text="hello world",
     reference_audio=reference_wav,   # np.ndarray (e.g. Kokoro output)
@@ -247,13 +247,13 @@ Three torch models (Wav2Vec2, Kokoro) plus `llama_cpp` can compete for VRAM on a
 
 - **English only** (phonemizer `en-us`).
 - The transcription-based word errors only surface mistakes the ASR actually "hears"; subtle distortions where the word is still recognized may not appear in the word list (the acoustic DTW + prosody partially compensate).
-- Scoring is **heuristic** — the acoustic floor depends on your voice and microphone. After a practice session run `python pronounce/calibrate.py` to fit it to your data (`--dry-run` previews the change); every attempt's raw components are logged to `logs/pronounce_samples.jsonl` and `logs/main.log` for inspection.
+- Scoring is **heuristic** — the acoustic floor depends on your voice and microphone. After a practice session run `python pronunciation/acoustic/calibrate.py` to fit it to your data (`--dry-run` previews the change); every attempt's raw components are logged to `logs/pronounce_samples.jsonl` and `logs/main.log` for inspection.
 
 ---
 
 ## Credits
 
-- **[OpenPronounce](https://github.com/Halleck45/OpenPronounce)** (MIT) — the pronunciation-scoring core reused in `pronounce/`.
+- **[OpenPronounce](https://github.com/Halleck45/OpenPronounce)** (MIT) — the pronunciation-scoring core reused in `pronunciation/acoustic/`.
 - **[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)** — text-to-speech.
 - **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** — speech-to-text.
 - **[Wav2Vec2](https://huggingface.co/facebook/wav2vec2-large-960h)** (Hugging Face Transformers) — acoustic embeddings and transcription.
@@ -261,4 +261,4 @@ Three torch models (Wav2Vec2, Kokoro) plus `llama_cpp` can compete for VRAM on a
 
 ## License
 
-See [`LICENSE`](LICENSE). The reused OpenPronounce components are MIT-licensed; their attribution is retained in `pronounce/speech.py`.
+See [`LICENSE`](LICENSE). The reused OpenPronounce components are MIT-licensed; their attribution is retained in `pronunciation/acoustic/speech.py`.

@@ -1,8 +1,8 @@
-# Dependencies for the pronounce_phoneme/ module (text-only phoneme engine).
+# Dependencies for the pronunciation/phoneme/ module (text-only phoneme engine).
 # Install on top of the project root requirements:
-#   pip install -r pronounce_phoneme/requirements.txt
+#   pip install -r pronunciation/phoneme/requirements.txt
 #
-# Most deps overlap with pronounce/ (transformers/torch/librosa for the wav2vec2
+# Most deps overlap with pronunciation/acoustic/ (transformers/torch/librosa for the wav2vec2
 # recognizer, phonemizer-fork for the espeak reference). The one addition over the
 # acoustic core is panphon, used for the articulatory feature distance.
 #

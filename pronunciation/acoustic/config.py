@@ -1,11 +1,11 @@
 """Configuration for the pronunciation analysis library.
 
-``pronounce/`` is a GUI- and application-agnostic core (adapted from
+``pronunciation/acoustic/`` is a GUI- and application-agnostic core (adapted from
 OpenPronounce). It must not reach back into the host application, so every
 tunable setting lives in the small :class:`AnalyzerConfig` dataclass below.
 
 The library ships with working defaults and is fully autonomous: importing and
-calling :func:`pronounce.analyze` works without any host. A host application
+calling :func:`pronunciation.acoustic.analyze` works without any host. A host application
 injects its own values **once at startup** with :func:`configure`, mirroring the
 ``logging.basicConfig`` pattern -- later analysis simply reads whatever is
 active here.

@@ -6,14 +6,14 @@ This file provides guidance to agents when working with code in this repository.
 
 Mimora is a local, offline **pronunciation trainer** (Python 3.11/3.12, Tkinter GUI). It speaks an LLM-generated phrase aloud (Kokoro TTS), records the user repeating it, then scores the attempt against the reference using Wav2Vec2 acoustic similarity, phoneme-level word errors, and prosody. The user repeats the same phrase until the score passes a configurable threshold, then generates the next one.
 
-The pronunciation-scoring core in `pronounce/` is adapted from [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) and reused as a GUI-agnostic library.
+The pronunciation-scoring core in `pronunciation/acoustic/` is adapted from [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) and reused as a GUI-agnostic library.
 
 ## Running the App
 
 ```bash
 pip install -r requirements.txt
 pip install -r llm_server/requirements.txt
-pip install -r pronounce/requirements.txt
+pip install -r pronunciation/acoustic/requirements.txt
 python main.py
 ```
 
@@ -25,13 +25,13 @@ Also requires the native **espeak-ng** binary on `PATH` (used by `phonemizer`) a
 ## Architecture
 
 - [`main.py`](main.py) — `PronunciationTrainerGUI`: Tkinter GUI, recording, the Prompt→Record→Analyze→Feedback→Loop state machine, threading orchestration, LLM-server subprocess management.
-- [`pronounce/speech.py`](pronounce/speech.py) — pronunciation analysis core. Single entry point `analyze(user_audio, expected_text, reference_audio) -> PronunciationResult`. Wav2Vec2 embeddings + per-step cosine DTW, phoneme/word error rates. Scoring uses a calibratable acoustic floor (`pronounce/calibration.json` overrides `config.PRONUNCIATION_ACOUSTIC_GOOD`); every attempt's raw components are appended to `logs/pronounce_samples.jsonl`. No GUI/Tkinter dependency. Prosody is no longer computed here (returns `prosody={}`) — see `mimora/prosody.py`.
+- [`pronunciation/acoustic/speech.py`](pronunciation/acoustic/speech.py) — pronunciation analysis core. Single entry point `analyze(user_audio, expected_text, reference_audio) -> PronunciationResult`. Wav2Vec2 embeddings + per-step cosine DTW, phoneme/word error rates. Scoring uses a calibratable acoustic floor (`pronunciation/acoustic/calibration.json` overrides `config.PRONUNCIATION_ACOUSTIC_GOOD`); every attempt's raw components are appended to `logs/pronounce_samples.jsonl`. No GUI/Tkinter dependency. Prosody is no longer computed here (returns `prosody={}`) — see `mimora/prosody.py`.
 - [`mimora/prosody.py`](mimora/prosody.py) — engine-agnostic prosody layer: F0/energy contour extraction (librosa/sklearn, no torch). `main.py` calls `compute_prosody(user, reference)` after `analyze` and fills `result.prosody`, so the pitch/energy charts work identically regardless of the active engine. Pure plotting helpers (`to_semitones`, `resample_series`) stay in [`mimora/prosody_utils.py`](mimora/prosody_utils.py).
-- [`pronounce/calibrate.py`](pronounce/calibrate.py) — on-request semi-automatic calibration: fits the acoustic floor from collected samples and writes `pronounce/calibration.json` (`--dry-run` to preview).
+- [`pronunciation/acoustic/calibrate.py`](pronunciation/acoustic/calibrate.py) — on-request semi-automatic calibration: fits the acoustic floor from collected samples and writes `pronunciation/acoustic/calibration.json` (`--dry-run` to preview).
 - [`mimora/audio_io.py`](mimora/audio_io.py) — shared audio-device infrastructure depended on by both the mic and speaker paths (so neither depends on the other). Exports `reset_portaudio()` (shared PortAudio reset used by recording and playback), `uses_winsound()` (single source of truth for which playback path is taken), `WINSOUND_AVAILABLE`, the winsound lead-in constants, and `KOKORO_SAMPLE_RATE`. The coordinating `AUDIO_LOCK` and pipeline `AUDIO_SAMPLE_RATE` stay in [`config.py`](mimora/config.py) with the other `AUDIO_*` settings.
 - [`mimora/tts.py`](mimora/tts.py) — `TTSManager`: Kokoro TTS. `synthesize()` returns the waveform; `play_array(waveform, sample_rate)` plays any waveform. Also exports `loudness_envelope(waveform, sample_rate, fps)` (per-frame RMS → 0..1 track that drives the talking mouth — see [`face_widget.py`](mimora/face_widget.py)). The PortAudio/winsound device helpers it uses live in [`mimora/audio_io.py`](mimora/audio_io.py).
 - [`mimora/face_widget.py`](mimora/face_widget.py) — `FaceWidget`: schematic articulation face on a Tk Canvas. A talking-ellipse mouth opens/closes during playback; a smiley reflects the score while idle. Zero deps beyond stdlib `tkinter`. The mouth is driven by `play_levels(levels, fps)` — a pre-computed loudness track the widget's own `after`-loop replays by wall-clock — rather than a live audio callback (see the Windows-audio note below).
-- [`mimora/stt.py`](mimora/stt.py) — `STTManager`: faster-whisper STT with VAD. Currently disabled — main.py does not import or load it; the practice loop transcribes via Wav2Vec2-CTC inside `pronounce/`. Kept for possible re-enabling.
+- [`mimora/stt.py`](mimora/stt.py) — `STTManager`: faster-whisper STT with VAD. Currently disabled — main.py does not import or load it; the practice loop transcribes via Wav2Vec2-CTC inside `pronunciation/acoustic/`. Kept for possible re-enabling.
 - [`mimora/llm.py`](mimora/llm.py) — `LLMManager`: OpenAI-compatible client. `generate_phrase()` produces one practice phrase per request (non-streaming).
 - [`mimora/config.py`](mimora/config.py) — all configuration (device, model names, score threshold, practice-text path, phrase-generation settings, audio settings). User overrides live in `config/settings.json`; UI themes in `config/themes/`.
 - [`llm_server/server.py`](llm_server/server.py) — standalone FastAPI server loading GGUF via `llama_cpp`; runs as a separate process to avoid GPU contention.
@@ -41,7 +41,7 @@ Also requires the native **espeak-ng** binary on `PATH` (used by `phonemizer`) a
 
 1. **Prompt** — `llm_mgr.generate_phrase(source_text)` → `tts_mgr.synthesize(phrase)`. The synthesized array is stored as `self.reference_audio` and played for the user. Phrase generation + synth + playback all run in one daemon thread (`_generate_and_prompt`).
 2. **Record** — shared recording path (`record_loop` → `get_recorded_audio`), 16 kHz mono. Gated by `_can_record()` (a phrase must be ready and nothing else busy).
-3. **Analyze** — `_finalize_recording` → `analyze_recording` (daemon thread) calls `pronounce.analyze(...)`.
+3. **Analyze** — `_finalize_recording` → `analyze_recording` (daemon thread) calls `engine.analyze(...)` — the dispatcher in `mimora/engine.py`, which selects `pronunciation.acoustic` or `pronunciation.phoneme` by `config.ENGINE`.
 4. **Feedback** — `_show_feedback` (via `root.after`) shows score, transcription, problem words; enables replay buttons.
 5. **Loop** — if `result.passed` the user can generate the next phrase; otherwise the same phrase/reference are retained for another attempt.
 
@@ -51,9 +51,9 @@ Also requires the native **espeak-ng** binary on `PATH` (used by `phonemizer`) a
 
 - **Reference audio is synthesized once** ([`mimora/tts.py`](mimora/tts.py) `synthesize()`): the same Kokoro waveform is both played to the user and passed to `analyze()` as the reference. There is no second TTS engine.
 
-- **Sample rates**: recording and Whisper use 16 kHz; Kokoro outputs 24 kHz; Wav2Vec2 needs 16 kHz. `pronounce.analyze` takes `user_sr` and `reference_sr` and `_prepare_waveform` resamples to 16 kHz internally. `play_array` plays the reference at 24 kHz and the user recording at 16 kHz.
+- **Sample rates**: recording and Whisper use 16 kHz; Kokoro outputs 24 kHz; Wav2Vec2 needs 16 kHz. `engine.analyze` takes `user_sr` and `reference_sr` and `_prepare_waveform` resamples to 16 kHz internally. `play_array` plays the reference at 24 kHz and the user recording at 16 kHz.
 
-- **Pronunciation model lifecycle** ([`pronounce/speech.py`](pronounce/speech.py)): models load lazily; `load_models()` makes loading explicit (call in a background thread at startup) and `warm_up()` removes first-call latency — mirroring `mimora/stt.py` / `mimora/tts.py`. Device follows `config.WAV2VEC2_DEVICE` (defaults to `config.DEVICE`). `speech.py` reads config via `getattr(..., default)` so it stays usable without config edits.
+- **Pronunciation model lifecycle** ([`pronunciation/acoustic/speech.py`](pronunciation/acoustic/speech.py)): models load lazily; `load_models()` makes loading explicit (call in a background thread at startup) and `warm_up()` removes first-call latency — mirroring `mimora/stt.py` / `mimora/tts.py`. Device follows `config.WAV2VEC2_DEVICE` (defaults to `config.DEVICE`). `speech.py` reads config via `getattr(..., default)` so it stays usable without config edits.
 
 - **GPU contention**: Wav2Vec2, Kokoro, and `llama_cpp` can compete for VRAM. Mitigations: the LLM runs in a **separate process** (`llm_server/`), and the loop's phases (LLM → Kokoro → Wav2Vec2) run **sequentially**. If VRAM is tight, set `WAV2VEC2_DEVICE = "cpu"` in `mimora/config.py`.
 

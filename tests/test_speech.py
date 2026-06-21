@@ -1,4 +1,4 @@
-"""Autonomous checks for pronounce/speech.py.
+"""Autonomous checks for pronunciation/acoustic/speech.py.
 
 Two layers:
   1. Fast unit tests over the pure logic (scoring, DTW alignment, helpers).
@@ -18,7 +18,7 @@ from typing import Optional
 
 import numpy as np
 
-from pronounce import speech
+from pronunciation.acoustic import speech
 
 
 class TestPureLogic(unittest.TestCase):

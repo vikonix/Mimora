@@ -1,6 +1,6 @@
-# Dependencies for the pronounce/ module (pronunciation analysis core).
+# Dependencies for the pronunciation/acoustic/ module (pronunciation analysis core).
 # Reused from OpenPronounce (MIT). Install on top of the project root requirements.
-#   pip install -r pronounce/requirements.txt
+#   pip install -r pronunciation/acoustic/requirements.txt
 #
 # NOTE: phonemizer needs the native espeak-ng binary, which is NOT a pip package.
 # Install it separately and ensure it is on PATH:

@@ -1,14 +1,14 @@
 """Configuration for the phoneme pronunciation engine.
 
-``pronounce_phoneme/`` is the text-only alternative to the acoustic ``pronounce/``
+``pronunciation/phoneme/`` is the text-only alternative to the acoustic ``pronunciation/acoustic/``
 core: it scores a take from the phrase **text** (espeak reference phonemes) and a
 phoneme ASR of the user's audio, with no per-phrase reference recording required.
 
-Like ``pronounce/`` it is GUI- and application-agnostic: every tunable lives in
+Like ``pronunciation/acoustic/`` it is GUI- and application-agnostic: every tunable lives in
 the small :class:`AnalyzerConfig` below. The library ships with working defaults
-and is fully autonomous -- importing and calling :func:`pronounce_phoneme.analyze`
+and is fully autonomous -- importing and calling :func:`pronunciation.phoneme.analyze`
 works without any host. A host injects its own values **once at startup** with
-:func:`configure`, mirroring the ``logging.basicConfig`` / ``pronounce.configure``
+:func:`configure`, mirroring the ``logging.basicConfig`` / ``pronunciation.acoustic.configure``
 pattern; later analysis simply reads whatever is active here.
 
 Data-derived scoring constants (the GOOD anchor, recall threshold, axis weights,
@@ -47,7 +47,7 @@ class AnalyzerConfig:
     #   "global"  -- the single PHONEME_GOOD constant from calibration.json.
     # A missing/empty reference silently falls back to "global" (never fails).
     good_mode: str = "ceiling"
-    # Directory engine logs are written to (kept symmetric with pronounce/).
+    # Directory engine logs are written to (kept symmetric with pronunciation/acoustic/).
     log_dir: Path = Path("logs")
     # Practising user; reserved for per-user calibration ("" when unset).
     user_name: str = ""

@@ -31,7 +31,7 @@ from mimora.face_widget import FaceWidget
 THEME = config.THEME
 
 if TYPE_CHECKING:  # only for the show_feedback annotation; no runtime import
-    import pronounce
+    from pronunciation.common import PronunciationResult
 
 
 @dataclass(frozen=True)
@@ -750,7 +750,7 @@ class TrainerView:
     # ------------------------------------------------------------------
     # Feedback rendering
     # ------------------------------------------------------------------
-    def show_feedback(self, result: "pronounce.PronunciationResult", current_phrase):
+    def show_feedback(self, result: "PronunciationResult", current_phrase):
         # Reflect the score on the face: above 50 smiles, below frowns, 50 flat.
         self.face.set_score(result.score)
         self.feedback_display.configure(state=tk.NORMAL)

@@ -99,7 +99,7 @@ if not isinstance(USER_NAME, str):
 #
 # IMPORTANT: huggingface_hub / transformers read these env vars at *import* time,
 # so this block must run before those libraries are imported. config is the first
-# project module imported by main.py (before stt/tts/pronounce), so it is early
+# project module imported by main.py (before stt/tts/pronunciation), so it is early
 # enough. We use setdefault() so an externally set HF_HOME is respected.
 MODEL_CACHE_DIR = BASE_DIR / "model_cache"
 loader.ensure_dir(MODEL_CACHE_DIR)
@@ -196,7 +196,7 @@ EXTERNAL_N_CTX = int(_num("external_n_ctx",
 # Speech-to-Text (Whisper) Settings
 # =====================================================================
 # NOTE: Whisper STT is currently disabled — main.py neither loads nor warms up
-# STTManager (transcription is done by Wav2Vec2 in pronounce/). The settings
+# STTManager (transcription is done by Wav2Vec2 in pronunciation/acoustic/). The settings
 # below are kept so stt.py can be re-enabled without changes.
 WHISPER_MODEL = "small"
 WHISPER_BEAM_SIZE = 1         # Beam size 1 provides optimal speed at temperature 0.0
@@ -224,7 +224,7 @@ ENGLISH_ACCENT = _USER.get("english_accent", "american")
 # Per-accent settings. Voice prefixes: 'af_'/'bf_' = female, 'am_'/'bm_' = male
 # (a = American, b = British). A voice's data is downloaded on first use and
 # cached locally. The espeak_language must match the accent so pronunciation is
-# scored against phonemes of the same dialect (see pronounce/speech.py).
+# scored against phonemes of the same dialect (see pronunciation/acoustic/speech.py).
 _ACCENT_PROFILES = {
     "american": {
         "kokoro_lang_code": "a",
@@ -258,7 +258,7 @@ if not isinstance(ENGLISH_ACCENT, str) or ENGLISH_ACCENT not in _ACCENT_PROFILES
 _ACCENT = _ACCENT_PROFILES[ENGLISH_ACCENT]
 
 # espeak language code ("en-us"/"en-gb") used by the pronunciation analyzer to
-# phonemize the reference text. Read by pronounce/speech.py.
+# phonemize the reference text. Read by pronunciation/acoustic/speech.py.
 ESPEAK_LANGUAGE = _ACCENT["espeak_language"]
 
 # =====================================================================
@@ -298,8 +298,8 @@ if REFERENCE_SPEED not in REFERENCE_SPEED_CHOICES:
 # Pronunciation Analysis (Wav2Vec2) Settings
 # =====================================================================
 # Pronunciation engine selection, read from settings.json ("engine"):
-#   "acoustic" -> pronounce/         (Wav2Vec2 embeddings + cosine-DTW; default)
-#   "phoneme"  -> pronounce_phoneme/ (espeak reference + phoneme ASR + edit distance)
+#   "acoustic" -> pronunciation/acoustic/         (Wav2Vec2 embeddings + cosine-DTW; default)
+#   "phoneme"  -> pronunciation/phoneme/ (espeak reference + phoneme ASR + edit distance)
 # The dispatcher (mimora/engine.py) binds one backend at startup; only that engine's
 # models are loaded. An unknown value warns and falls back to "acoustic".
 _KNOWN_ENGINES = ("acoustic", "phoneme")
@@ -310,9 +310,9 @@ if ENGINE not in _KNOWN_ENGINES:
     ENGINE = "acoustic"
 
 # =====================================================================
-# Acoustic + transcription model used by the pronounce/ module.
+# Acoustic + transcription model used by the pronunciation/acoustic/ module.
 WAV2VEC2_MODEL_NAME = "facebook/wav2vec2-large-960h"
-# Phoneme-ASR model used by the pronounce_phoneme/ module: a wav2vec2 CTC model that
+# Phoneme-ASR model used by the pronunciation/phoneme/ module: a wav2vec2 CTC model that
 # emits espeak-style IPA, so its phone inventory matches the espeak reference.
 WAV2VEC2_PHONEME_MODEL_NAME = "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
 # Device for Wav2Vec2. Defaults to the shared DEVICE; hwconfig may pin it to
@@ -326,8 +326,8 @@ PRONUNCIATION_SCORE_THRESHOLD = float(
 # Acoustic floor: typical per-step cosine DTW distance of a *good* attempt
 # (the user's voice never matches the TTS voice exactly, so this is > 0). This
 # is only the pre-calibration default — after a practice session run
-# ``python pronounce/calibrate.py`` and the value it writes to
-# pronounce/calibration.json takes precedence (tuned to your voice and mic).
+# ``python pronunciation/acoustic/calibrate.py`` and the value it writes to
+# pronunciation/acoustic/calibration.json takes precedence (tuned to your voice and mic).
 PRONUNCIATION_ACOUSTIC_GOOD = 0.20
 
 # =====================================================================

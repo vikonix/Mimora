@@ -15,7 +15,7 @@ transformers>=5.3
 # build (GPU offload for the LLM) see "llama-cpp-python with CUDA Support"
 # in llm_server/README.md.
 -r llm_server/requirements.txt
--r pronounce/requirements.txt
-# Phoneme engine (engine="phoneme"). Mostly overlaps pronounce/ above; its one
-# extra dependency is panphon (articulatory feature distance for phone scoring).
--r pronounce_phoneme/requirements.txt
+-r pronunciation/acoustic/requirements.txt
+# Phoneme engine (engine="phoneme"). Mostly overlaps the acoustic engine above; its
+# one extra dependency is panphon (articulatory feature distance for phone scoring).
+-r pronunciation/phoneme/requirements.txt

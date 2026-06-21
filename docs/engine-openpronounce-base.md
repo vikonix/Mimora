@@ -15,7 +15,7 @@ leans on a concrete reference recording, it is precise on English (the language
 it is tuned for) but needs that reference to exist for every phrase.
 
 The engine is adapted from the open-source **OpenPronounce** core and lives in
-the `pronounce/` module. It is application-agnostic: it takes audio in, returns a
+the `pronunciation/acoustic/` module. It is application-agnostic: it takes audio in, returns a
 score and feedback out.
 
 ## The workflow

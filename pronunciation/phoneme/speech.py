@@ -58,11 +58,11 @@ import numpy as np
 # the host application: a host injects its values once at startup via configure().
 from .config import get_config
 
-# Engine-neutral result type shared with the acoustic pronounce/ engine, so the
-# GUI reads one stable shape regardless of the active engine (task §3). This engine
-# fills the phoneme-specific fields (per_phone_distance / phoneme_score / recall /
-# good_anchor); the acoustic_* fields stay at their defaults.
-from pronounce_common import PronunciationResult
+# Engine-neutral result type shared with the acoustic engine, so the GUI reads one
+# stable shape regardless of the active engine (task §3). This engine fills the
+# phoneme-specific fields (per_phone_distance / phoneme_score / recall / good_anchor);
+# the acoustic_* fields stay at their defaults.
+from pronunciation.common import PronunciationResult
 
 
 # =====================================================================
@@ -146,12 +146,12 @@ def warm_up() -> None:
     try:
         _spoken_from_wav(dummy, cfg.device)
     except Exception:
-        logging.exception("[pronounce_phoneme] recognizer warm-up failed")
+        logging.exception("[phoneme] recognizer warm-up failed")
     try:
         _feature_table()                                   # build panphon table once
         reference_phonemes("warm up", cfg.espeak_language)  # spawn espeak once
     except Exception:
-        logging.exception("[pronounce_phoneme] scoring warm-up failed")
+        logging.exception("[phoneme] scoring warm-up failed")
 
 
 def _ensure_loaded() -> None:
@@ -705,7 +705,7 @@ def analyze(user_audio: np.ndarray,
     feedback = _build_feedback(result.score, passed, words_with_errors)
 
     logging.info(
-        "[pronounce_phoneme] score=%.1f (phoneme=%.1f recall=%.2f) | "
+        "[phoneme] score=%.1f (phoneme=%.1f recall=%.2f) | "
         "dist/phone=%.4f (good=%.3f bad=%.3f) | ref=%d spoken=%d | is_ref=%s | voice=%s",
         result.score, result.phoneme_score, result.recall,
         result.per_phone_distance, result.good, result.bad_baseline,

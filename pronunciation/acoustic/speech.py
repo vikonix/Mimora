@@ -117,7 +117,7 @@ def _load_calibration() -> float:
                 source = "legacy"
             else:
                 return default
-            logging.info(f"[pronounce] Loaded calibration ({source}): "
+            logging.info(f"[acoustic] Loaded calibration ({source}): "
                          f"acoustic_good={value:.4f} ({CALIBRATION_FILE})")
             return value
     except Exception:
@@ -187,7 +187,7 @@ def save_calibration(acoustic_good: float, extra: Optional[Dict[str, Any]] = Non
         json.dumps({"users": users}, indent=2) + "\n", encoding="utf-8")
     _acoustic_good = float(acoustic_good)
     _acoustic_good_user = user_name
-    logging.info(f"[pronounce] Saved calibration user={user_name!r} "
+    logging.info(f"[acoustic] Saved calibration user={user_name!r} "
                  f"acoustic_good={acoustic_good:.4f} -> {CALIBRATION_FILE}")
 
 # Lazily-initialised model singletons (loaded once, reused for every analysis).
@@ -202,12 +202,12 @@ _load_lock = threading.Lock()
 # =====================================================================
 # Result type (the module's contract with the GUI layer)
 # =====================================================================
-# PronunciationResult is the engine-neutral shared type (pronounce_common): both
-# this acoustic engine and pronounce_phoneme/ return the same shape so the GUI is
-# engine-agnostic (task §3). Re-exported via pronounce.__init__, so
-# ``pronounce.PronunciationResult`` keeps working. This engine fills the
-# ``acoustic_*`` fields; the phoneme-specific fields stay at their defaults.
-from pronounce_common import PronunciationResult
+# PronunciationResult is the engine-neutral shared type (pronunciation.common):
+# both this acoustic engine and pronunciation.phoneme return the same shape so the
+# GUI is engine-agnostic (task §3). Re-exported via this package's __init__, so
+# ``pronunciation.acoustic.PronunciationResult`` keeps working. This engine fills
+# the ``acoustic_*`` fields; the phoneme-specific fields stay at their defaults.
+from pronunciation.common import PronunciationResult
 
 
 # =====================================================================
@@ -757,7 +757,7 @@ def analyze(user_audio: np.ndarray,
     # Calibration log: raw components in one greppable line. ``calibrate.py``
     # consumes the structured copy appended to the samples file below.
     logging.info(
-        "[pronounce] score=%.1f | acoustic/step=%.4f (good=%.3f bad=%.3f baseline=%.4f) | "
+        "[acoustic] score=%.1f | acoustic/step=%.4f (good=%.3f bad=%.3f baseline=%.4f) | "
         "phonemes=%d/%d (err=%.2f) | chars_lev=%d/%d (err=%.2f) | voice=%s | asr=%r",
         score, acoustic_per_step, current_acoustic_floor(), acoustic_bad, acoustic_baseline,
         differences["phoneme_distance"], phoneme_length, phoneme_error_rate,

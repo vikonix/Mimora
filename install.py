@@ -597,7 +597,7 @@ def step_install_requirements(
                  "--only-binary", ":all:",
                  "--no-binary", ",".join(SOURCE_ONLY_PACKAGES)]
     desc = ("Install all Python dependencies (requirements.txt also pulls in "
-            "llm_server/ and pronounce/ requirements).")
+            "llm_server/ and pronunciation/acoustic/ requirements).")
     if installed:
         log.log("    All expected dependencies are already installed.")
     if not confirmer.confirm(desc, " ".join(cmd), installed=installed):
@@ -1024,30 +1024,4 @@ def main() -> int:
         if args.skip_models:
             report.add("HF model cache", SKIPPED, "--skip-models")
         else:
-            step_prefetch_models(log, confirmer, report)
-
-        # Step 7: GGUF.
-        if args.skip_gguf:
-            report.add("GGUF model", SKIPPED, "--skip-gguf")
-        else:
-            step_download_gguf(log, confirmer, report)
-
-        # Step 8: hardware detection (after torch/llama exist).
-        step_detect_hardware(log, confirmer, report)
-    except InstallError as exc:
-        log.log("")
-        log.log(f"    ABORTED: step '{exc}' failed — stopping the installer "
-                f"so the error is not masked.")
-        finish(log, report, success=False)
-        return 1
-
-    finish(log, report, success=True)
-    return 0
-
-
-if __name__ == "__main__":
-    try:
-        sys.exit(main())
-    except KeyboardInterrupt:
-        print("\nInterrupted.")
-        sys.exit(130)
+            step_prefetch_models(

@@ -3,8 +3,8 @@
 Every ``analyze()`` call appends its raw components to logs/pronounce_samples.jsonl.
 After a practice session (10+ honest attempts), run:
 
-    python pronounce/calibrate.py            # compute and write calibration.json
-    python pronounce/calibrate.py --dry-run  # only show what would change
+    python pronunciation/acoustic/calibrate.py            # compute and write calibration.json
+    python pronunciation/acoustic/calibrate.py --dry-run  # only show what would change
 
 The floor is per practising user: only attempts logged under the current
 ``config.USER_NAME`` are used, and the result is saved under that name.
@@ -31,14 +31,15 @@ from pathlib import Path
 
 import numpy as np
 
-# Run as a standalone script (`python pronounce/calibrate.py`): put the project
-# root on the path so both the pronounce package and the host app resolve.
-_ROOT = Path(__file__).resolve().parent.parent
+# Run as a standalone script (`python pronunciation/acoustic/calibrate.py`): put the
+# project root on the path so both the pronunciation package and the host app resolve.
+# parents[2]: calibrate.py -> acoustic -> pronunciation -> project root.
+_ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
-from pronounce import speech, configure, AnalyzerConfig
-# Composition root: this calibration CLI is the only place in pronounce/ that
-# reads the host application's settings. It wires them into the analyzer with
+from pronunciation.acoustic import speech, configure, AnalyzerConfig
+# Composition root: this calibration CLI is the only place in pronunciation/acoustic/
+# that reads the host application's settings. It wires them into the analyzer with
 # configure() (see _app_config), so the analyzer core stays app-agnostic.
 from mimora import config
 

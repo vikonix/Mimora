@@ -4,11 +4,11 @@ The host (main.py) drives pronunciation through this one module instead of a
 specific engine, so it never knows which backend is active. The backend is chosen
 by ``config.ENGINE`` (settings.json ``"engine"``):
 
-    "acoustic" -> pronounce/            (Wav2Vec2 embeddings + cosine-DTW; default)
-    "phoneme"  -> pronounce_phoneme/    (espeak reference + phoneme ASR + edit distance)
+    "acoustic" -> pronunciation.acoustic  (Wav2Vec2 embeddings + cosine-DTW; default)
+    "phoneme"  -> pronunciation.phoneme   (espeak reference + phoneme ASR + edit distance)
 
 Both backends expose the same small interface (``configure`` / ``load_models`` /
-``warm_up`` / ``analyze``) and return the shared ``pronounce_common.PronunciationResult``,
+``warm_up`` / ``analyze``) and return the shared ``pronunciation.common.PronunciationResult``,
 so switching is a single config flip. Only the selected backend is imported, so the
 inactive engine's (heavy) weights are never loaded -- task §3 requirement #3.
 
@@ -26,8 +26,8 @@ from mimora import config
 
 # settings.json "engine" value -> the package implementing it.
 _BACKENDS = {
-    "acoustic": "pronounce",
-    "phoneme": "pronounce_phoneme",
+    "acoustic": "pronunciation.acoustic",
+    "phoneme": "pronunciation.phoneme",
 }
 
 # The imported backend module, bound lazily on first use so the inactive engine is
@@ -92,6 +92,6 @@ def analyze(*args, **kwargs):
     """Run the active engine's analysis, returning a ``PronunciationResult``.
 
     Arguments are passed straight through, so the host calls one ``engine.analyze(...)``
-    exactly as it called ``pronounce.analyze(...)`` before.
+    exactly as it called the engine's ``analyze(...)`` before.
     """
     return _backend().analyze(*args, **kwargs)
