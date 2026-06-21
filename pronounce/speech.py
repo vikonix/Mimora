@@ -228,9 +228,21 @@ class PronunciationResult:
     # one {"expected", "heard"} pair per diverging segment (empty = exact match).
     # Lets the GUI show concrete mismatches instead of the raw ASR string.
     word_diff: List[Dict[str, str]] = field(default_factory=list)
-    # Every recognised word in order, each tagged {"word", "correct"} by whether
-    # it matched the target. Lets the GUI colour correct words on the ASR line.
-    heard_words: List[Dict[str, Any]] = field(default_factory=list)
+    # --- Engine-neutral display fields (read by the GUI regardless of engine) ---
+    # The two contours the UI highlights. Each engine fills these in its own terms,
+    # so the GUI reads one stable shape (see §3/§6 of the productionization task).
+    #
+    # reference_words: one tag per word of the *target* phrase, in order, each
+    # {"word": str, "correct": bool}. Drives the green/red highlight on the
+    # "Phrase" line ("эталон — what was said well"). The acoustic engine derives it
+    # from ``words_with_errors``; the phoneme engine (no words of its own) will map
+    # phone errors back to words via ``reference_word_phonemes``.
+    reference_words: List[Dict[str, Any]] = field(default_factory=list)
+    # recognized_units: what was recognised, in order, each {"unit": str,
+    # "correct": bool}. Drives the "Heard" line. Units are *words* for the acoustic
+    # engine and *phonemes* for the phoneme engine — the GUI renders them the same
+    # way, so the line works for both.
+    recognized_units: List[Dict[str, Any]] = field(default_factory=list)
 
 
 # =====================================================================
@@ -579,6 +591,28 @@ def heard_word_tags(transcription: str, text_reference: str) -> List[Dict[str, A
     return tags
 
 
+def reference_word_tags(text_reference: str,
+                        words_with_errors: List[str]) -> List[Dict[str, Any]]:
+    """Tag each word of the target phrase as correctly pronounced or not.
+
+    Returns one entry per phrase word, in order, preserving the original token
+    (case and punctuation) for display::
+
+        [{"word": "Hello,", "correct": True}, {"word": "world", "correct": False}]
+
+    A word is incorrect when its normalised form appears in ``words_with_errors``.
+    The normalisation mirrors the GUI's old inline check (lower-case, strip edge
+    punctuation) so highlighting is unchanged. Engine-neutral: the phoneme engine
+    will build the same shape by mapping phone errors back to words.
+    """
+    error_words = {w.lower() for w in words_with_errors}
+    tags: List[Dict[str, Any]] = []
+    for token in text_reference.split():
+        clean = token.lower().strip(".,!?;:\"")
+        tags.append({"word": token, "correct": clean not in error_words})
+    return tags
+
+
 def _random_pair_baseline(emb_a: np.ndarray, emb_b: np.ndarray,
                           n_pairs: int = 2000, seed: int = 0) -> float:
     """Mean cosine distance between randomly paired frames of two embeddings.
@@ -803,5 +837,9 @@ def analyze(user_audio: np.ndarray,
         expected_phonemes=differences["expected_phonemes"],
         transcribed_phonemes=differences["transcribed_phonemes"],
         word_diff=word_level_diff(transcription, expected_text),
-        heard_words=heard_word_tags(transcription, expected_text),
+        # Engine-neutral display fields. The acoustic engine's "units" are words:
+        # recognized_units mirrors heard_word_tags with the neutral "unit" key.
+        reference_words=reference_word_tags(expected_text, differences["words_with_errors"]),
+        recognized_units=[{"unit": t["word"], "correct": t["correct"]}
+                          for t in heard_word_tags(transcription, expected_text)],
     )

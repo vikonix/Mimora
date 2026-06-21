@@ -757,24 +757,30 @@ class TrainerView:
         tag = "good" if result.passed else "bad"
         self.feedback_display.insert(tk.END, f"Score: {result.score:.0f}/100 ", tag)
         self.feedback_display.insert(tk.END, "(passed)\n" if result.passed else "(try again)\n", tag)
-        # First line: the expected phrase, with mispronounced words shown in red.
-        error_words = {w.lower() for w in result.words_with_errors}
+        # First line: the target phrase, highlighting what was said well (green)
+        # vs mispronounced (red). Driven by the engine-neutral reference_words
+        # tags; falls back to the raw phrase if an engine left them empty.
         self.feedback_display.insert(tk.END, "Phrase: ", "label")
-        for token in (current_phrase or "—").split():
-            is_error = token.lower().strip(".,!?;:\"") in error_words
-            self.feedback_display.insert(tk.END, token + " ", "bad" if is_error else "text")
+        if result.reference_words:
+            for entry in result.reference_words:
+                tag = "good" if entry.get("correct") else "bad"
+                self.feedback_display.insert(tk.END, entry["word"] + " ", tag)
+        else:
+            for token in (current_phrase or "—").split():
+                self.feedback_display.insert(tk.END, token + " ", "text")
         self.feedback_display.insert(tk.END, "\n")
 
-        # What the recognizer heard, word by word: correctly-heard words in
-        # green so the user can see at a glance which words landed.
+        # Second line: what was recognised, unit by unit (words for the acoustic
+        # engine, phonemes for the phoneme engine), correct ones in green so the
+        # user sees at a glance what landed. Driven by engine-neutral
+        # recognized_units; falls back to the raw transcription.
         self.feedback_display.insert(tk.END, "Heard: ", "label")
         if not result.word_diff:
             self.feedback_display.insert(tk.END, "matches the target ✓\n", "good")
-        elif result.heard_words:
-            for entry in result.heard_words:
-                # Correct words green, misheard words red.
+        elif result.recognized_units:
+            for entry in result.recognized_units:
                 tag = "good" if entry.get("correct") else "bad"
-                self.feedback_display.insert(tk.END, entry["word"] + " ", tag)
+                self.feedback_display.insert(tk.END, entry["unit"] + " ", tag)
             self.feedback_display.insert(tk.END, "\n")
         else:
             self.feedback_display.insert(tk.END, f"{result.transcription or '—'}\n", "text")

@@ -137,6 +137,18 @@ class TestPureLogic(unittest.TestCase):
         tags = speech.heard_word_tags("i am here", "I am here.")
         self.assertTrue(all(t["correct"] for t in tags))
 
+    # --- reference_word_tags: engine-neutral target-phrase highlighting --------
+    def test_reference_word_tags_preserves_tokens_and_flags_errors(self):
+        # Original case/punctuation kept for display; "world" flagged from the
+        # (normalised) error list.
+        tags = speech.reference_word_tags("Hello, world!", ["world"])
+        self.assertEqual([t["word"] for t in tags], ["Hello,", "world!"])
+        self.assertEqual([t["correct"] for t in tags], [True, False])
+
+    def test_reference_word_tags_all_correct_when_no_errors(self):
+        tags = speech.reference_word_tags("i am here", [])
+        self.assertTrue(tags and all(t["correct"] for t in tags))
+
 
 # Note: the prosody-visualisation helpers (to_semitones, resample_series) live in
 # mimora/prosody_utils.py (tests: tests/test_prosody_utils.py). The prosody
