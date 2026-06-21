@@ -47,7 +47,7 @@ from __future__ import annotations
 import json
 import logging
 import threading
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -57,6 +57,12 @@ import numpy as np
 # Settings come from the library's own AnalyzerConfig (see config.py), never from
 # the host application: a host injects its values once at startup via configure().
 from .config import get_config
+
+# Engine-neutral result type shared with the acoustic pronounce/ engine, so the
+# GUI reads one stable shape regardless of the active engine (task §3). This engine
+# fills the phoneme-specific fields (per_phone_distance / phoneme_score / recall /
+# good_anchor); the acoustic_* fields stay at their defaults.
+from pronounce_common import PronunciationResult
 
 
 # =====================================================================
@@ -105,48 +111,6 @@ WEIGHT_WORD = _CALIB.get("weight_word", 0.3)
 # A reference word is "correct" when at least this fraction of its phones are
 # recalled. Drives the per-word green/red highlight; tunable in calibration.json.
 WORD_RECALL_MIN = _CALIB.get("word_recall_min", 0.5)
-
-
-# =====================================================================
-# Result type (engine-neutral; structurally identical to pronounce.PronunciationResult
-# so the GUI reads one stable shape regardless of the active engine -- see task §3).
-# =====================================================================
-@dataclass
-class PronunciationResult:
-    """Outcome of one phoneme-level pronunciation comparison.
-
-    Field names match ``pronounce.PronunciationResult`` so the GUI is engine-
-    neutral. ``prosody`` is left empty here and filled by the host (mimora/prosody.py).
-    """
-
-    score: float                                  # 0-100 overall pronunciation score
-    word_errors: List[Dict[str, Any]]             # per mispronounced word: expected/heard phones
-    prosody: Dict[str, List[float]]               # filled by the host; engine returns {}
-    transcription: str                            # recognized phonemes, space-joined
-    passed: bool = False                          # score >= configured score_threshold
-    feedback: str = ""                            # human-readable summary
-    acoustic_distance: int = 0                    # unused here (acoustic-engine field)
-    acoustic_per_step: float = 0.0                # unused here
-    acoustic_baseline: float = 0.0                # unused here
-    words_with_errors: List[str] = field(default_factory=list)
-    expected_phonemes: List[str] = field(default_factory=list)
-    transcribed_phonemes: List[str] = field(default_factory=list)
-    # Non-empty iff there are word-level errors; the GUI only checks truthiness
-    # ("matches the target" when empty), so a list of the diverging words suffices.
-    word_diff: List[Dict[str, str]] = field(default_factory=list)
-    # reference_words: one {"word", "correct"} per target-phrase word, in order;
-    # drives the green/red highlight on the "Phrase" line.
-    reference_words: List[Dict[str, Any]] = field(default_factory=list)
-    # recognized_units: what was recognised, in order; here each unit is a *phoneme*
-    # {"unit", "correct"} (the acoustic engine uses words). The GUI renders both the
-    # same way, so the "Heard" line works for either engine.
-    recognized_units: List[Dict[str, Any]] = field(default_factory=list)
-    # Phoneme-axis diagnostics (handy for calibration/acceptance; safe to ignore).
-    per_phone_distance: float = 0.0
-    bad_baseline: float = 0.0
-    phoneme_score: float = 0.0
-    recall: float = 0.0
-    good_anchor: float = 0.0
 
 
 # =====================================================================

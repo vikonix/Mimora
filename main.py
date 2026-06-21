@@ -50,7 +50,11 @@ from mimora.recorder import (
     dump_record_wav,
     normalize_audio,
 )
-import pronounce
+# Pronunciation runs through the engine dispatcher (mimora/engine.py), which binds
+# the backend chosen by config.ENGINE ("acoustic" -> pronounce/, "phoneme" ->
+# pronounce_phoneme/) and exposes one interface. main.py never imports an engine
+# directly, so switching is a single settings.json flip.
+from mimora import engine
 from mimora.ui import TrainerView, ViewCallbacks, LENGTH_FEW_WORDS
 
 # Configure comprehensive events logging (console + file). force=True replaces
@@ -81,7 +85,7 @@ class PronunciationTrainerGUI:
     Flow per phrase (spec state machine):
         Prompt   -> Kokoro speaks an LLM-generated reference phrase.
         Record   -> user repeats it (shared recording path).
-        Analyze  -> pronounce.analyze() runs in a daemon thread.
+        Analyze  -> engine.analyze() runs in a daemon thread.
         Feedback -> score + problem words shown via root.after().
         Loop     -> repeat the same phrase until the score passes the threshold,
                     then the user generates the next phrase.
@@ -223,19 +227,12 @@ class PronunciationTrainerGUI:
             logging.info("TTS model loaded.")
 
             self.root.after(0, self.view.append_system_msg, "Loading Wav2Vec2 (pronunciation, ~1.2 GB on first run)...")
-            # Inject app settings into the (app-agnostic) pronounce library before
-            # it loads any model. Done once here, the analyzer's composition root.
-            pronounce.configure(pronounce.AnalyzerConfig(
-                model_name=config.WAV2VEC2_MODEL_NAME,
-                device=config.WAV2VEC2_DEVICE,
-                espeak_language=config.ESPEAK_LANGUAGE,
-                score_threshold=config.PRONUNCIATION_SCORE_THRESHOLD,
-                acoustic_good=config.PRONUNCIATION_ACOUSTIC_GOOD,
-                log_dir=Path(config.LOG_DIR),
-                user_name=config.USER_NAME,
-            ))
-            pronounce.load_models()
-            logging.info("Wav2Vec2 model loaded.")
+            # Inject app settings into the active engine before it loads any model.
+            # The dispatcher builds the engine-specific config from app settings;
+            # this is the analyzer's composition root.
+            engine.configure()
+            engine.load_models()
+            logging.info("Pronunciation model loaded (engine=%s).", engine.name())
 
             if self.llm_backend == "local_server":
                 model_name = os.path.basename(config.EXTERNAL_MODEL_PATH)
@@ -254,7 +251,7 @@ class PronunciationTrainerGUI:
 
             self.root.after(0, self.view.enter_warming_up)
             self.tts_mgr.warm_up()
-            pronounce.warm_up()
+            engine.warm_up()
             logging.info("Models warmed up.")
 
             self.root.after(0, self.load_practice_text)
@@ -641,7 +638,7 @@ class PronunciationTrainerGUI:
 
             # Then run analysis with the reference as both inputs.
             self.root.after(0, self.view.enter_analyzing, "Testing with reference...")
-            result = pronounce.analyze(
+            result = engine.analyze(
                 user_audio=self.reference_audio,
                 expected_text=self.current_phrase,
                 reference_audio=self.reference_audio,
@@ -698,7 +695,7 @@ class PronunciationTrainerGUI:
             self.root.after(0, self.view.enter_analyzing)
 
             analyze_start = time.perf_counter()
-            result = pronounce.analyze(
+            result = engine.analyze(
                 user_audio=audio,
                 expected_text=self.current_phrase,
                 reference_audio=self.reference_audio,

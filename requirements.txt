@@ -16,3 +16,6 @@ transformers>=5.3
 # in llm_server/README.md.
 -r llm_server/requirements.txt
 -r pronounce/requirements.txt
+# Phoneme engine (engine="phoneme"). Mostly overlaps pronounce/ above; its one
+# extra dependency is panphon (articulatory feature distance for phone scoring).
+-r pronounce_phoneme/requirements.txt

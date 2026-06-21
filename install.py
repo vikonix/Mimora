@@ -90,7 +90,8 @@ GGUF_FILENAME = "llama-3.2-3b-instruct-q4_k_m.gguf"
 # Hugging Face models Mimora pulls on first run; pre-fetching them here means
 # the first launch is offline-ready. Repo ids match what the app requests.
 HF_MODEL_REPOS = [
-    ("facebook/wav2vec2-large-960h", "Wav2Vec2 (pronunciation analysis, ~1.2 GB)"),
+    ("facebook/wav2vec2-large-960h", "Wav2Vec2 (acoustic pronunciation engine, ~1.2 GB)"),
+    ("facebook/wav2vec2-xlsr-53-espeak-cv-ft", "Wav2Vec2 phoneme engine (espeak IPA ASR, ~1.2 GB)"),
     ("hexgrad/Kokoro-82M", "Kokoro-82M (text-to-speech)"),
     ("Systran/faster-whisper-small", "faster-whisper small (speech-to-text)"),
 ]
@@ -118,7 +119,7 @@ REQUIRED_DISTS = [
     "numpy", "soundfile", "sounddevice", "faster-whisper", "kokoro", "openai",
     "torch", "transformers", "fastapi", "uvicorn", "llama-cpp-python",
     "torchaudio", "librosa", "scipy", "scikit-learn", "fastdtw",
-    "phonemizer-fork", "python-Levenshtein",
+    "phonemizer-fork", "python-Levenshtein", "panphon",
 ]
 
 
@@ -279,13 +280,27 @@ class Confirmer:
             return self._prompt_installed()
         return self._prompt_fresh()
 
+    @staticmethod
+    def _ask(prompt: str) -> str:
+        """Read one answer, making sure the question is actually visible.
+
+        A preceding download shows a tqdm progress bar that writes to stderr and
+        keeps the cursor on its own line (carriage-return based). A plain
+        ``input()`` prompt then lands on that same line and looks invisible -- the
+        installer seems to hang while it is really waiting for input. Flushing both
+        streams and leading with a newline forces the question onto its own line.
+        """
+        sys.stdout.flush()
+        sys.stderr.flush()
+        return input("\n" + prompt).strip().lower()
+
     def _prompt_fresh(self) -> bool:
         """Not yet installed: default Yes, 's' skips, 'n' aborts."""
         if self._assume_yes:
             self._log.log("    [--yes] proceeding")
             return True
         while True:
-            answer = input("    Proceed? [Y]es / [n]o-abort / [s]kip: ").strip().lower()
+            answer = self._ask("    Proceed? [Y]es / [n]o-abort / [s]kip: ")
             if answer in ("", "y", "yes"):
                 return True
             if answer in ("s", "skip"):
@@ -305,8 +320,8 @@ class Confirmer:
             self._log.log("    [--yes] already installed -> skipping")
             return False
         while True:
-            answer = input("    Already installed. [r]einstall / [S]kip / "
-                           "[n]o-abort: ").strip().lower()
+            answer = self._ask("    Already installed. [S]kip / [r]einstall / "
+                               "[n]o-abort: ")
             if answer in ("", "s", "skip"):
                 self._log.log("    kept existing (skipped)")
                 return False
@@ -336,8 +351,7 @@ class Confirmer:
         # No default: an empty answer re-prompts. The choice is consequential
         # (the install may fail), so require an explicit continue or abort.
         while True:
-            answer = input("    Continue anyway? [c]ontinue / [a]bort: "
-                           ).strip().lower()
+            answer = self._ask("    Continue anyway? [c]ontinue / [a]bort: ")
             if answer in ("c", "continue"):
                 return True
             if answer in ("a", "abort"):
@@ -528,8 +542,10 @@ def check_virtualenv(log: Logger, args: argparse.Namespace) -> None:
                 "Activate a venv or run interactively to override.")
         raise SystemExit(1)
 
-    answer = input("    Install into this GLOBAL interpreter anyway? "
-                   "[y]es / [N]o-abort: ").strip().lower()
+    sys.stdout.flush()
+    sys.stderr.flush()
+    answer = input("\n    Install into this GLOBAL interpreter anyway? "
+                   "[N]o-abort / [y]es: ").strip().lower()
     if answer not in ("y", "yes"):
         log.log("    Aborted — activate a virtual environment and re-run.")
         raise SystemExit(1)
@@ -814,7 +830,7 @@ def step_prefetch_models(
     desc = (f"Download HF models into {MODEL_CACHE_DIR.name}/ (HF_HOME): {repos}. "
             f"Several GB; already-cached files are reused.")
     if installed:
-        log.log("    All three model repos already present in the cache.")
+        log.log(f"    All {len(HF_MODEL_REPOS)} model repos already present in the cache.")
     if not confirmer.confirm(desc, installed=installed):
         report.add("HF model cache", SKIPPED,
                    "already cached" if installed else "")

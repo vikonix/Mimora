@@ -27,7 +27,6 @@ import json
 import logging
 import re
 import threading
-from dataclasses import dataclass, field
 from functools import lru_cache
 from datetime import datetime
 from pathlib import Path
@@ -203,46 +202,12 @@ _load_lock = threading.Lock()
 # =====================================================================
 # Result type (the module's contract with the GUI layer)
 # =====================================================================
-@dataclass
-class PronunciationResult:
-    """Outcome of one pronunciation comparison.
-
-    The four fields required by the spec are ``score``, ``word_errors``,
-    ``prosody`` and ``transcription``; the rest are extras useful for richer
-    feedback (e.g. plotting contours) and are safe for the GUI to ignore.
-    """
-
-    score: float                                  # 0-100 overall pronunciation score
-    word_errors: List[Dict[str, Any]]             # per-word expected/actual phonemes
-    prosody: Dict[str, List[float]]               # filled by the host (mimora/prosody.py); engine returns {}
-    transcription: str                            # what the ASR recognised
-    passed: bool = False                          # score >= configured score_threshold
-    feedback: str = ""                            # human-readable summary
-    acoustic_distance: int = 0                    # total Wav2Vec2-embedding DTW distance
-    acoustic_per_step: float = 0.0                # DTW distance per alignment step (scored)
-    acoustic_baseline: float = 0.0                # random-pair distance (per-utterance ceiling)
-    words_with_errors: List[str] = field(default_factory=list)
-    expected_phonemes: List[str] = field(default_factory=list)
-    transcribed_phonemes: List[str] = field(default_factory=list)
-    # Word-level alignment of the recognised speech against the target phrase:
-    # one {"expected", "heard"} pair per diverging segment (empty = exact match).
-    # Lets the GUI show concrete mismatches instead of the raw ASR string.
-    word_diff: List[Dict[str, str]] = field(default_factory=list)
-    # --- Engine-neutral display fields (read by the GUI regardless of engine) ---
-    # The two contours the UI highlights. Each engine fills these in its own terms,
-    # so the GUI reads one stable shape (see §3/§6 of the productionization task).
-    #
-    # reference_words: one tag per word of the *target* phrase, in order, each
-    # {"word": str, "correct": bool}. Drives the green/red highlight on the
-    # "Phrase" line ("эталон — what was said well"). The acoustic engine derives it
-    # from ``words_with_errors``; the phoneme engine (no words of its own) will map
-    # phone errors back to words via ``reference_word_phonemes``.
-    reference_words: List[Dict[str, Any]] = field(default_factory=list)
-    # recognized_units: what was recognised, in order, each {"unit": str,
-    # "correct": bool}. Drives the "Heard" line. Units are *words* for the acoustic
-    # engine and *phonemes* for the phoneme engine — the GUI renders them the same
-    # way, so the line works for both.
-    recognized_units: List[Dict[str, Any]] = field(default_factory=list)
+# PronunciationResult is the engine-neutral shared type (pronounce_common): both
+# this acoustic engine and pronounce_phoneme/ return the same shape so the GUI is
+# engine-agnostic (task §3). Re-exported via pronounce.__init__, so
+# ``pronounce.PronunciationResult`` keeps working. This engine fills the
+# ``acoustic_*`` fields; the phoneme-specific fields stay at their defaults.
+from pronounce_common import PronunciationResult
 
 
 # =====================================================================

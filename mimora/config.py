@@ -36,6 +36,7 @@ if not isinstance(_HW, dict):
 _USER = loader.read_json(CONFIG_DIR / "settings.json")
 
 _KNOWN_USER_KEYS = {
+    "engine",
     "english_accent",
     "voice",
     "color_theme",
@@ -296,8 +297,24 @@ if REFERENCE_SPEED not in REFERENCE_SPEED_CHOICES:
 # =====================================================================
 # Pronunciation Analysis (Wav2Vec2) Settings
 # =====================================================================
+# Pronunciation engine selection, read from settings.json ("engine"):
+#   "acoustic" -> pronounce/         (Wav2Vec2 embeddings + cosine-DTW; default)
+#   "phoneme"  -> pronounce_phoneme/ (espeak reference + phoneme ASR + edit distance)
+# The dispatcher (mimora/engine.py) binds one backend at startup; only that engine's
+# models are loaded. An unknown value warns and falls back to "acoustic".
+_KNOWN_ENGINES = ("acoustic", "phoneme")
+ENGINE = _USER.get("engine", "acoustic")
+if ENGINE not in _KNOWN_ENGINES:
+    print(f"[config] settings.json: unknown engine {ENGINE!r}; "
+          f"using 'acoustic'", file=sys.stderr)
+    ENGINE = "acoustic"
+
+# =====================================================================
 # Acoustic + transcription model used by the pronounce/ module.
 WAV2VEC2_MODEL_NAME = "facebook/wav2vec2-large-960h"
+# Phoneme-ASR model used by the pronounce_phoneme/ module: a wav2vec2 CTC model that
+# emits espeak-style IPA, so its phone inventory matches the espeak reference.
+WAV2VEC2_PHONEME_MODEL_NAME = "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
 # Device for Wav2Vec2. Defaults to the shared DEVICE; hwconfig may pin it to
 # "cpu" to avoid VRAM contention with llama_cpp / Kokoro on a single GPU.
 WAV2VEC2_DEVICE = _HW.get("WAV2VEC2_DEVICE") or DEVICE
