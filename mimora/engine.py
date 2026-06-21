@@ -2,7 +2,7 @@
 
 The host (main.py) drives pronunciation through this one module instead of a
 specific engine, so it never knows which backend is active. The backend is chosen
-by ``config.ENGINE`` (settings.json ``"engine"``):
+by ``config.ENGINE`` (set in mimora/config.py):
 
     "acoustic" -> pronunciation.acoustic  (Wav2Vec2 embeddings + cosine-DTW; default)
     "phoneme"  -> pronunciation.phoneme   (espeak reference + phoneme ASR + edit distance)
@@ -12,9 +12,9 @@ Both backends expose the same small interface (``configure`` / ``load_models`` /
 so switching is a single config flip. Only the selected backend is imported, so the
 inactive engine's (heavy) weights are never loaded -- task §3 requirement #3.
 
-To switch engines, edit ``"engine"`` in config/settings.json and restart; the
-process binds one backend at startup (the first ``_backend()`` call). Hot-swapping
-without a restart is part of the acceptance step (§7) and is not done here.
+To switch engines, edit ``ENGINE`` in mimora/config.py and restart; the process
+binds one backend at startup (the first ``_backend()`` call). Hot-swapping without
+a restart is part of the acceptance step (§7) and is not done here.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from pathlib import Path
 
 from mimora import config
 
-# settings.json "engine" value -> the package implementing it.
+# config.ENGINE value -> the package implementing it.
 _BACKENDS = {
     "acoustic": "pronunciation.acoustic",
     "phoneme": "pronunciation.phoneme",

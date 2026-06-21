@@ -36,7 +36,6 @@ if not isinstance(_HW, dict):
 _USER = loader.read_json(CONFIG_DIR / "settings.json")
 
 _KNOWN_USER_KEYS = {
-    "engine",
     "english_accent",
     "voice",
     "color_theme",
@@ -297,17 +296,13 @@ if REFERENCE_SPEED not in REFERENCE_SPEED_CHOICES:
 # =====================================================================
 # Pronunciation Analysis (Wav2Vec2) Settings
 # =====================================================================
-# Pronunciation engine selection, read from settings.json ("engine"):
-#   "acoustic" -> pronunciation/acoustic/         (Wav2Vec2 embeddings + cosine-DTW; default)
-#   "phoneme"  -> pronunciation/phoneme/ (espeak reference + phoneme ASR + edit distance)
+# Pronunciation engine selection. Set here in code (not exposed in settings.json),
+# since it's a developer/build choice rather than an end-user preference:
+#   "acoustic" -> pronunciation/acoustic/  (Wav2Vec2 embeddings + cosine-DTW)
+#   "phoneme"  -> pronunciation/phoneme/   (espeak reference + phoneme ASR + edit distance)
 # The dispatcher (mimora/engine.py) binds one backend at startup; only that engine's
-# models are loaded. An unknown value warns and falls back to "acoustic".
-_KNOWN_ENGINES = ("acoustic", "phoneme")
-ENGINE = _USER.get("engine", "acoustic")
-if ENGINE not in _KNOWN_ENGINES:
-    print(f"[config] settings.json: unknown engine {ENGINE!r}; "
-          f"using 'acoustic'", file=sys.stderr)
-    ENGINE = "acoustic"
+# models are loaded.
+ENGINE = "phoneme"
 
 # =====================================================================
 # Acoustic + transcription model used by the pronunciation/acoustic/ module.
