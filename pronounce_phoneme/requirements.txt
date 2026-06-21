@@ -1,0 +1,23 @@
+# Dependencies for the pronounce_phoneme/ module (text-only phoneme engine).
+# Install on top of the project root requirements:
+#   pip install -r pronounce_phoneme/requirements.txt
+#
+# Most deps overlap with pronounce/ (transformers/torch/librosa for the wav2vec2
+# recognizer, phonemizer-fork for the espeak reference). The one addition over the
+# acoustic core is panphon, used for the articulatory feature distance.
+#
+# NOTE: phonemizer needs espeak-ng. In the full app Kokoro/misaki registers the
+# bundled espeakng_loader on import; standalone, the module registers it defensively
+# (see speech._ensure_espeak) or falls back to a system espeak-ng on PATH.
+
+# >=5.3 closes CVE-2026-4372 (config-injection RCE); kept in sync with the root requirements.txt.
+transformers>=5.3
+torch>=2.0.0
+librosa>=0.10.0
+# Use phonemizer-fork, NOT plain "phonemizer" (shares the import namespace; the fork
+# adds EspeakWrapper.set_data_path() that Kokoro/misaki rely on).
+phonemizer-fork>=3.3.0
+# Articulatory feature distance for the phoneme substitution cost (the one dep the
+# acoustic core does not need).
+panphon>=0.20.0
+numpy>=1.24.0

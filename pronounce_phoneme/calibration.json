@@ -1,0 +1,11 @@
+{
+  "phoneme_good": 0.047037,
+  "insertion_conf_min": 0,
+  "_meta": {
+    "generated_by": "recall_ablation.py (prototypes-pronunciation)",
+    "generated_at": "2026-06-19T13:10:51+00:00",
+    "good_percentile": 75.0,
+    "n_native": 26,
+    "note": "Ported from the validation spike. English phoneme-axis anchors. The 0-5 bucket thresholds and percent mapping (task stage C) will be added here; Spanish recalibrates separately."
+  }
+}
