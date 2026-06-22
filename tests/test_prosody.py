@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Unit tests for mimora/prosody.py — the engine-agnostic prosody layer.
 
 These need numpy/librosa/scikit-learn but never torch or the recognition model,

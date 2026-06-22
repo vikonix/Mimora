@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """
 Minimal OpenAI-compatible HTTP server for local GGUF models.
 

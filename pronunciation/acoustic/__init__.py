@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Mimora pronunciation analysis package.
 
 Reuses the OpenPronounce (MIT) acoustic/phoneme comparison core as a library.

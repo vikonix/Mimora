@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Microphone capture and recorded-signal helpers for Mimora.
 
 AudioRecorder owns the capture thread, input device selection and the raw

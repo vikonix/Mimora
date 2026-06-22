@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Hardware detection for Mimora.
 
 Standalone tool: probes the machine (RAM, CPU, GPU/VRAM, audio devices) and

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Pure helpers for prosody visualisation (no heavy dependencies).
 
 These functions used to live as static methods on the UI mixin. They hold no UI

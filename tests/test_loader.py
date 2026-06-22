@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Unit tests for mimora.loader — the pure configuration machinery.
 
 These exercise the validation rules and fallbacks in isolation: loader imports

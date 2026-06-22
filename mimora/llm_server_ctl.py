@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Lifecycle control for the local LLM server subprocess.
 
 Used only with the "local_server" LLM backend: launches llm_server/server.py

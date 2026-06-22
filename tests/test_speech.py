@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Autonomous checks for pronunciation/acoustic/speech.py.
 
 Two layers:

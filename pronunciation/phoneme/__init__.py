@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Mimora phoneme pronunciation engine (text-only scoring).
 
 The lightweight alternative to the acoustic ``pronunciation/acoustic/`` core: it scores a take

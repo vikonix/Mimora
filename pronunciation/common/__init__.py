@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Engine-neutral result type shared by the pronunciation engines.
 
 Both ``pronunciation.acoustic`` and ``pronunciation.phoneme`` (text-only) return

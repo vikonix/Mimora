@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Shared audio-device infrastructure for Mimora.
 
 This module owns the PortAudio/winsound plumbing that the microphone path

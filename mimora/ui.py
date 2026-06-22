@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """View layer for the Mimora pronunciation trainer.
 
 This module holds the UI as a standalone, passive :class:`TrainerView`, composed

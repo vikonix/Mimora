@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Semi-automatic calibration of the acoustic scoring floor (on request).
 
 Every ``analyze()`` call appends its raw components to logs/pronounce_samples.jsonl.

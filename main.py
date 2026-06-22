@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Mimora application entry point.
 
 Wires together the pronunciation-trainer components and runs the Tkinter GUI:

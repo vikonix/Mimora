@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Pronunciation analysis core for Mimora.
 
 Adapted from OpenPronounce (https://github.com/Halleck45/OpenPronounce), MIT License.

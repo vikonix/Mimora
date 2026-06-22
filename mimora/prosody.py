@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Prosody extraction (pitch & energy contours) — the engine-agnostic audio layer.
 
 Pitch (F0) and energy contours describe *how* something was said (intonation,

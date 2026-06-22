@@ -1,3 +1,6 @@
+<!-- SPDX-License-Identifier: MIT -->
+<!-- Copyright (c) 2026 Valery Kovalev -->
+
 # New Engine — Phoneme-Based Multilingual Scoring
 
 *A short overview for technically literate readers. Focus: the ideas and the
@@ -76,7 +79,7 @@ The final grade blends **two axes**:
 Two safeguards keep the recognizer's noise from distorting the grade: a **cap on
 invented sounds** (so a burst of hallucinated phonemes can't sink an otherwise
 good attempt) and a **length-aware baseline** (so short phrases aren't judged too
-harshly). Both were added after testing on real labelled recordings.
+harshly).
 
 ## A coarse, encouraging scale
 
@@ -88,8 +91,8 @@ reference rendering of a phrase always sits at the top.
 
 ## Strengths and limits, in one breath
 
-It is **language-agnostic and reference-free** — its reason for existing — and on
-testing it **locates errors well** (it reliably flags which sounds were off),
+It is **language-agnostic and reference-free** — its reason for existing — and it
+**locates errors well** (it reliably flags which sounds were off),
 which is exactly what the feedback UI needs. The trade-offs: turning speech into
 discrete phonemes **discards fine acoustic detail** (timing, stress, vowel
 length), so it is a weaker *precise grader* than the acoustic base engine, and its

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Configuration loading machinery — pure, stateless helpers.
 
 This module holds the *mechanics* of building Mimora's configuration: reading

@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 import numpy as np
 from faster_whisper import WhisperModel
 from mimora import config

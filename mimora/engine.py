@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Pronunciation engine dispatcher.
 
 The host (main.py) drives pronunciation through this one module instead of a

@@ -1,10 +1,7 @@
-"""Phoneme pronunciation engine for Mimora (text-only scoring).
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
 
-Ported from the validation spike ``prototypes-pronunciation/w2v2_pronounce_poc.py``
-(+ ``core_w2v2.py``). The spike proved the pipeline on speechocean762 (per-phrase
-Spearman ~0.70 vs humans, per-phoneme AUC ~0.80); this module is the production
-port, structured to mirror the acoustic ``pronounce/`` core so a host can switch
-between them through one shared call.
+"""Phoneme pronunciation engine for Mimora (text-only scoring).
 
 Pipeline::
 
@@ -17,7 +14,7 @@ Pipeline::
 Unlike the acoustic core it needs no per-phrase reference *recording* to score --
 the reference phonemes come from espeak. The reference audio is still accepted and,
 in the default ``good_mode="ceiling"``, recognized once to anchor a flawless read
-to 100 per phrase (calibration-by-reference).
+to 100 per phrase.
 
 Public API mirrors ``pronounce/`` exactly so the dispatcher (task stage B) can
 treat both engines the same:
@@ -25,21 +22,19 @@ treat both engines the same:
     warm_up()      -- dummy pass to remove first-call latency.
     analyze(...)   -- single entry point returning a PronunciationResult.
 
-Production notes vs the spike (task stage 3, §2):
-    * The recognizer works on in-memory waveforms, not file paths, so the spike's
-      ``@lru_cache`` keyed on a (temporary) wav path is gone by construction; only
-      the model is cached.
+Implementation notes:
+    * The recognizer works on in-memory waveforms, not file paths, so only the
+      model is cached.
     * panphon's bundled data is UTF-8; on a cp1252 Windows process its load raises
       UnicodeDecodeError. Instead of an unconditional ``pathlib.Path.open``
       monkey-patch we build the table normally and only fall back to a narrowly
       scoped UTF-8 default on that error (never triggered when the app runs in
       UTF-8 mode -- set PYTHONUTF8=1 at launch).
     * Scoring constants (GOOD anchor, recall threshold, axis weights, insertion
-      cap/gate) come from ``calibration.json`` next to this module, shared with the
-      eval/calibration tooling; ``config.AnalyzerConfig`` holds only host settings.
+      cap/gate) load from a JSON config next to this module;
+      ``config.AnalyzerConfig`` holds only host settings.
 
-This module never imports from ``prototypes-pronunciation/`` (that stays a
-throwaway harness) and never touches the GUI.
+This module never touches the GUI.
 """
 
 from __future__ import annotations
@@ -66,22 +61,22 @@ from pronunciation.common import PronunciationResult
 
 
 # =====================================================================
-# Constants and calibration.
+# Constants and config.
 # =====================================================================
 # The wav2vec2 recognizer expects strictly 16 kHz mono input.
 TARGET_SAMPLE_RATE = 16_000
 # Kokoro synthesises at 24 kHz; used as the default reference sample rate.
 KOKORO_SAMPLE_RATE = 24_000
 
-# Data-derived scoring constants live in calibration.json next to this module
-# (shared with the eval/calibration tooling). A missing/malformed file degrades
-# silently to the literal defaults so scoring never breaks. Keys prefixed with
-# ``_`` (``_meta``) are informational and ignored by the ``.get`` lookups.
+# Tunable scoring constants live in a JSON config next to this module. A
+# missing/malformed file degrades silently to the literal defaults so scoring
+# never breaks. Keys prefixed with ``_`` (``_meta``) are informational and
+# ignored by the ``.get`` lookups.
 _CALIBRATION_PATH = Path(__file__).resolve().parent / "calibration.json"
 
 
 def _load_calibration() -> dict:
-    """Return the calibration dict, or ``{}`` if the file is absent/malformed."""
+    """Return the config dict, or ``{}`` if the file is absent/malformed."""
     try:
         with _CALIBRATION_PATH.open(encoding="utf-8") as fh:
             data = json.load(fh)
@@ -109,7 +104,7 @@ RECALL_MAX_DIST = _CALIB.get("recall_max_dist", 0.13)   # per-phone dist counted
 WEIGHT_PHONEME = _CALIB.get("weight_phoneme", 0.7)
 WEIGHT_WORD = _CALIB.get("weight_word", 0.3)
 # A reference word is "correct" when at least this fraction of its phones are
-# recalled. Drives the per-word green/red highlight; tunable in calibration.json.
+# recalled. Drives the per-word green/red highlight; tunable in the JSON config.
 WORD_RECALL_MIN = _CALIB.get("word_recall_min", 0.5)
 
 
@@ -235,7 +230,7 @@ def _recognize_with_conf(wav16: np.ndarray, device: str) -> List[Tuple[str, floa
     Reproduces ``batch_decode``'s CTC collapse (group consecutive-equal frame ids,
     drop the blank and word-delimiter) so the surviving tokens are exactly the
     argmax phones, each tagged with the pooled posterior of its frame run. Used by
-    the confidence gate (Variant 1) to drop low-confidence hallucinated insertions
+    the confidence gate to drop low-confidence hallucinated insertions
     before scoring; only taken when INSERTION_CONF_MIN > 0.
     """
     import torch
@@ -271,7 +266,7 @@ def _recognize_with_conf(wav16: np.ndarray, device: str) -> List[Tuple[str, floa
 def _spoken_from_wav(wav16: np.ndarray, device: str) -> List[str]:
     """Recognize the phonemes the speaker produced, normalized and folded.
 
-    Confidence gating (Variant 1) drops low-confidence phones before normalization
+    Confidence gating drops low-confidence phones before normalization
     when tau (INSERTION_CONF_MIN) is set; tau == 0 takes the plain argmax path, so
     the two are byte-identical when nothing is dropped.
     """
@@ -339,7 +334,7 @@ _STRIP_DIACRITICS = dict.fromkeys(_DIACRITIC_CODEPOINTS)
 # Inventory fold: the espeak reference (en-us) and the recognizer emit the same
 # sounds under different IPA conventions; this canonicalizes both sides so they
 # align. Spanish-safe (Spanish espeak already emits these cardinal symbols, so the
-# table is near-identity there). The single place to tune during calibration.
+# table is near-identity there).
 _PHONE_FOLD = {
     "ɹ": "r", "ɾ": "r", "ɻ": "r",     # rhotic approximant / flap / retroflex -> r
     "æ": "a", "ɐ": "a",               # near-open front / near-open central -> a
@@ -519,7 +514,7 @@ def _phoneme_recall(pairs: List[Tuple[str, str]]) -> float:
 
 @dataclass
 class ScoreResult:
-    """Two-axis score plus the alignment and the raw distances calibration tunes against."""
+    """Two-axis score plus the alignment and the raw per-phone distances."""
 
     score: float
     pairs: List[Tuple[str, str]]
@@ -644,9 +639,8 @@ def analyze(user_audio: np.ndarray,
         user_sr: sample rate of ``user_audio`` (recording path is 16 kHz).
         reference_sr: sample rate of ``reference_audio`` (Kokoro is 24 kHz).
         voice: Kokoro voice the reference was synthesized with (recorded for logs).
-        is_reference: marks the reference self-test (task §5). Accepted now so the
-            signature is stable; honest scoring is unchanged here -- the reference
-            anchoring/calibration use of this flag is added in task stage D.
+        is_reference: marks the reference self-test. Accepted now so the
+            signature is stable; honest scoring is unchanged here.
 
     Returns:
         PronunciationResult with score, per-word/per-phone tags and transcription.

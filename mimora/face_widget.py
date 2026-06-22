@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Schematic articulation face for Mimora.
 
 A minimal "talking head" drawn on a Tk Canvas: a circle for the face and two

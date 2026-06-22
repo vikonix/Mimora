@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
 """Mimora installer.
 
 A standalone, idempotent setup helper that walks through everything needed to

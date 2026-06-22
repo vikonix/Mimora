@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 Valery Kovalev
+
 """Unit tests for mimora/prosody_utils.py (pure, no tkinter / no ML stack).
 
 Run: python -m unittest tests.test_prosody_utils
