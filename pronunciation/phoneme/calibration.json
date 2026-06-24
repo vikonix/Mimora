@@ -1,11 +1,71 @@
 {
-  "phoneme_good": 0.047037,
+  "phoneme_good": 0.063095,
   "insertion_conf_min": 0,
+  "pass_bucket": 4,
+  "word_good_frac": 0.33,
+  "word_bad_frac": 0.66,
+  "buckets": {
+    "cutpoints": [
+      9.97,
+      12.12,
+      55.0,
+      79.0,
+      98.5
+    ],
+    "target": "accuracy",
+    "human_edges_0_10": [
+      2.0,
+      4.0,
+      6.0,
+      7.5,
+      8.75
+    ],
+    "note": "score cutpoints for buckets 0..5; bucket = count of cutpoints a score clears. Fit from speechocean762 human labels via an isotonic score->human mapping binned on human_edges_0_10. English only. The two bottom cutpoints (buckets 0->1, 1->2) are re-derived from the negative group (word-level errors): so762's low end is flat so isotonic pins them to 0 and buckets 0-1 are unreachable; they are set from the p33/p67 percentiles of 9 negative scores. Only scores in the negative cluster change bucket; good speech is unaffected.",
+    "low_floor_from_negative": true,
+    "low_floor_n_negative": 9,
+    "low_floor_percentiles": [
+      33.0,
+      67.0
+    ]
+  },
+  "bucket_to_percent": {
+    "0": [
+      0,
+      30
+    ],
+    "1": [
+      30,
+      55
+    ],
+    "2": [
+      55,
+      75
+    ],
+    "3": [
+      75,
+      90
+    ],
+    "4": [
+      90,
+      95
+    ],
+    "5": [
+      95,
+      100
+    ]
+  },
   "_meta": {
-    "generated_by": "recall_ablation.py (prototypes-pronunciation)",
-    "generated_at": "2026-06-19T13:10:51+00:00",
-    "good_percentile": 75.0,
-    "n_native": 26,
-    "note": "Ported from the validation spike. English phoneme-axis anchors. The 0-5 bucket thresholds and percent mapping (task stage C) will be added here; Spanish recalibrates separately."
+    "generated_by": "calibration/en/calibrate_en.py",
+    "generated_at": "2026-06-24T17:15:50+00:00",
+    "language": "en",
+    "source_csv": "prototypes-pronunciation/calibration/en/eval_results.csv",
+    "anchor_good_percentile": 75.0,
+    "anchor_n_native": 197,
+    "anchor_native_p50": 0.035185,
+    "anchor_native_p90": 0.090909,
+    "bucket_target": "accuracy",
+    "bucket_spearman_score_vs_human": 0.7503,
+    "bucket_n_labeled": 400,
+    "note": "Ported into the phoneme engine from prototypes-pronunciation/calibration.json. pass_bucket=4: a take 'passes' when it lands in bucket 4-5. insertion_conf_min kept explicit (engine defaults it to 0)."
   }
 }

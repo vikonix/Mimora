@@ -43,6 +43,7 @@ import json
 import logging
 import threading
 from dataclasses import dataclass
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -104,8 +105,82 @@ RECALL_MAX_DIST = _CALIB.get("recall_max_dist", 0.13)   # per-phone dist counted
 WEIGHT_PHONEME = _CALIB.get("weight_phoneme", 0.7)
 WEIGHT_WORD = _CALIB.get("weight_word", 0.3)
 # A reference word is "correct" when at least this fraction of its phones are
-# recalled. Drives the per-word green/red highlight; tunable in the JSON config.
+# recalled. Retained for back-compat; the per-word highlight now uses the mean
+# word distance (WORD_*_FRAC below), which agrees with the overall score.
 WORD_RECALL_MIN = _CALIB.get("word_recall_min", 0.5)
+# Three-level per-word highlight cutoffs, as a fraction of the [good, bad] window
+# (0 == flawless, 1 == completely wrong): <= good_frac is "good" (green), >=
+# bad_frac is "bad" (red), in between is "ok" (acceptable / light grey).
+WORD_GOOD_FRAC = _CALIB.get("word_good_frac", 0.33)
+WORD_BAD_FRAC = _CALIB.get("word_bad_frac", 0.66)
+
+# --- 0-5 bucketization (task §4). Coarsens the noisy raw 0-100 score onto a
+# human-calibrated 0-5 grade so good speech reliably reads 4-5. Cutpoints and the
+# bucket->percent bands live in calibration.json; an empty/absent block disables
+# bucketing (bucket stays -1 and scoring falls back to the raw threshold). ---
+_BUCKETS = _CALIB.get("buckets", {})
+# Ascending score thresholds; bucket = how many a score clears (0..len).
+BUCKET_CUTPOINTS = [float(c) for c in _BUCKETS.get("cutpoints", [])]
+# bucket (as str) -> [lo, hi] user-facing percent band; the displayed percent is
+# the band midpoint (flat per bucket, so engine noise within a bucket is hidden).
+BUCKET_TO_PERCENT = _CALIB.get("bucket_to_percent", {})
+# A take "passes" at or above this bucket (good speech is bucket 4-5; task §7).
+PASS_BUCKET = _CALIB.get("pass_bucket", 4)
+
+# Where save_calibration() / phoneme/calibrate.py read and write the anchor.
+CALIBRATION_FILE = _CALIBRATION_PATH
+
+
+# =====================================================================
+# Sample log + calibration write-back (task §5.3; mirrors the acoustic engine).
+# analyze() appends one record per take to logs/phoneme_samples.jsonl; the offline
+# phoneme/calibrate.py re-anchors PHONEME_GOOD from the reference self-tests there.
+# Kept separate from the acoustic pronounce_samples.jsonl so the two engines' logs
+# never mix.
+# =====================================================================
+def samples_file() -> Path:
+    """Path of the phoneme sample log (under the host's configured log dir)."""
+    return Path(get_config().log_dir) / "phoneme_samples.jsonl"
+
+
+def _append_sample(record: Dict[str, Any]) -> None:
+    """Append one analysis record to the sample log (best effort).
+
+    A write failure must never break the analysis itself, so every error is logged
+    and swallowed (mirrors the acoustic engine's _append_calibration_sample).
+    """
+    try:
+        path = samples_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception:
+        logging.exception("[phoneme] failed to append sample")
+
+
+def current_phoneme_good() -> float:
+    """The GOOD anchor in effect (the calibrated PHONEME_GOOD)."""
+    return PHONEME_GOOD
+
+
+def save_calibration(phoneme_good: float, extra: Optional[Dict[str, Any]] = None) -> None:
+    """Write a new PHONEME_GOOD into calibration.json, preserving the other keys.
+
+    Used by phoneme/calibrate.py. Only ``phoneme_good`` and a small ``_meta`` block
+    are updated; buckets / bucket_to_percent / gates are left untouched. The new
+    value is picked up on the next process start (module-load time).
+    """
+    data = _load_calibration()
+    data["phoneme_good"] = round(float(phoneme_good), 6)
+    meta = data.get("_meta", {}) if isinstance(data.get("_meta"), dict) else {}
+    meta.update({
+        "phoneme_good_recalibrated_at": datetime.now().isoformat(timespec="seconds"),
+        **(extra or {}),
+    })
+    data["_meta"] = meta
+    CALIBRATION_FILE.write_text(
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    logging.info("[phoneme] wrote phoneme_good=%.6f -> %s", phoneme_good, CALIBRATION_FILE)
 
 
 # =====================================================================
@@ -581,12 +656,20 @@ def _recognize_reference(reference_audio: np.ndarray, reference_sr: int,
 # Phone-error -> word mapping (for the GUI's word-level highlight, task §6).
 # =====================================================================
 def _word_recall(groups: List[List[str]],
-                 pairs: List[Tuple[str, str]]) -> Tuple[List[int], List[List[str]]]:
-    """Per reference word: how many of its phones were recalled, and what was heard.
+                 pairs: List[Tuple[str, str]]
+                 ) -> Tuple[List[int], List[List[str]], List[float]]:
+    """Per reference word: recalled-phone count, heard phones, and mean distance.
 
     ``groups`` is the per-word phone grouping; ``pairs`` is the alignment over the
     flattened reference (same order), so we can attribute each non-insertion pair to
     its word by walking a phone->word index table.
+
+    ``word_dist[wi]`` is the mean articulatory distance over that word's reference
+    phones: a substituted phone contributes its feature cost, a *deleted* phone
+    (not spoken) contributes the maximum 1.0. This is the same axis the overall
+    score uses, so the per-word highlight agrees with the bucket -- a "dirty" or
+    swapped word is far from the reference and reads as such, unlike the lenient
+    50%-recall flag it replaces (task §6).
     """
     word_of: List[int] = []
     for wi, group in enumerate(groups):
@@ -595,6 +678,7 @@ def _word_recall(groups: List[List[str]],
 
     recalled = [0] * len(groups)
     heard: List[List[str]] = [[] for _ in groups]
+    dist_sum = [0.0] * len(groups)            # summed phone distance per word
     ref_idx = 0
     for ref_sym, hyp_sym in pairs:
         if not ref_sym:                       # insertion: no reference phone
@@ -603,19 +687,78 @@ def _word_recall(groups: List[List[str]],
             wi = word_of[ref_idx]
             if hyp_sym:
                 heard[wi].append(hyp_sym)
-                if _substitution_cost(ref_sym, hyp_sym) < RECALL_MAX_DIST:
+                cost = _substitution_cost(ref_sym, hyp_sym)
+                if cost < RECALL_MAX_DIST:
                     recalled[wi] += 1
+            else:
+                cost = 1.0                    # deletion: phone not produced at all
+            dist_sum[wi] += cost
         ref_idx += 1
-    return recalled, heard
+
+    word_dist = [
+        dist_sum[wi] / len(groups[wi]) if groups[wi] else 0.0
+        for wi in range(len(groups))
+    ]
+    return recalled, heard, word_dist
 
 
-def _reference_word_tags(tokens: List[str], correct_flags: List[bool]) -> List[Dict[str, Any]]:
-    """One {"word", "correct"} per target token, preserving original case/punctuation."""
+def _word_level(word_avg: float, good: float, bad: float) -> str:
+    """Classify a word's mean phone distance as "good" / "ok" / "bad".
+
+    Placed on the same [good, bad] window the phoneme-quality score uses, so the
+    three-level highlight tracks the bucket: ``frac`` is the word's position from a
+    flawless read (0) to "completely wrong" (1). Cutoffs come from calibration.json
+    (``word_good_frac`` / ``word_bad_frac``); the defaults split the window roughly
+    in thirds.
+    """
+    span = max(bad - good, BAD_MIN_SPAN)
+    frac = (word_avg - good) / span
+    if frac <= WORD_GOOD_FRAC:
+        return "good"
+    if frac >= WORD_BAD_FRAC:
+        return "bad"
+    return "ok"
+
+
+def _reference_word_tags(tokens: List[str], levels: List[str]) -> List[Dict[str, Any]]:
+    """One {"word", "level", "correct"} per target token (case/punctuation kept).
+
+    ``level`` drives the GUI's three-level colour (good/ok/bad); ``correct`` is kept
+    for any consumer still reading the boolean (a word is "correct" unless it is bad).
+    """
     tags: List[Dict[str, Any]] = []
     for i, token in enumerate(tokens):
-        correct = correct_flags[i] if i < len(correct_flags) else True
-        tags.append({"word": token, "correct": correct})
+        level = levels[i] if i < len(levels) else "good"
+        tags.append({"word": token, "level": level, "correct": level != "bad"})
     return tags
+
+
+# =====================================================================
+# 0-5 bucketization (task §4): raw 0-100 score -> human-calibrated grade + percent.
+# =====================================================================
+def _score_to_bucket(score: float) -> int:
+    """Coarse 0-5 grade: how many ascending cutpoints the score clears (0..5).
+
+    Returns -1 when no cutpoints are configured, signalling the caller to keep the
+    raw 0-100 score (and its threshold) instead of a bucket.
+    """
+    if not BUCKET_CUTPOINTS:
+        return -1
+    return int(sum(1 for c in BUCKET_CUTPOINTS if score >= c))
+
+
+def _bucket_to_percent(bucket: int, fallback: float) -> float:
+    """User-facing percent for a bucket: the midpoint of its [lo, hi] band.
+
+    The midpoint keeps every take in a bucket on one number (flat), so within-bucket
+    engine noise is hidden (task §4.3). Falls back to ``fallback`` (the raw score)
+    when the bucket has no configured band.
+    """
+    band = BUCKET_TO_PERCENT.get(str(bucket))
+    if not band or len(band) != 2:
+        return fallback
+    lo, hi = band
+    return round((float(lo) + float(hi)) / 2.0, 1)
 
 
 # =====================================================================
@@ -662,25 +805,31 @@ def analyze(user_audio: np.ndarray,
     good = _ceiling_good(reference, reference_audio, reference_sr, cfg)
     result = align_and_score(reference, spoken, good=good)
 
-    # Map phone errors back to whole words for the GUI highlight.
+    # Map phone errors back to whole words for the GUI highlight. The per-word mean
+    # distance is classified on the SAME [good, bad] window the score uses, so the
+    # three-level colour (good/ok/bad) tracks the bucket rather than a lenient recall.
     tokens = expected_text.split()
-    recalled, heard = _word_recall(groups, result.pairs)
-    correct_flags = [
-        (recalled[wi] / len(groups[wi])) >= WORD_RECALL_MIN if groups[wi] else True
+    _recalled, heard, word_dist = _word_recall(groups, result.pairs)
+    levels = [
+        _word_level(word_dist[wi], result.good, result.bad_baseline)
         for wi in range(len(groups))
     ]
+    # A word is an error (red, "you need to pronounce X") only when "bad"; "ok"
+    # words are acceptable (light grey) and stay out of the error list.
     words_with_errors = [
-        tokens[wi] for wi in range(min(len(groups), len(tokens))) if not correct_flags[wi]
+        tokens[wi] for wi in range(min(len(groups), len(tokens))) if levels[wi] == "bad"
     ]
-    reference_words = _reference_word_tags(tokens, correct_flags)
+    reference_words = _reference_word_tags(tokens, levels)
     word_errors = [
         {
             "word": tokens[wi] if wi < len(tokens) else "",
             "expected": groups[wi],
             "heard": heard[wi],
+            "level": levels[wi],
+            "distance": round(word_dist[wi], 4),
         }
         for wi in range(len(groups))
-        if not correct_flags[wi]
+        if levels[wi] == "bad"
     ]
     word_diff = [{"expected": w} for w in words_with_errors]
 
@@ -695,16 +844,62 @@ def analyze(user_audio: np.ndarray,
     ]
 
     transcription = " ".join(spoken)
-    passed = result.score >= cfg.score_threshold
+
+    # Coarsen the raw 0-100 score to a 0-5 bucket (task §4). When buckets are
+    # configured, "passed" and the user percent come from the bucket; otherwise the
+    # engine degrades to the raw score and its threshold (no calibration -> no crash).
+    bucket = _score_to_bucket(result.score)
+    if bucket >= 0:
+        passed = bucket >= PASS_BUCKET
+        user_percent = _bucket_to_percent(bucket, result.score)
+    else:
+        passed = result.score >= cfg.score_threshold
+        user_percent = result.score
     feedback = _build_feedback(result.score, passed, words_with_errors)
 
     logging.info(
-        "[phoneme] score=%.1f (phoneme=%.1f recall=%.2f) | "
-        "dist/phone=%.4f (good=%.3f bad=%.3f) | ref=%d spoken=%d | is_ref=%s | voice=%s",
-        result.score, result.phoneme_score, result.recall,
+        "[phoneme] score=%.1f -> bucket=%d (%.0f%%) | (phoneme=%.1f recall=%.2f) | "
+        "dist/phone=%.4f (good=%.3f bad=%.3f) | ref=%d spoken=%d | is_ref=%s | voice=%s | "
+        "bad_words=%s | ref_ipa=%r | asr_ipa=%r",
+        result.score, bucket, user_percent, result.phoneme_score, result.recall,
         result.per_phone_distance, result.good, result.bad_baseline,
         len(reference), len(spoken), is_reference, voice,
+        words_with_errors, " ".join(reference), transcription,
     )
+
+    # Calibration / analysis sample log (best effort; mirrors the acoustic engine's
+    # pronounce_samples.jsonl). phoneme/calibrate.py re-anchors PHONEME_GOOD from the
+    # good *real* attempts here (it drops the is_reference self-tests, whose ~0
+    # distance would wreck the anchor); the per-word block and the two phoneme
+    # strings make a low score easy to inspect after the fact.
+    _append_sample({
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "text": expected_text,
+        "user_name": cfg.user_name,
+        "voice": voice,
+        "is_reference": bool(is_reference),
+        "score": result.score,
+        "bucket": bucket,
+        "user_percent": user_percent,
+        "passed": passed,
+        "phoneme_score": round(result.phoneme_score, 1),
+        "recall": round(result.recall, 4),
+        "per_phone_distance": round(result.per_phone_distance, 5),
+        "bad_baseline": round(result.bad_baseline, 5),
+        "good_anchor": round(result.good, 5),
+        "n_reference": len(reference),
+        "n_spoken": len(spoken),
+        "reference_phonemes": reference,
+        "spoken_phonemes": spoken,
+        "words": [
+            {"word": tokens[wi] if wi < len(tokens) else "",
+             "level": levels[wi],
+             "distance": round(word_dist[wi], 4),
+             "expected": groups[wi],
+             "heard": heard[wi]}
+            for wi in range(len(groups))
+        ],
+    })
 
     return PronunciationResult(
         score=result.score,
@@ -719,6 +914,8 @@ def analyze(user_audio: np.ndarray,
         word_diff=word_diff,
         reference_words=reference_words,
         recognized_units=recognized_units,
+        bucket=bucket,
+        user_percent=user_percent,
         per_phone_distance=result.per_phone_distance,
         bad_baseline=result.bad_baseline,
         phoneme_score=result.phoneme_score,

@@ -411,6 +411,9 @@ class TrainerView:
         self.feedback_display.tag_configure("system", foreground=THEME["text_muted"], font=(FONT_FAMILY, 10, "italic"))
         self.feedback_display.tag_configure("good", foreground=THEME["good"], font=(FONT_FAMILY, 11, "bold"))
         self.feedback_display.tag_configure("bad", foreground=THEME["bad"], font=(FONT_FAMILY, 11, "bold"))
+        # "ok" == acceptable word in the three-level phoneme highlight: light grey,
+        # sitting between green (good) and red (bad).
+        self.feedback_display.tag_configure("ok", foreground=THEME["text_dim"], font=(FONT_FAMILY, 11, "bold"))
         self.feedback_display.tag_configure("label", foreground=THEME["text_dim"], font=(FONT_FAMILY, 10))
         self.feedback_display.tag_configure("text", foreground=THEME["text_emph"], font=(FONT_FAMILY, 11))
         # Monospace tag for phoneme strings so they align and read clearly.
@@ -758,7 +761,12 @@ class TrainerView:
         self.face.set_score(result.score)
         self.feedback_display.configure(state=tk.NORMAL)
         tag = "good" if result.passed else "bad"
-        self.feedback_display.insert(tk.END, f"Score: {result.score:.0f}/100 ", tag)
+        # Phoneme engine grades on a coarse 0-5 bucket (task §4); the acoustic engine
+        # leaves bucket == -1, so it keeps the raw 0-100 line.
+        if getattr(result, "bucket", -1) >= 0:
+            self.feedback_display.insert(tk.END, f"Score: {result.bucket}/5 ", tag)
+        else:
+            self.feedback_display.insert(tk.END, f"Score: {result.score:.0f}/100 ", tag)
         self.feedback_display.insert(tk.END, "(passed)\n" if result.passed else "(try again)\n", tag)
         # First line: the target phrase, highlighting what was said well (green)
         # vs mispronounced (red). Driven by the engine-neutral reference_words
@@ -766,7 +774,13 @@ class TrainerView:
         self.feedback_display.insert(tk.END, "Phrase: ", "label")
         if result.reference_words:
             for entry in result.reference_words:
-                tag = "good" if entry.get("correct") else "bad"
+                # Three-level colour when the engine supplies a "level"
+                # (good/ok/bad); fall back to the boolean "correct" (acoustic engine).
+                level = entry.get("level")
+                if level in ("good", "ok", "bad"):
+                    tag = {"good": "good", "ok": "ok", "bad": "bad"}[level]
+                else:
+                    tag = "good" if entry.get("correct") else "bad"
                 self.feedback_display.insert(tk.END, entry["word"] + " ", tag)
         else:
             for token in (current_phrase or "—").split():
@@ -778,7 +792,9 @@ class TrainerView:
         # user sees at a glance what landed. Driven by engine-neutral
         # recognized_units; falls back to the raw transcription.
         self.feedback_display.insert(tk.END, "Heard: ", "label")
-        if not result.word_diff:
+        # "matches the target" only when there are no mispronounced words AND the take
+        # actually passed -- so a low score can no longer sit next to a "matches ✓".
+        if not result.word_diff and result.passed:
             self.feedback_display.insert(tk.END, "matches the target ✓\n", "good")
         elif result.recognized_units:
             for entry in result.recognized_units:

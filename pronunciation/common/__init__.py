@@ -39,8 +39,18 @@ class PronunciationResult:
     word_errors: List[Dict[str, Any]]             # per mispronounced word: expected/heard
     prosody: Dict[str, List[float]]               # filled by the host; engine returns {}
     transcription: str                            # what the recognizer produced
-    passed: bool = False                          # score >= configured score_threshold
+    passed: bool = False                          # acoustic: score >= threshold; phoneme: bucket >= pass_bucket
     feedback: str = ""                            # human-readable summary
+
+    # --- Coarse 0-5 score (phoneme engine; task §4). ---
+    # bucket: calibrated 0-5 grade of ``score`` (the GUI shows this instead of the raw
+    # 0-100 when present). -1 means the engine does not bucketize (the acoustic engine),
+    # so the GUI falls back to the raw 0-100 score line.
+    bucket: int = -1
+    # user_percent: the bucket mapped to a user-facing percent (band midpoint), so the
+    # "good >= 90% / reference >= 95%" product requirement holds by construction (§4.2).
+    # Kept for logs/diagnostics; the GUI currently displays only ``bucket``.
+    user_percent: float = 0.0
 
     # --- Engine-neutral display fields (read by the GUI regardless of engine). ---
     words_with_errors: List[str] = field(default_factory=list)

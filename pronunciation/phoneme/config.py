@@ -49,7 +49,7 @@ class AnalyzerConfig:
     #                default; needs the reference audio, which the host passes in).
     #   "global"  -- the single PHONEME_GOOD constant from calibration.json.
     # A missing/empty reference silently falls back to "global" (never fails).
-    good_mode: str = "ceiling"
+    good_mode: str = "global"
     # Directory engine logs are written to (kept symmetric with pronunciation/acoustic/).
     log_dir: Path = Path("logs")
     # Practising user; reserved for per-user calibration ("" when unset).
