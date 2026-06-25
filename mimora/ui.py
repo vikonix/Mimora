@@ -298,6 +298,8 @@ class TrainerView:
         # Match the translation card's vertical padding so the two panels are the
         # same height (the phrase still reads larger via its bigger, bold font).
         self.phrase_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
+        # Right-click the phrase to copy it (independently of the translation).
+        self._bind_copy_menu(self.phrase_label)
 
         # 5a. Translation card — a SEPARATE panel below the phrase card (its own
         # frame, not a sub-section of it), shown only when a translation language
@@ -311,6 +313,8 @@ class TrainerView:
             self.translation_frame, text="—", font=(FONT_FAMILY, 11),
             fg=THEME["text_dim"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
         self.translation_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
+        # Right-click the translation to copy it (independently of the phrase).
+        self._bind_copy_menu(self.translation_label)
         # Force the readonly combobox to render its persisted value: a readonly
         # ttk.Combobox does not always paint the initial textvariable value until
         # the user opens the list, which made a loaded language look unselected
@@ -565,6 +569,35 @@ class TrainerView:
         language was switched — the translation arrives with the next phrase).
         """
         self.translation_label.config(text=text.strip() if text and text.strip() else "—")
+
+    # ------------------------------------------------------------------
+    # Copy-to-clipboard (right-click menu on the phrase / translation)
+    # ------------------------------------------------------------------
+    def _bind_copy_menu(self, label: tk.Label):
+        """Attach a right-click 'Copy' menu that copies ``label``'s own text.
+
+        Phrase and translation get their own binding, so each is copied
+        independently of the other.
+        """
+        label.bind("<Button-3>", lambda event: self._show_copy_menu(event, label))
+
+    def _show_copy_menu(self, event, label: tk.Label):
+        """Pop up a one-item 'Copy' menu for the clicked label, if it has text."""
+        text = label.cget("text").strip()
+        # Nothing useful to copy from an empty card or the "—" placeholder.
+        if not text or text == "—":
+            return
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Copy", command=lambda: self._copy_text(text))
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _copy_text(self, text: str):
+        """Replace the clipboard contents with ``text``."""
+        self.root.clipboard_clear()
+        self.root.clipboard_append(text)
 
     def refresh_translation_ui(self):
         """Sync the translation panel and selector to the current UI state.

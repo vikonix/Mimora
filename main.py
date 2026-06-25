@@ -486,6 +486,11 @@ class PronunciationTrainerGUI:
         language = self.view.get_translation_language()
         logging.info(f"Translation language changed to {language!r}.")
         self._persist_setting("translation_language", language)
+        # The cached translation belonged to the previous language, so drop it and
+        # blank the panel to "—"; the next generated phrase fills it for the new
+        # language (translations are applied to the next phrase, like voice/length).
+        self.current_translation = ""
+        self.view.set_translation("")
         self.view.refresh_translation_ui()
         # Return focus to the window so the spacebar push-to-talk keeps working
         # (a focused combobox would otherwise capture the spacebar).
@@ -546,6 +551,9 @@ class PronunciationTrainerGUI:
                 return
 
             self.current_phrase = phrase
+            # Translation is filled by the dedicated translator (next step); until
+            # it is wired in, the panel shows "—" whenever a language is selected.
+            self.current_translation = ""
             self.current_voice = voice
             self.reference_audio = reference_audio
             if DEBUG_DUMP_RECORDINGS:
