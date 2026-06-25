@@ -56,6 +56,8 @@ _KNOWN_USER_KEYS = {
     "show_pitch_chart",
     "show_energy_chart",
     "show_face",
+    "silence_timeout",
+    "silence_threshold",
 }
 for _key in _USER:
     if not _key.startswith("_") and _key not in _KNOWN_USER_KEYS:
@@ -136,6 +138,18 @@ TARGET_LANG_CODE = "en"  # ISO code used for Whisper transcription routing
 # =====================================================================
 # Safety threshold to prevent infinite recording loops if a key gets physically stuck
 MAX_RECORD_SECONDS = _num("max_record_seconds", 20, minimum=1)
+
+# Recording now starts on a single press and stops on its own after the speaker
+# falls silent (recorder.py runs the VAD on the capture thread). These two tune
+# that auto-stop; both are read from settings.json so they can be adjusted to a
+# room/mic without code changes.
+#   silence_timeout   — seconds of continuous silence (after speech has begun)
+#                       before the take is finalized automatically.
+#   silence_threshold — RMS level (0..1) at or above which a chunk counts as
+#                       speech rather than silence. Matched to the recorder's
+#                       AUDIO_MIN_PEAK_THRESHOLD scale; raise it in a noisy room.
+SILENCE_TIMEOUT = _num("silence_timeout", 3.0, minimum=0.5)
+SILENCE_THRESHOLD = _num("silence_threshold", 0.02, minimum=0.0)
 
 # Hardware Acceleration setup — the value detected by hwconfig wins; otherwise
 # loader.detect_device probes torch directly (and does not import torch at all

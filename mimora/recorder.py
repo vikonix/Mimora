@@ -109,19 +109,36 @@ class AudioRecorder:
     Usage: start() opens the capture thread, stop() asks it to finish, join()
     waits for it, get_audio() returns the take as one 16 kHz float32 array.
 
-    Both callbacks are invoked on the capture thread, so GUI callers must
+    All callbacks are invoked on the capture thread, so GUI callers must
     marshal any widget work onto the Tk main thread themselves (root.after):
         on_max_duration  — the take hit config.MAX_RECORD_SECONDS; the caller
                            is expected to route this through its normal stop
                            path so the take is finalized like a manual stop.
         on_stream_error  — the input stream failed; recording is already
                            flagged off, the caller only restores its UI.
+        on_silence_stop  — the speaker fell silent for config.SILENCE_TIMEOUT
+                           after having started speaking; like on_max_duration,
+                           the caller routes this through its normal stop path
+                           so the take is finalized exactly like a manual stop.
+        on_level         — periodic live input level (RMS, 0..1) while a take
+                           is in progress, throttled to ~20 Hz. Lets the UI show
+                           that the mic is hearing, so the auto-stop does not
+                           feel like a black box. Best-effort: never blocks the
+                           capture loop, exceptions are swallowed.
     """
 
+    # How often (seconds) the live input level is reported via on_level. ~20 Hz
+    # is smooth enough for a level indicator without flooding the Tk event queue.
+    LEVEL_EMIT_INTERVAL_SEC = 0.05
+
     def __init__(self, on_max_duration: Callable[[], None],
-                 on_stream_error: Callable[[], None]):
+                 on_stream_error: Callable[[], None],
+                 on_silence_stop: Callable[[], None],
+                 on_level: Callable[[float], None]):
         self._on_max_duration = on_max_duration
         self._on_stream_error = on_stream_error
+        self._on_silence_stop = on_silence_stop
+        self._on_level = on_level
 
         self.is_recording = False
         self.record_lock = threading.Lock()
@@ -269,6 +286,22 @@ class AudioRecorder:
                     stream.close()  # don't leak the never-started stream
                     raise
 
+            # Voice-activity state for the silence auto-stop. We measure the
+            # level of newly arrived chunks here on the poll thread (never in the
+            # realtime callback, which must not do this much work):
+            #   processed       — how many chunks we have already measured, so we
+            #                     only look at the ones appended since last poll.
+            #   speech_started  — lead-in grace: silence is ignored until the
+            #                     speaker first crosses the speech threshold, so a
+            #                     slow start never clips the take before it begins.
+            #   last_voice_time — wall-clock of the most recent above-threshold
+            #                     chunk; the take auto-stops once the gap since it
+            #                     exceeds config.SILENCE_TIMEOUT.
+            #   last_level_emit — throttles on_level to LEVEL_EMIT_INTERVAL_SEC.
+            processed = 0
+            speech_started = False
+            last_voice_time = start_time
+            last_level_emit = 0.0
             try:
                 while True:
                     while callback_warnings:
@@ -278,6 +311,34 @@ class AudioRecorder:
                         still_recording = self.is_recording
                     if not still_recording:
                         break
+
+                    # Measure the chunks that arrived since the last poll. list
+                    # slicing is safe against the appending callback under the GIL
+                    # (we simply may not see the very newest chunk yet).
+                    total = len(self.recorded_chunks)
+                    if total > processed:
+                        block = np.concatenate(self.recorded_chunks[processed:total], axis=0)
+                        processed = total
+                        rms = float(np.sqrt(np.mean(np.square(block)))) if block.size else 0.0
+                        now = time.time()
+                        if rms >= config.SILENCE_THRESHOLD:
+                            speech_started = True
+                            last_voice_time = now
+                        if now - last_level_emit >= self.LEVEL_EMIT_INTERVAL_SEC:
+                            last_level_emit = now
+                            try:
+                                self._on_level(rms)
+                            except Exception:
+                                logging.exception("on_level callback failed:")
+                        # Auto-stop only after the user has actually started
+                        # speaking, so the initial lead-in pause is never counted.
+                        if speech_started and now - last_voice_time >= config.SILENCE_TIMEOUT:
+                            logging.info("Silence timeout reached; auto-stopping take.")
+                            # Routed through the caller's normal stop path, exactly
+                            # like on_max_duration, so the take is finalized and
+                            # analyzed rather than left stuck in recording state.
+                            self._on_silence_stop()
+                            break
 
                     if time.time() - start_time >= config.MAX_RECORD_SECONDS:
                         logging.info("Maximum recording duration reached.")

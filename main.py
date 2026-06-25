@@ -159,13 +159,18 @@ class PronunciationTrainerGUI:
         self.shutdown_event = threading.Event()
         self.playback_stop_event = threading.Event()
 
-        # Push-to-talk state; the actual capture lives in AudioRecorder.
-        # Both callbacks fire on the capture thread, so they marshal all UI
-        # work onto the Tk main thread via root.after.
-        self.space_is_held = False
+        # Recording is press-to-start / auto-stop (see the recording controls
+        # section). space_down only tracks whether the spacebar is physically
+        # held, so key-autorepeat does not fire repeated toggles — it is no
+        # longer a "hold to record" flag. The actual capture lives in
+        # AudioRecorder; all four callbacks fire on the capture thread, so they
+        # marshal every UI touch onto the Tk main thread via root.after.
+        self.space_down = False
         self.recorder = AudioRecorder(
             on_max_duration=self._on_record_max_duration,
             on_stream_error=self._on_record_stream_error,
+            on_silence_stop=self._on_record_silence_stop,
+            on_level=self._on_record_level,
         )
 
         # Audio processing guard — prevents concurrent analysis runs
@@ -230,8 +235,36 @@ class PronunciationTrainerGUI:
     def bind_events(self):
         self.root.bind("<KeyPress-space>", self.on_keyboard_press)
         self.root.bind("<KeyRelease-space>", self.on_keyboard_release)
+        # Arrow-key shortcuts mirror the four action buttons. Each is gated the
+        # same way the button is: ignored while a text field has focus (so arrows
+        # still move the caret there) and only fired when the matching button is
+        # actually enabled, so a hotkey can never trigger an action the UI is
+        # currently disallowing (e.g. replaying into an open mic).
+        self.root.bind("<Left>", lambda _: self._hotkey(
+            self.view.is_reference_enabled, self.play_reference))
+        self.root.bind("<Right>", lambda _: self._hotkey(
+            self.view.is_generate_enabled, self.on_generate_phrase))
+        self.root.bind("<Up>", lambda _: self._hotkey(
+            self.view.is_test_enabled, self.on_test_reference))
+        self.root.bind("<Down>", lambda _: self._hotkey(
+            self.view.is_user_enabled, self.play_user_recording))
         self.root.bind("<Escape>", lambda _: self.quit_app())
         self.root.protocol("WM_DELETE_WINDOW", self.quit_app)
+
+    def _hotkey(self, is_enabled, action):
+        """Run an arrow-key action if it is allowed right now.
+
+        Mirrors button gating: skip when typing in a text field (let the arrow
+        do its normal caret navigation) and only act when the corresponding
+        button reports itself enabled. Returns "break" when the hotkey fired so
+        Tk does not also apply the default arrow behavior to the focused widget.
+        """
+        if self._typing_in_text_field():
+            return None
+        if is_enabled():
+            action()
+            return "break"
+        return None
 
     # ------------------------------------------------------------------
     # Startup: LLM server + model loading
@@ -339,7 +372,7 @@ class PronunciationTrainerGUI:
     def make_app_ready(self):
         self.app_ready = True
         self.view.enter_app_ready()
-        self.view.append_system_msg("Ready. Generate a phrase, listen, then hold SPACE to repeat it.")
+        self.view.append_system_msg("Ready. Generate a phrase, listen, then press SPACE to repeat it.")
         # Speak a personal greeting first, then auto-generate the first phrase.
         # The name is read here, on the main thread (Tk is not thread-safe).
         name = self.view.get_user_name()
@@ -524,28 +557,46 @@ class PronunciationTrainerGUI:
     # ------------------------------------------------------------------
     # Recording controls (shared recording path)
     # ------------------------------------------------------------------
-    def on_gui_btn_press(self):
-        if not self.space_is_held:
+    def _toggle_recording(self):
+        """One press toggles capture: start a take, or stop the running one.
+
+        Replaces the old hold-to-talk model. A take now starts on a single
+        press and stops on its own after silence (recorder VAD); pressing again
+        while it is running is the manual stop. trigger_recording_start /
+        trigger_recording_stop keep their own guards, so this only routes.
+        """
+        if self.recorder.is_active():
+            self.trigger_recording_stop()
+        else:
             self.trigger_recording_start()
 
+    def on_gui_btn_press(self):
+        self._toggle_recording()
+
     def on_gui_btn_release(self):
-        if self.recorder.is_active() and not self.space_is_held:
-            self.trigger_recording_stop()
+        # No-op: recording is press-to-toggle now, not hold-to-talk. Kept so the
+        # view's button-release binding (ViewCallbacks.on_gui_btn_release) still
+        # has a target.
+        pass
 
     def _typing_in_text_field(self) -> bool:
         """True when a text-input widget owns focus — spacebar should type, not record."""
         return isinstance(self.root.focus_get(), (tk.Entry, tk.Text))
 
     def on_keyboard_press(self, event):
-        if event.keysym == "space" and not self.space_is_held \
+        # Holding the spacebar makes Tk fire KeyPress repeatedly (auto-repeat).
+        # space_down gates those out so one physical press is one toggle; it is
+        # cleared on the matching KeyRelease.
+        if event.keysym == "space" and not self.space_down \
                 and not self._typing_in_text_field():
-            self.space_is_held = True
-            self.trigger_recording_start()
+            self.space_down = True
+            self._toggle_recording()
 
     def on_keyboard_release(self, event):
-        if event.keysym == "space" and self.space_is_held:
-            self.space_is_held = False
-            self.trigger_recording_stop()
+        # Only clears the auto-repeat guard; the take keeps recording until it
+        # auto-stops on silence or the user presses space/clicks the mic again.
+        if event.keysym == "space":
+            self.space_down = False
 
     def _can_record(self) -> bool:
         """Recording is only allowed once a phrase is ready and nothing else is busy."""
@@ -613,6 +664,24 @@ class PronunciationTrainerGUI:
         """
         self.root.after(0, self.view.append_error_msg, "Reached maximum record limit — take cut off.")
         self.root.after(0, self.trigger_recording_stop)
+
+    def _on_record_silence_stop(self):
+        """The take auto-stopped after silence (called on the capture thread).
+
+        Route through the normal stop path on the main thread so the take is
+        finalized and analyzed exactly like a manual stop. Unlike the max-
+        duration cutoff this is the expected, designed ending, so no error is
+        shown.
+        """
+        self.root.after(0, self.trigger_recording_stop)
+
+    def _on_record_level(self, level: float):
+        """Live mic level during a take (called on the capture thread).
+
+        Forwarded to the recording indicator on the Tk main thread so the user
+        can see the mic is hearing them while the silence auto-stop runs.
+        """
+        self.root.after(0, self.view.set_record_level, level)
 
     def _on_record_stream_error(self):
         """The input stream failed (called on the capture thread).

@@ -429,10 +429,22 @@ class TrainerView:
         # line ("bad" tag) still stands out above errors.
         self.feedback_display.tag_configure("error", foreground=THEME["bad"], font=(FONT_FAMILY, 10))
 
+    # Mic button geometry, shared by draw_mic_button and set_record_level.
+    _MIC_CENTER = 50
+    _MIC_R_OUTER = 42
+    _MIC_R_INNER = 34
+    # Live-level mapping for the recording indicator: the fixed outer ring stays
+    # at full radius, and a solid red disc inside it grows with the input level,
+    # from _MIC_LEVEL_MIN_R up to the inner radius (just short of the ring). Input
+    # RMS at or above _MIC_LEVEL_FULL_RMS fills it to the inner radius; it never
+    # shrinks below the min radius, so the mic stays visibly "open" in silence.
+    _MIC_LEVEL_FULL_RMS = 0.08
+    _MIC_LEVEL_MIN_R = 10
+
     def draw_mic_button(self, state):
         self.btn_canvas.delete("all")
-        cx, cy = 50, 50
-        r_outer, r_inner = 42, 34
+        cx = cy = self._MIC_CENTER
+        r_outer, r_inner = self._MIC_R_OUTER, self._MIC_R_INNER
         palette = {
             "loading":   (THEME["mic_loading_bg"], THEME["mic_loading_outline"], "⌛"),
             "idle":      (THEME["bg_accent"], THEME["accent"], "🎤"),
@@ -446,6 +458,38 @@ class TrainerView:
         self.btn_canvas.create_oval(cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner,
                                     fill=bg_color, outline="")
         self.btn_canvas.create_text(cx, cy, text=emoji, font=(FONT_FAMILY, 20), fill=THEME["text_bright"])
+
+    def set_record_level(self, level: float):
+        """Redraw the recording button with a level-driven red fill.
+
+        Recording now stops on its own after silence, so the static red glyph
+        no longer tells the user the mic is actually hearing them. The outer ring
+        is drawn exactly as the recording state (full radius, red); inside it a
+        solid red disc grows with the live input level (``level`` is RMS in 0..1
+        from the recorder): quiet -> a small disc (auto-stop is near), louder ->
+        it fills up to the inner radius, just short of the ring. Leaving the
+        recording state is handled by the next draw_mic_button call
+        (enter_analyzing / idle), which repaints the button from scratch.
+        """
+        cx = cy = self._MIC_CENTER
+        r_outer, r_inner = self._MIC_R_OUTER, self._MIC_R_INNER
+        # Map RMS to a 0..1 fraction, then to the disc radius; clamp so a loud
+        # spike cannot grow the fill past the inner radius (into the ring).
+        frac = max(0.0, min(1.0, level / self._MIC_LEVEL_FULL_RMS))
+        r_level = self._MIC_LEVEL_MIN_R + frac * (r_inner - self._MIC_LEVEL_MIN_R)
+
+        self.btn_canvas.delete("all")
+        # Outer ring: identical to draw_mic_button("recording") — fixed, red.
+        self.btn_canvas.create_oval(cx - r_outer, cy - r_outer, cx + r_outer, cy + r_outer,
+                                    fill="", outline=THEME["bad"], width=3)
+        # Dark inner track, so the red fill is visible shrinking against it.
+        self.btn_canvas.create_oval(cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner,
+                                    fill=THEME["mic_recording_bg"], outline="")
+        # The pulsing level indicator: a solid red disc, min radius -> inner
+        # radius. No glyph on top — the disc itself is the indicator, and an
+        # overlaid emoji's text bounding box does not share the disc's center.
+        self.btn_canvas.create_oval(cx - r_level, cy - r_level, cx + r_level, cy + r_level,
+                                    fill=THEME["bad"], outline="")
 
     # ------------------------------------------------------------------
     # Read accessors (controller queries widget values through these)
@@ -474,6 +518,18 @@ class TrainerView:
     def is_reference_enabled(self) -> bool:
         """True when the Reference replay button is currently clickable."""
         return str(self.ref_btn["state"]) == str(tk.NORMAL)
+
+    def is_generate_enabled(self) -> bool:
+        """True when the New phrase button is currently clickable."""
+        return str(self.generate_btn["state"]) == str(tk.NORMAL)
+
+    def is_test_enabled(self) -> bool:
+        """True when the Test (self-test) button is currently clickable."""
+        return str(self.test_btn["state"]) == str(tk.NORMAL)
+
+    def is_user_enabled(self) -> bool:
+        """True when the My recording replay button is currently clickable."""
+        return str(self.user_btn["state"]) == str(tk.NORMAL)
 
     def get_show_pitch(self) -> bool:
         return bool(self.show_f0.get())
@@ -528,7 +584,7 @@ class TrainerView:
         """Reference done: the user can record, replay or self-test."""
         self.draw_mic_button("idle")
         self.update_status("Your turn", THEME["ready"])
-        self.update_instruction("Hold SPACE or click the mic, then repeat the phrase.")
+        self.update_instruction("Press SPACE or click the mic, then repeat the phrase.")
         self._set_actions(generate=True, reference=True, test=True)
 
     def generation_failed(self, message: str):
@@ -544,7 +600,7 @@ class TrainerView:
         self._set_actions(generate=False, reference=False, user=False, test=False)
         self.draw_mic_button("recording")
         self.update_status("Recording...", THEME["bad"])
-        self.update_instruction("Release when finished speaking.")
+        self.update_instruction("Speak now — recording stops automatically (press again to stop).")
 
     def enter_analyzing(self, status: str = "Analyzing pronunciation..."):
         """Analysis is running (also used for the reference self-test)."""
@@ -563,7 +619,7 @@ class TrainerView:
         self._set_actions(generate=True)
         if has_phrase:
             self._set_actions(reference=True, test=True)
-            self.update_instruction("Hold SPACE or click the mic to repeat the phrase.")
+            self.update_instruction("Press SPACE or click the mic to repeat the phrase.")
         else:
             self.update_instruction("Click 'New phrase' to begin.")
         if has_recording:
