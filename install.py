@@ -95,7 +95,6 @@ HF_MODEL_REPOS = [
     ("facebook/wav2vec2-large-960h", "Wav2Vec2 (acoustic pronunciation engine, ~1.2 GB)"),
     ("facebook/wav2vec2-xlsr-53-espeak-cv-ft", "Wav2Vec2 phoneme engine (espeak IPA ASR, ~1.2 GB)"),
     ("hexgrad/Kokoro-82M", "Kokoro-82M (text-to-speech)"),
-    ("Systran/faster-whisper-small", "faster-whisper small (speech-to-text)"),
 ]
 
 # CUDA wheel series, newest first. We pick the newest series whose CUDA version
@@ -115,10 +114,10 @@ PIP = [sys.executable, "-m", "pip"]
 
 # Distribution names (PyPI names, not import names) that requirements.txt and
 # its subproject files install. Used to detect whether the dependency step has
-# already run. Names with dashes (faster-whisper, scikit-learn, phonemizer-fork,
+# already run. Names with dashes (scikit-learn, phonemizer-fork,
 # python-Levenshtein) are the distribution names importlib.metadata expects.
 REQUIRED_DISTS = [
-    "numpy", "soundfile", "sounddevice", "faster-whisper", "kokoro", "openai",
+    "numpy", "soundfile", "sounddevice", "kokoro", "openai",
     "torch", "transformers", "fastapi", "uvicorn", "llama-cpp-python",
     "torchaudio", "librosa", "scipy", "scikit-learn", "fastdtw",
     "phonemizer-fork", "python-Levenshtein", "panphon",
@@ -1026,4 +1025,30 @@ def main() -> int:
         if args.skip_models:
             report.add("HF model cache", SKIPPED, "--skip-models")
         else:
-            step_prefetch_models(
+            step_prefetch_models(log, confirmer, report)
+
+        # Step 7: GGUF.
+        if args.skip_gguf:
+            report.add("GGUF model", SKIPPED, "--skip-gguf")
+        else:
+            step_download_gguf(log, confirmer, report)
+
+        # Step 8: hardware detection (after torch/llama exist).
+        step_detect_hardware(log, confirmer, report)
+    except InstallError as exc:
+        log.log("")
+        log.log(f"    ABORTED: step '{exc}' failed — stopping the installer "
+                f"so the error is not masked.")
+        finish(log, report, success=False)
+        return 1
+
+    finish(log, report, success=True)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print("\nInterrupted.")
+        sys.exit(130)

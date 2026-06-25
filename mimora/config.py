@@ -111,9 +111,6 @@ loader.ensure_dir(MODEL_CACHE_DIR)
 os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 
 # Repo IDs whose presence in the cache means "fully downloaded".
-# Whisper (Systran/faster-whisper-small) is intentionally absent: STT is
-# disabled (stt.py is kept but never loaded), so its cache must not gate
-# offline mode.
 _CACHED_REPOS = (
     "hexgrad/Kokoro-82M",             # Kokoro TTS (model + voice files)
     "facebook/wav2vec2-large-960h",   # Wav2Vec2 pronunciation model
@@ -132,7 +129,7 @@ if loader.models_cached(Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):
 # Language Configuration
 # =====================================================================
 TARGET_LANGUAGE = "English"
-TARGET_LANG_CODE = "en"  # ISO code used for Whisper transcription routing
+TARGET_LANG_CODE = "en"  # ISO code used for transcription routing
 
 # =====================================================================
 # Controls
@@ -211,23 +208,6 @@ EXTERNAL_N_GPU_LAYERS = _HW.get("EXTERNAL_N_GPU_LAYERS", 20)  # layers on GPU (-
 # alone would not fit), so treat it as a typo rather than passing it through.
 EXTERNAL_N_CTX = int(_num("external_n_ctx",
                                   _HW.get("EXTERNAL_N_CTX", 2048), minimum=256))
-
-# =====================================================================
-# Speech-to-Text (Whisper) Settings
-# =====================================================================
-# NOTE: Whisper STT is currently disabled — main.py neither loads nor warms up
-# STTManager (transcription is done by Wav2Vec2 in pronunciation/acoustic/). The settings
-# below are kept so stt.py can be re-enabled without changes.
-WHISPER_MODEL = "small"
-WHISPER_BEAM_SIZE = 1         # Beam size 1 provides optimal speed at temperature 0.0
-WHISPER_NO_SPEECH_THRESHOLD = 0.45
-WHISPER_CPU_THREADS = _HW.get("WHISPER_CPU_THREADS", 4)  # CPU inference threads
-
-# Context conditioning instruction guiding Whisper's spelling logic
-WHISPER_INITIAL_PROMPT = (
-    f"This is a conversation with a {TARGET_LANGUAGE} tutor. "
-    f"The speaker is practicing simple phrases."
-)
 
 # =====================================================================
 # English Accent
@@ -512,7 +492,6 @@ AUDIO_LOCK = threading.Lock()
 
 # Pipeline sample rate: mic captures are downsampled to this rate, and it is
 # what playback of recordings and Wav2Vec2 pronunciation analysis expect.
-# (Equals the 16 kHz Whisper would also require if STT were re-enabled.)
 AUDIO_SAMPLE_RATE = 16_000
 
 AUDIO_CHANNELS = 1           # Mono for both recording and playback

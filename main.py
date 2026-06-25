@@ -51,9 +51,6 @@ warnings.filterwarnings("ignore", message="dropout option adds dropout.*")
 warnings.filterwarnings("ignore", message=".*weight_norm.*deprecated.*")
 
 from mimora import config, prosody
-# Whisper STT is disabled: mimora/stt.py is not imported, so faster-whisper
-# is never loaded and no VRAM/start-up time is spent on it. Transcription is
-# done by Wav2Vec2 in pronounce/. Re-enable by importing STTManager again.
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.audio_io import KOKORO_SAMPLE_RATE

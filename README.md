@@ -43,7 +43,6 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 | `pronunciation/acoustic/calibrate.py` | On-request scoring calibration: reads the per-attempt samples from `logs/pronounce_samples.jsonl` and writes the acoustic floor to `pronunciation/acoustic/calibration.json`. |
 | `mimora/tts.py` | `TTSManager` — Kokoro TTS. `synthesize()` returns the waveform; `play_array()` plays any waveform (reference at 24 kHz, your recording at 16 kHz). `loudness_envelope()` precomputes the per-frame mouth-openness track used by the face. |
 | `mimora/face_widget.py` | `FaceWidget` — schematic articulation face (Tk Canvas). Talking mouth driven from a precomputed loudness track while audio plays; smiley reflecting the score when idle. Stdlib `tkinter` only. |
-| `mimora/stt.py` | `STTManager` — faster-whisper speech-to-text (loaded at startup; kept available for future use). |
 | `mimora/llm.py` | `LLMManager` — OpenAI-compatible client. `generate_phrase()` produces one practice phrase per request. |
 | `mimora/config.py` | All configuration: device, model names, score threshold, practice-text path, phrase-generation settings, audio settings. |
 | `llm_server/server.py` | Standalone FastAPI server loading GGUF models via `llama_cpp`; runs as a separate process to avoid CUDA contention. See [`llm_server/README.md`](llm_server/README.md). |
@@ -63,14 +62,13 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 ### Models
 
 `install.py` pre-downloads all of these (see [Quick install](#quick-install-script)).
-Otherwise the three Hugging Face models are fetched automatically on first run,
+Otherwise the two Hugging Face models are fetched automatically on first run,
 and only the GGUF chat model must be obtained manually.
 
 | Model | Used by | Notes |
 |---|---|---|
 | `facebook/wav2vec2-large-960h` | pronunciation analysis | ~1.2 GB; via `install.py` or on first run |
 | Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech | via `install.py` or on first run |
-| faster-whisper `small` | speech-to-text | via `install.py` or on first run |
 | A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | via `install.py`, or **download manually** into `models/` |
 
 ---
@@ -255,7 +253,6 @@ Three torch models (Wav2Vec2, Kokoro) plus `llama_cpp` can compete for VRAM on a
 
 - **[OpenPronounce](https://github.com/Halleck45/OpenPronounce)** (MIT) — the pronunciation-scoring core reused in `pronunciation/acoustic/`.
 - **[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)** — text-to-speech.
-- **[faster-whisper](https://github.com/SYSTRAN/faster-whisper)** — speech-to-text.
 - **[Wav2Vec2](https://huggingface.co/facebook/wav2vec2-large-960h)** (Hugging Face Transformers) — acoustic embeddings and transcription.
 - **[llama.cpp](https://github.com/ggerganov/llama.cpp)** / **[llama-cpp-python](https://github.com/abetlen/llama-cpp-python)** — local LLM inference.
 

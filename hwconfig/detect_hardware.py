@@ -332,7 +332,6 @@ def build_config(hardware: dict) -> dict:
         "EXTERNAL_N_GPU_LAYERS": n_gpu_layers,
         "EXTERNAL_N_CTX": 4096 if llm_vram >= 8 else 2048,
         "WAV2VEC2_DEVICE": "cuda" if torch_vram >= 6 else "cpu",
-        "WHISPER_CPU_THREADS": max(2, min(8, cores // 2)),
         # null = system default device, which is the right choice on most
         # machines; the indices of all devices are listed under "hardware".
         "AUDIO_INPUT_DEVICE": None,
