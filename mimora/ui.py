@@ -175,7 +175,7 @@ class TrainerView:
         self.status_label.pack(side=tk.LEFT, padx=15, pady=4)
 
         self.stats_label = tk.Label(self.status_bar,
-                                    text=f"Last score: -- | Pass ≥ {config.PRONUNCIATION_SCORE_THRESHOLD:.0f}",
+                                    text="Score: - (-)",
                                     font=(FONT_FAMILY, 9), fg=THEME["text_dim"], bg=THEME["bg_panel"])
         self.stats_label.pack(side=tk.RIGHT, padx=15, pady=4)
 
@@ -656,9 +656,29 @@ class TrainerView:
     def update_instruction(self, text: str):
         self.instruction_label.configure(text=text)
 
-    def update_score_stats(self, score: float):
-        self.stats_label.configure(
-            text=f"Last score: {score:.0f} | Pass ≥ {config.PRONUNCIATION_SCORE_THRESHOLD:.0f}")
+    def update_score_stats(self, score: float, bucket: int = -1):
+        """Show the raw score and its 0-5 bucket: ``Score: 85 (4)``.
+
+        The phoneme engine supplies a bucket (0-5); the acoustic engine leaves
+        ``bucket == -1``, shown as ``Score: 55 (-)`` (a dash instead of ``-1``).
+        """
+        bucket_text = str(bucket) if bucket >= 0 else "-"
+        self.stats_label.configure(text=f"Score: {score:.0f} ({bucket_text})")
+
+    # Qualitative rating bands for the status line (§10), replacing the old
+    # Passed/Keep-practicing copy. Bands run on the raw 0-100 score and the
+    # colour escalates with quality, so the status line, the face (neutral at
+    # 50) and the Score bar all tell a consistent story.
+    def _quality_label(self, score: float) -> tuple[str, str]:
+        if score < 40:
+            return "Weak", THEME["bad"]
+        if score < 55:
+            return "Poor", THEME["bad"]
+        if score < 70:
+            return "OK", THEME["warn"]
+        if score < 85:
+            return "Good", THEME["good"]
+        return "Excellent", THEME["good"]
 
     # ------------------------------------------------------------------
     # Prosody drawing
@@ -760,14 +780,9 @@ class TrainerView:
         # Reflect the score on the face: above 50 smiles, below frowns, 50 flat.
         self.face.set_score(result.score)
         self.feedback_display.configure(state=tk.NORMAL)
-        tag = "good" if result.passed else "bad"
-        # Phoneme engine grades on a coarse 0-5 bucket (task §4); the acoustic engine
-        # leaves bucket == -1, so it keeps the raw 0-100 line.
-        if getattr(result, "bucket", -1) >= 0:
-            self.feedback_display.insert(tk.END, f"Score: {result.bucket}/5 ", tag)
-        else:
-            self.feedback_display.insert(tk.END, f"Score: {result.score:.0f}/100 ", tag)
-        self.feedback_display.insert(tk.END, "(passed)\n" if result.passed else "(try again)\n", tag)
+        # The numeric score moved out of this panel: the raw score/bucket now lives
+        # in the status bar (§1) and the qualitative label (§10). This panel keeps
+        # only the actionable Phrase/Heard breakdown.
         # First line: the target phrase, highlighting what was said well (green)
         # vs mispronounced (red). Driven by the engine-neutral reference_words
         # tags; falls back to the raw phrase if an engine left them empty.
@@ -813,16 +828,16 @@ class TrainerView:
         self.root.update_idletasks()  # ensure the canvases have a real width/height
         self._redraw_prosody()
 
-        self.update_score_stats(result.score)
+        self.update_score_stats(result.score, getattr(result, "bucket", -1))
 
         # Re-enable everything disabled while recording: replay buttons (both
         # signals exist now), the self-test and new-phrase generation.
         self._set_actions(generate=True, reference=True, user=True, test=True)
         self.draw_mic_button("idle")
 
+        quality, quality_color = self._quality_label(result.score)
+        self.update_status(quality, quality_color)
         if result.passed:
-            self.update_status("Passed!", THEME["good"])
             self.update_instruction("Nice! Click 'New phrase' to continue, or repeat to refine.")
         else:
-            self.update_status("Keep practicing", THEME["warn"])
             self.update_instruction("Try again: hold SPACE or click the mic to repeat. ▶ Reference replays the example.")
