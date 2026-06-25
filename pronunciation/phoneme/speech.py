@@ -590,6 +590,38 @@ def _score_from_distance(per_phone_distance: float, bad: float, good: float) -> 
     return round(max(0.0, min(1.0, accuracy)) * 100.0, 1)
 
 
+def _weak_phonemes(pairs: List[Tuple[str, str]],
+                   max_count: int = 3) -> List[Dict[str, Any]]:
+    """The reference phones pronounced worst, for the GUI's "work on these" line (§11).
+
+    For every reference phone in the alignment (substitution or deletion) measure
+    an error severity in [0, 1]: the feature distance to what was heard, or 1.0
+    when the phone was dropped entirely. Phones under ``RECALL_MAX_DIST`` count as
+    correct (same threshold the "Heard" line uses) and are skipped. The rest are
+    aggregated by symbol -- severities summed, so a phone that is both frequent
+    and badly missed rises to the top -- and the worst ``max_count`` are returned,
+    most-to-least severe, each ``{"phoneme", "severity", "count"}``.
+
+    Insertions (``ref_sym == ""``) have no reference phone to blame and are
+    ignored. Returns an empty list for a clean read.
+    """
+    totals: Dict[str, Dict[str, Any]] = {}
+    for ref_sym, hyp_sym in pairs:
+        if not ref_sym:                       # insertion: nothing to attribute
+            continue
+        severity = 1.0 if not hyp_sym else _substitution_cost(ref_sym, hyp_sym)
+        if severity < RECALL_MAX_DIST:        # close enough -> counts as correct
+            continue
+        entry = totals.setdefault(ref_sym, {"severity": 0.0, "count": 0})
+        entry["severity"] += severity
+        entry["count"] += 1
+    ranked = sorted(totals.items(), key=lambda kv: kv[1]["severity"], reverse=True)
+    return [
+        {"phoneme": sym, "severity": round(v["severity"], 4), "count": v["count"]}
+        for sym, v in ranked[:max_count]
+    ]
+
+
 def _phoneme_recall(pairs: List[Tuple[str, str]]) -> float:
     """Fraction of reference phones actually produced, read off the alignment."""
     recalled = 0
@@ -930,6 +962,7 @@ def analyze(user_audio: np.ndarray,
         word_diff=word_diff,
         reference_words=reference_words,
         recognized_units=recognized_units,
+        weak_phonemes=_weak_phonemes(result.pairs),
         bucket=bucket,
         user_percent=user_percent,
         per_phone_distance=result.per_phone_distance,

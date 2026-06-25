@@ -68,6 +68,11 @@ class PronunciationResult:
     # Units are *words* for the acoustic engine and *phonemes* for the phoneme
     # engine; the GUI renders both the same way, so the "Heard" line works for both.
     recognized_units: List[Dict[str, Any]] = field(default_factory=list)
+    # weak_phonemes: the few reference phones pronounced worst, most-to-least
+    # severe, each {"phoneme", "severity", "count"} (§11). The phoneme engine
+    # fills this; the acoustic engine leaves it empty (no per-phone breakdown),
+    # so the GUI falls back gracefully.
+    weak_phonemes: List[Dict[str, Any]] = field(default_factory=list)
 
     # --- Acoustic-engine diagnostics (pronunciation.acoustic); safe to ignore elsewhere. ---
     acoustic_distance: int = 0                     # total Wav2Vec2-embedding DTW distance

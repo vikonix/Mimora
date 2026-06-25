@@ -816,4 +816,8 @@ def analyze(user_audio: np.ndarray,
         reference_words=reference_word_tags(expected_text, differences["words_with_errors"]),
         recognized_units=[{"unit": t["word"], "correct": t["correct"]}
                           for t in heard_word_tags(transcription, expected_text)],
+        # The acoustic engine has no per-phone breakdown, so it cannot rank weak
+        # phonemes (§11); passed explicitly (empty) to keep the result API uniform
+        # with the phoneme engine. The GUI falls back to its "Heard" line here.
+        weak_phonemes=[],
     )

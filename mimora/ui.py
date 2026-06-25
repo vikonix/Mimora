@@ -333,8 +333,13 @@ class TrainerView:
         # height, with the articulation face centred inside. The face fill uses
         # the brightest theme colour and its features the panel colour, so it
         # reads as a white face on dark themes and a dark face on light ones.
-        self.face_frame = tk.Frame(prosody_body, bg=THEME["bg_panel"],
+        self.face_frame = tk.Frame(prosody_body, width=105, bg=THEME["bg_panel"],
                                    highlightthickness=1, highlightbackground=THEME["border"])
+        # Fix the panel width at 105px: turn off geometry propagation so the
+        # FaceWidget inside cannot stretch the frame to its own requested width
+        # (§3). Height still comes from fill=Y (the charts row), and the face
+        # stays circular/centred for whatever box it gets.
+        self.face_frame.pack_propagate(False)
         self.face = FaceWidget(self.face_frame, size=110, bg=THEME["bg_panel"],
                                face_color=THEME["text_bright"], ink=THEME["bg_panel"])
         # Let the charts column decide the row height: a tiny requested height
@@ -663,7 +668,10 @@ class TrainerView:
         ``bucket == -1``, shown as ``Score: 55 (-)`` (a dash instead of ``-1``).
         """
         bucket_text = str(bucket) if bucket >= 0 else "-"
-        self.stats_label.configure(text=f"Score: {score:.0f} ({bucket_text})")
+        # Colour the score by the same quality band as the status line (§10), so
+        # the two score read-outs always agree visually.
+        _, color = self._quality_label(score)
+        self.stats_label.configure(text=f"Score: {score:.0f} ({bucket_text})", fg=color)
 
     # Qualitative rating bands for the status line (§10), replacing the old
     # Passed/Keep-practicing copy. Bands run on the raw 0-100 score and the
@@ -802,22 +810,34 @@ class TrainerView:
                 self.feedback_display.insert(tk.END, token + " ", "text")
         self.feedback_display.insert(tk.END, "\n")
 
-        # Second line: what was recognised, unit by unit (words for the acoustic
-        # engine, phonemes for the phoneme engine), correct ones in green so the
-        # user sees at a glance what landed. Driven by engine-neutral
-        # recognized_units; falls back to the raw transcription.
-        self.feedback_display.insert(tk.END, "Heard: ", "label")
-        # "matches the target" only when there are no mispronounced words AND the take
-        # actually passed -- so a low score can no longer sit next to a "matches ✓".
-        if not result.word_diff and result.passed:
-            self.feedback_display.insert(tk.END, "matches the target ✓\n", "good")
-        elif result.recognized_units:
-            for entry in result.recognized_units:
-                tag = "good" if entry.get("correct") else "bad"
-                self.feedback_display.insert(tk.END, entry["unit"] + " ", tag)
+        # Second line (§11): the few phonemes worth working on, instead of the
+        # full recognised transcription -- the panel now says "what to fix", not
+        # "what was heard". The phoneme engine supplies weak_phonemes (worst
+        # first); the acoustic engine has no per-phone breakdown, so it keeps the
+        # old unit-by-unit "Heard" readout as a meaningful fallback.
+        if result.weak_phonemes:
+            self.feedback_display.insert(tk.END, "Work on: ", "label")
+            for entry in result.weak_phonemes:
+                self.feedback_display.insert(tk.END, f"/{entry['phoneme']}/ ", "bad")
             self.feedback_display.insert(tk.END, "\n")
+        elif getattr(result, "bucket", -1) >= 0:
+            # Phoneme engine with no weak phones -> a clean read.
+            self.feedback_display.insert(tk.END, "Work on: ", "label")
+            self.feedback_display.insert(tk.END, "nothing major — nice work ✓\n", "good")
         else:
-            self.feedback_display.insert(tk.END, f"{result.transcription or '—'}\n", "text")
+            # Acoustic engine fallback: the original recognised-units "Heard" line.
+            self.feedback_display.insert(tk.END, "Heard: ", "label")
+            # "matches the target" only when there are no mispronounced words AND the
+            # take passed -- so a low score can no longer sit next to a "matches ✓".
+            if not result.word_diff and result.passed:
+                self.feedback_display.insert(tk.END, "matches the target ✓\n", "good")
+            elif result.recognized_units:
+                for entry in result.recognized_units:
+                    tag = "good" if entry.get("correct") else "bad"
+                    self.feedback_display.insert(tk.END, entry["unit"] + " ", tag)
+                self.feedback_display.insert(tk.END, "\n")
+            else:
+                self.feedback_display.insert(tk.END, f"{result.transcription or '—'}\n", "text")
 
         self.feedback_display.insert(tk.END, "\n")
         self.feedback_display.configure(state=tk.DISABLED)
