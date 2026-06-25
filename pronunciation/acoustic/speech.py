@@ -704,7 +704,8 @@ def analyze(user_audio: np.ndarray,
             reference_audio: np.ndarray,
             user_sr: int = TARGET_SAMPLE_RATE,
             reference_sr: int = KOKORO_SAMPLE_RATE,
-            voice: Optional[str] = None) -> PronunciationResult:
+            voice: Optional[str] = None,
+            is_reference: bool = False) -> PronunciationResult:
     """Compare a user's spoken attempt against the expected phrase.
 
     Args:
@@ -716,6 +717,11 @@ def analyze(user_audio: np.ndarray,
         voice: Kokoro voice the reference was synthesized with. Only recorded in
             the calibration sample log — the acoustic floor is voice-specific,
             so calibrate.py needs to know which voice produced each sample.
+        is_reference: marks the reference self-test (reference compared with
+            itself). Accepted so the dispatcher can call every engine with the
+            same signature; this engine ignores it — its calibrate.py already
+            excludes self-tests by their near-zero acoustic distance
+            (SELF_TEST_ACOUSTIC), so no flag is needed here.
 
     Returns:
         PronunciationResult with score, per-word errors, prosody and transcription.

@@ -664,6 +664,7 @@ class PronunciationTrainerGUI:
                 user_sr=KOKORO_SAMPLE_RATE,       # reference is Kokoro's 24 kHz output
                 reference_sr=KOKORO_SAMPLE_RATE,
                 voice=self.current_voice,
+                is_reference=True,                # self-test: excluded from GOOD calibration
             )
             # Prosody is the engine-agnostic audio layer: compute it here from the
             # same waveforms so the charts work identically across engines.
