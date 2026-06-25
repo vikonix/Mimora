@@ -58,6 +58,7 @@ _KNOWN_USER_KEYS = {
     "show_face",
     "silence_timeout",
     "silence_threshold",
+    "translation_language",
 }
 for _key in _USER:
     if not _key.startswith("_") and _key not in _KNOWN_USER_KEYS:
@@ -397,6 +398,20 @@ if PHRASE_LENGTH not in ("full", "fragment"):
     print(f"[config] settings.json: phrase_length must be 'full' or "
           f"'fragment', got {PHRASE_LENGTH!r}; using 'full'", file=sys.stderr)
     PHRASE_LENGTH = "full"
+
+# Translation panel: language the practice phrase is translated into and shown
+# under the phrase card. The first ("") choice means "translation off" — it is
+# the default, so the panel and the extra LLM work stay opt-in. The language is
+# passed to the model by its English name (see LLMManager.generate_phrase) and
+# persisted as the chosen label via save_user_setting("translation_language", …).
+TRANSLATION_LANGUAGES = ("", "Russian", "Ukrainian", "Spanish", "French",
+                         "German", "Italian", "Chinese", "Japanese")
+TRANSLATION_LANGUAGE = _USER.get("translation_language", "")
+if TRANSLATION_LANGUAGE not in TRANSLATION_LANGUAGES:
+    print(f"[config] settings.json: translation_language must be one of "
+          f"{TRANSLATION_LANGUAGES}, got {TRANSLATION_LANGUAGE!r}; using '' "
+          f"(translation off)", file=sys.stderr)
+    TRANSLATION_LANGUAGE = ""
 
 # =====================================================================
 # Prosody panel (UI state)

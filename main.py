@@ -182,6 +182,10 @@ class PronunciationTrainerGUI:
         self.is_generating = False
         self._closing = False  # guards quit_app against double invocation
         self.current_phrase: Optional[str] = None
+        # Translation of the current phrase shown under the phrase card. Filled by
+        # the phrase generator (§6) when a translation language is selected; kept
+        # beside current_phrase so the two are always shown together.
+        self.current_translation: str = ""
         # Kokoro voice the current reference was synthesized with (logged with
         # every analysis sample — the acoustic calibration is voice-specific).
         self.current_voice: str = config.KOKORO_VOICE
@@ -218,6 +222,7 @@ class PronunciationTrainerGUI:
             on_gui_btn_release=self.on_gui_btn_release,
             on_user_name_changed=self.on_user_name_changed,
             on_length_changed=self.on_length_changed,
+            on_translation_language_changed=self.on_translation_language_changed,
             on_voice_changed=self.on_voice_changed,
             on_speed_changed=self.on_speed_changed,
             on_show_face_toggled=self.on_show_face_toggled,
@@ -462,10 +467,29 @@ class PronunciationTrainerGUI:
         """Regenerate the phrase when the desired length changes."""
         logging.info(f"Phrase length changed to {self.view.get_length_label()!r}.")
         self._persist_setting("phrase_length", self._selected_length())
+        # The translation panel and selector depend on the length mode (fragments
+        # are not translated), so reconcile them before anything else.
+        self.view.refresh_translation_ui()
         # Return focus to the window so the spacebar push-to-talk keeps working.
         self.root.focus_set()
         if self.app_ready and not self.is_generating:
             self.on_generate_phrase()
+
+    def on_translation_language_changed(self, event=None):
+        """Persist the chosen translation language and reflect it in the panel.
+
+        The new language is applied to the *next* generated phrase (matching how
+        voice/length changes behave); the current phrase is not re-translated, so
+        the panel shows '—' until then. Only the panel visibility and the saved
+        setting change here.
+        """
+        language = self.view.get_translation_language()
+        logging.info(f"Translation language changed to {language!r}.")
+        self._persist_setting("translation_language", language)
+        self.view.refresh_translation_ui()
+        # Return focus to the window so the spacebar push-to-talk keeps working
+        # (a focused combobox would otherwise capture the spacebar).
+        self.root.focus_set()
 
     def on_prosody_charts_toggled(self):
         """Apply a prosody-chart checkbox change and persist both flags.
@@ -497,6 +521,7 @@ class PronunciationTrainerGUI:
 
         self.is_generating = True
         self.current_phrase = None
+        self.current_translation = ""
         self.last_user_audio = None
         self.view.enter_generating()
 
@@ -542,7 +567,7 @@ class PronunciationTrainerGUI:
             self.root.after(0, self._phrase_generation_failed, f"Error: {e}")
 
     def _show_new_phrase(self, phrase: str):
-        self.view.enter_reference_playing(phrase)
+        self.view.enter_reference_playing(phrase, self.current_translation)
         self.view.append_system_msg(f"New phrase: {phrase}")
 
     def _phrase_ready(self):

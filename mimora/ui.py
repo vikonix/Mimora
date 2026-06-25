@@ -52,6 +52,7 @@ class ViewCallbacks:
     on_gui_btn_release: Callable[[], None]
     on_user_name_changed: Callable[..., None]
     on_length_changed: Callable[..., None]
+    on_translation_language_changed: Callable[..., None]
     on_voice_changed: Callable[..., None]
     on_speed_changed: Callable[..., None]
     on_show_face_toggled: Callable[[], None]
@@ -121,8 +122,11 @@ class TrainerView:
                              bordercolor=THEME["border"],
                              relief="flat")
         self.style.map("TCombobox",
-                       fieldbackground=[("readonly", THEME["bg_accent"])],
-                       foreground=[("readonly", THEME["text_accent"])])
+                       fieldbackground=[("readonly", THEME["bg_accent"]),
+                                        ("disabled", THEME["bg_main"])],
+                       foreground=[("readonly", THEME["text_accent"]),
+                                   ("disabled", THEME["text_disabled"])],
+                       arrowcolor=[("disabled", THEME["text_disabled"])])
         # The popdown list is a classic Tk Listbox, themed via the option DB.
         self.root.option_add("*TCombobox*Listbox.background", THEME["bg_panel"])
         self.root.option_add("*TCombobox*Listbox.foreground", THEME["text_accent"])
@@ -227,10 +231,25 @@ class TrainerView:
             padx=10, pady=8)
         self.source_text.pack(fill=tk.X, pady=4)
 
-        # Selector row: phrase length, voice and reference-playback speed share
-        # a single line.
+        # Selector row: translation language, phrase length, voice and
+        # reference-playback speed share a single line. Labels are kept terse and
+        # padding tight so all four fit the fixed 600px window width.
         selectors_frame = tk.Frame(source_frame, bg=THEME["bg_main"])
         selectors_frame.pack(anchor=tk.E, pady=(2, 0))
+
+        # Translation-language selector (leftmost). No caption — the value itself
+        # ("Russian", "Spanish", …) names the language; the empty first choice
+        # means "translation off". Selecting a language shows the translation
+        # panel under the phrase card (see refresh_translation_ui); the panel and
+        # the extra LLM work stay off until a language is picked. Disabled in
+        # "Few words" mode, where fragments are not translated.
+        self.translation_var = tk.StringVar(value=config.TRANSLATION_LANGUAGE)
+        self.translation_selector = ttk.Combobox(
+            selectors_frame, textvariable=self.translation_var, state="readonly",
+            width=10, values=config.TRANSLATION_LANGUAGES)
+        self.translation_selector.pack(side=tk.LEFT, padx=(0, 10))
+        self.translation_selector.bind(
+            "<<ComboboxSelected>>", self._cb.on_translation_language_changed)
 
         # Phrase-length selector. "Few words" requests a short fragment instead
         # of a full sentence; changing it regenerates the phrase (see
@@ -242,7 +261,7 @@ class TrainerView:
         self.length_selector = ttk.Combobox(
             selectors_frame, textvariable=self.length_var, state="readonly",
             width=12, values=(LENGTH_FULL, LENGTH_FEW_WORDS))
-        self.length_selector.pack(side=tk.LEFT, padx=(0, 12))
+        self.length_selector.pack(side=tk.LEFT, padx=(0, 10))
         self.length_selector.bind("<<ComboboxSelected>>", self._cb.on_length_changed)
 
         # Voice selector for the reference speech. Changing it regenerates the
@@ -253,12 +272,12 @@ class TrainerView:
         self.voice_selector = ttk.Combobox(
             selectors_frame, textvariable=self.voice_var, state="readonly",
             width=12, values=tuple(config.KOKORO_VOICES))
-        self.voice_selector.pack(side=tk.LEFT, padx=(0, 12))
+        self.voice_selector.pack(side=tk.LEFT, padx=(0, 10))
         self.voice_selector.bind("<<ComboboxSelected>>", self._cb.on_voice_changed)
 
         # Lower values slow the reference playback (see play_reference). Stored as
         # the displayed label and parsed back to a float by _selected_speed().
-        tk.Label(selectors_frame, text="Reference speed:", font=(FONT_FAMILY, 9),
+        tk.Label(selectors_frame, text="Speed:", font=(FONT_FAMILY, 9),
                  fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.LEFT, padx=(0, 6))
         # Options come from config so the persisted value is always one of them.
         self.playback_speed = tk.StringVar(value=f"{config.REFERENCE_SPEED:.1f}×")
@@ -271,12 +290,35 @@ class TrainerView:
         self.speed_selector.bind("<<ComboboxSelected>>", self._cb.on_speed_changed)
 
         # 5. Current phrase card
-        phrase_frame = tk.Frame(self.root, bg=THEME["bg_panel"])
-        phrase_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=5)
+        self.phrase_frame = tk.Frame(self.root, bg=THEME["bg_panel"])
+        self.phrase_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=5)
 
-        self.phrase_label = tk.Label(phrase_frame, text="—", font=(FONT_FAMILY, 15, "bold"),
+        self.phrase_label = tk.Label(self.phrase_frame, text="—", font=(FONT_FAMILY, 15, "bold"),
                                      fg=THEME["info"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
-        self.phrase_label.pack(anchor=tk.W, padx=12, pady=(10, 10))
+        # Match the translation card's vertical padding so the two panels are the
+        # same height (the phrase still reads larger via its bigger, bold font).
+        self.phrase_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
+
+        # 5a. Translation card — a SEPARATE panel below the phrase card (its own
+        # frame, not a sub-section of it), shown only when a translation language
+        # is selected (see §4/§5). Same panel background as the phrase card; the
+        # small gap between the two (their pack pady) reads as two independent
+        # cards. Dimmer and smaller text so the phrase stays the focus. The frame
+        # is packed/unpacked right after the phrase card by refresh_translation_ui();
+        # "—" stands in until a translation arrives with the next phrase.
+        self.translation_frame = tk.Frame(self.root, bg=THEME["bg_panel"])
+        self.translation_label = tk.Label(
+            self.translation_frame, text="—", font=(FONT_FAMILY, 11),
+            fg=THEME["text_dim"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
+        self.translation_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
+        # Force the readonly combobox to render its persisted value: a readonly
+        # ttk.Combobox does not always paint the initial textvariable value until
+        # the user opens the list, which made a loaded language look unselected
+        # while its panel was already shown. Then reconcile panel visibility.
+        self.translation_selector.set(config.TRANSLATION_LANGUAGE)
+        # The translation frame is not packed yet — refresh_translation_ui()
+        # decides based on the selected language and phrase-length mode.
+        self.refresh_translation_ui()
 
         # 5b. Prosody panel — pitch (F0) and energy sparklines, you vs reference.
         prosody_frame = tk.Frame(self.root, bg=THEME["bg_main"])
@@ -512,6 +554,39 @@ class TrainerView:
     def get_length_label(self) -> str:
         return self.length_var.get()
 
+    def get_translation_language(self) -> str:
+        """Return the selected translation language label ('' when off)."""
+        return self.translation_var.get()
+
+    def set_translation(self, text: str):
+        """Set the translation panel text, falling back to '—' when empty.
+
+        '—' marks "language is on, but no translation yet" (e.g. right after the
+        language was switched — the translation arrives with the next phrase).
+        """
+        self.translation_label.config(text=text.strip() if text and text.strip() else "—")
+
+    def refresh_translation_ui(self):
+        """Sync the translation panel and selector to the current UI state.
+
+        Shows the panel only when a language is selected and the phrase-length
+        mode is "Full phrase"; "Few words" fragments are not translated, so the
+        panel is hidden and the language selector is greyed out there. Safe to
+        call repeatedly — it reconciles to the current vars without side effects.
+        """
+        is_fragment = (self.length_var.get() == LENGTH_FEW_WORDS)
+        # Grey out the language selector in fragment mode (fragments aren't translated).
+        self.translation_selector.config(state="disabled" if is_fragment else "readonly")
+        show = bool(self.translation_var.get()) and not is_fragment
+        packed = self.translation_frame.winfo_manager() == "pack"
+        if show and not packed:
+            # Insert directly under the phrase card. Top gap of 3 plus the phrase
+            # card's own 5px bottom gap make an ~8px interval between the panels.
+            self.translation_frame.pack(side=tk.TOP, fill=tk.X, padx=20,
+                                        pady=(3, 5), after=self.phrase_frame)
+        elif not show and packed:
+            self.translation_frame.pack_forget()
+
     def get_speed_label(self) -> str:
         return self.playback_speed.get()
 
@@ -573,9 +648,15 @@ class TrainerView:
         self.update_status("Generating phrase (LLM)...", THEME["info"])
         self.update_instruction("Generating a new phrase...")
 
-    def enter_reference_playing(self, phrase: str):
-        """A fresh phrase is shown and its reference is being played."""
+    def enter_reference_playing(self, phrase: str, translation: str = ""):
+        """A fresh phrase is shown and its reference is being played.
+
+        ``translation`` is the phrase rendered in the selected translation
+        language (empty when translation is off or unavailable); it is shown in
+        the panel under the phrase card when a language is active.
+        """
         self.phrase_label.config(text=phrase)
+        self.set_translation(translation)
         self.update_status("Listen to the reference...", THEME["reference"])
         self.draw_mic_button("speaking")
         self.update_instruction("Listening to the example...")
