@@ -146,10 +146,13 @@ MAX_RECORD_SECONDS = _num("max_record_seconds", 20, minimum=1)
 #   silence_timeout   — seconds of continuous silence (after speech has begun)
 #                       before the take is finalized automatically.
 #   silence_threshold — RMS level (0..1) at or above which a chunk counts as
-#                       speech rather than silence. Matched to the recorder's
-#                       AUDIO_MIN_PEAK_THRESHOLD scale; raise it in a noisy room.
+#                       speech rather than silence. Kept low: silence is near-zero
+#                       RMS, while quiet speech may only reach ~0.04, and the level
+#                       is averaged over a whole capture chunk (which dilutes brief
+#                       bursts) — too high a value never arms the silence timer.
+#                       Raise it only if a noisy room keeps the take from stopping.
 SILENCE_TIMEOUT = _num("silence_timeout", 3.0, minimum=0.5)
-SILENCE_THRESHOLD = _num("silence_threshold", 0.02, minimum=0.0)
+SILENCE_THRESHOLD = _num("silence_threshold", 0.01, minimum=0.0)
 
 # Hardware Acceleration setup — the value detected by hwconfig wins; otherwise
 # loader.detect_device probes torch directly (and does not import torch at all

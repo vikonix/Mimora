@@ -115,6 +115,18 @@ WORD_RECALL_MIN = _CALIB.get("word_recall_min", 0.5)
 WORD_GOOD_FRAC = _CALIB.get("word_good_frac", 0.33)
 WORD_BAD_FRAC = _CALIB.get("word_bad_frac", 0.66)
 
+# --- Over-production penalty (BUG-UI-2). The best-cost alignment lets extra/other
+# speech match reference phones for free (insertions cost nothing in recall and in
+# the per-word distance), so a long, completely different utterance cherry-picks a
+# close match for nearly every reference phone and reads all-green with an inflated
+# score. We penalise producing far more phones than the reference asked for: the
+# spoken length is allowed a tolerance band above the reference length, and the
+# excess beyond it scales a [0, 1] penalty applied to both the score and the
+# per-word colour. Normal (in-band) attempts get zero penalty, so calibration of
+# good speech is untouched. Set strength to 0 to disable. ---
+OVERPRODUCTION_TOLERANCE = _CALIB.get("overproduction_tolerance", 0.5)  # free headroom over reference length
+OVERPRODUCTION_STRENGTH = _CALIB.get("overproduction_strength", 1.0)    # how hard the excess is punished
+
 # --- 0-5 bucketization (task §4). Coarsens the noisy raw 0-100 score onto a
 # human-calibrated 0-5 grade so good speech reliably reads 4-5. Cutpoints and the
 # bucket->percent bands live in calibration.json; an empty/absent block disables
@@ -665,7 +677,11 @@ def align_and_score(reference: List[str], spoken: List[str],
     good_anchor = PHONEME_GOOD if good is None else good
     phoneme_score = _score_from_distance(per_phone_distance, bad, good_anchor)
     recall = _phoneme_recall(pairs)
-    score = round(WEIGHT_PHONEME * phoneme_score + WEIGHT_WORD * recall * 100.0, 1)
+    base_score = WEIGHT_PHONEME * phoneme_score + WEIGHT_WORD * recall * 100.0
+    # Punish gross over-production: extra/other speech is otherwise free and floods
+    # the score and per-word colour with spurious matches (BUG-UI-2).
+    penalty = _overproduction_penalty(len(reference), len(spoken))
+    score = round(base_score * (1.0 - penalty), 1)
     return ScoreResult(
         score=score,
         pairs=pairs,
@@ -768,6 +784,35 @@ def _word_level(word_avg: float, good: float, bad: float) -> str:
     return "ok"
 
 
+def _overproduction_penalty(n_reference: int, n_spoken: int) -> float:
+    """Penalty in [0, 1] for producing many more phones than the reference asked.
+
+    Recall and the best-cost alignment leave extra speech free, so a long, totally
+    different utterance cherry-picks a close match for nearly every reference phone
+    and reads all-green with an inflated score (BUG-UI-2). This measures how far the
+    spoken length runs past a tolerance band above the reference length: 0 while
+    within tolerance (normal/accented speech is untouched), rising to 1 as the
+    over-production grows. OVERPRODUCTION_STRENGTH == 0 disables it.
+    """
+    if OVERPRODUCTION_STRENGTH <= 0 or n_reference <= 0:
+        return 0.0
+    excess = (n_spoken - n_reference * (1.0 + OVERPRODUCTION_TOLERANCE)) / n_reference
+    if excess <= 0.0:
+        return 0.0
+    return min(1.0, OVERPRODUCTION_STRENGTH * excess)
+
+
+def _penalised_word_distance(word_avg: float, penalty: float, bad: float) -> float:
+    """Interpolate a word's mean distance toward the ``bad`` anchor by ``penalty``.
+
+    Keeps the three-level colour consistent with the penalised score: at penalty 0
+    the distance is unchanged, at penalty 1 every word reads as ``bad`` (red), so a
+    bloated/other utterance no longer colours green. Words already past ``bad`` are
+    left as-is.
+    """
+    return word_avg + penalty * max(0.0, bad - word_avg)
+
+
 def _reference_word_tags(tokens: List[str], levels: List[str]) -> List[Dict[str, Any]]:
     """One {"word", "level", "correct"} per target token (case/punctuation kept).
 
@@ -858,8 +903,13 @@ def analyze(user_audio: np.ndarray,
     # three-level colour (good/ok/bad) tracks the bucket rather than a lenient recall.
     tokens = expected_text.split()
     _recalled, heard, word_dist = _word_recall(groups, result.pairs)
+    # Same over-production penalty the score uses (BUG-UI-2): nudge each word's
+    # distance toward the bad anchor so a long, completely different utterance
+    # colours red instead of cherry-picking its way to all-green.
+    overprod = _overproduction_penalty(len(reference), len(spoken))
     levels = [
-        _word_level(word_dist[wi], result.good, result.bad_baseline)
+        _word_level(_penalised_word_distance(word_dist[wi], overprod, result.bad_baseline),
+                    result.good, result.bad_baseline)
         for wi in range(len(groups))
     ]
     # A word is an error (red, "you need to pronounce X") only when "bad"; "ok"
@@ -907,11 +957,11 @@ def analyze(user_audio: np.ndarray,
 
     logging.info(
         "[phoneme] score=%.1f -> bucket=%d (%.0f%%) | (phoneme=%.1f recall=%.2f) | "
-        "dist/phone=%.4f (good=%.3f bad=%.3f) | ref=%d spoken=%d | is_ref=%s | voice=%s | "
+        "dist/phone=%.4f (good=%.3f bad=%.3f) | ref=%d spoken=%d overprod=%.2f | is_ref=%s | voice=%s | "
         "bad_words=%s | ref_ipa=%r | asr_ipa=%r",
         result.score, bucket, user_percent, result.phoneme_score, result.recall,
         result.per_phone_distance, result.good, result.bad_baseline,
-        len(reference), len(spoken), is_reference, voice,
+        len(reference), len(spoken), overprod, is_reference, voice,
         words_with_errors, " ".join(reference), transcription,
     )
 
