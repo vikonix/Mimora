@@ -884,9 +884,41 @@ class PronunciationTrainerGUI:
         self.recorder.stop()
         self.recorder.join()
 
+        # Kill the local LLM server subprocess now: os._exit (below) does NOT
+        # terminate children, so without this the llama_cpp server would leak
+        # and keep holding VRAM after we exit.
         self.llm_server.shutdown()
 
-        self.root.destroy()
+        # Hard-exit immediately on the main thread instead of via root.destroy()
+        # + the interpreter's normal finalization. With CUDA + PyTorch loaded,
+        # the native CUDA context is torn down while still live and crashes
+        # inside the C extensions, surfacing as Windows exit code 0xC0000409
+        # (STATUS_STACK_BUFFER_OVERRUN) with no Python traceback.
+        #
+        # os._exit is NOT enough on Windows: it maps to ExitProcess, which still
+        # runs DLL_PROCESS_DETACH for every loaded DLL — and the CUDA runtime's
+        # detach is exactly what crashes. TerminateProcess ends the process at
+        # the OS level without running any DLL detach handlers, so that crash
+        # never runs. The external resources that actually need releasing — the
+        # mic stream and the LLM subprocess — were handled just above; logs are
+        # flushed here first. os._exit is the fallback for non-Windows.
+        logging.info("quit_app: cleanup done, hard-exiting now.")
+        logging.shutdown()
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+            kernel32 = ctypes.windll.kernel32
+            # Declare the signatures: GetCurrentProcess returns a HANDLE (a
+            # 64-bit pointer). Without this, ctypes defaults the result to a
+            # 32-bit c_int and TRUNCATES the pseudo-handle, so TerminateProcess
+            # gets a bad handle, silently fails (returns FALSE without killing
+            # anything), and we fall through to os._exit — which crashes in the
+            # CUDA DLL detach. With the correct types the pseudo-handle (-1) is
+            # passed intact and the process ends at once with exit code 0.
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
+            kernel32.TerminateProcess(kernel32.GetCurrentProcess(), 0)
+        os._exit(0)
 
     def run(self):
         self.root.mainloop()
