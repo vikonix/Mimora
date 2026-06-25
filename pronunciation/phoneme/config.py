@@ -44,10 +44,12 @@ class AnalyzerConfig:
     # Score (0-100) at or above which a repetition is considered acceptable.
     score_threshold: float = 70.0
     # GOOD-anchor mode for the phoneme-quality axis:
+    #   "global"  -- the single PHONEME_GOOD constant from calibration.json (the
+    #                default; the 0-5 bucket cutpoints were calibrated under this
+    #                anchor, so production scores and the buckets stay consistent).
     #   "ceiling" -- per-phrase GOOD = the TTS reference's own per-phone distance,
-    #                so a flawless read maps to 100 for each phrase (the validated
-    #                default; needs the reference audio, which the host passes in).
-    #   "global"  -- the single PHONEME_GOOD constant from calibration.json.
+    #                so a flawless read maps to 100 for each phrase (needs the
+    #                reference audio, which the host passes in).
     # A missing/empty reference silently falls back to "global" (never fails).
     good_mode: str = "global"
     # Directory engine logs are written to (kept symmetric with pronunciation/acoustic/).

@@ -20,6 +20,22 @@ import threading
 from typing import Optional
 import os
 import sys
+
+# Prefer UTF-8 everywhere so non-ASCII (IPA phones, espeak-ng / panphon data) never
+# trips a cp1252 default on Windows. We deliberately do NOT re-exec the interpreter
+# into UTF-8 mode: os.execv detaches stdout under some launchers (the orphaned
+# process then fails any print with "[Errno 22] Invalid argument"). Instead we set
+# the hint for child processes and switch our own console streams to UTF-8 where the
+# stream supports it. The in-process file reads that mattered (panphon's tables) keep
+# their own narrow UTF-8 fallback in pronunciation/phoneme/speech.py (task §2).
+os.environ.setdefault("PYTHONUTF8", "1")
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError, OSError):
+        pass  # stream may be None (pythonw), wrapped by an IDE, or already detached
+
 import warnings
 import logging
 import tkinter as tk

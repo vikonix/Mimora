@@ -13,8 +13,9 @@ Pipeline::
 
 Unlike the acoustic core it needs no per-phrase reference *recording* to score --
 the reference phonemes come from espeak. The reference audio is still accepted and,
-in the default ``good_mode="ceiling"``, recognized once to anchor a flawless read
-to 100 per phrase.
+in the optional ``good_mode="ceiling"``, recognized once to anchor a flawless read
+to 100 per phrase; the default ``good_mode="global"`` scores against the single
+calibrated PHONEME_GOOD (matching how the 0-5 buckets were fit).
 
 Public API mirrors ``pronounce/`` exactly so the dispatcher (task stage B) can
 treat both engines the same:
@@ -363,28 +364,43 @@ def reference_phonemes(text: str, espeak_lang: str) -> List[str]:
 
 
 def reference_word_phonemes(text: str, espeak_lang: str) -> List[List[str]]:
-    """Phonemize ``text`` keeping the phones grouped per word.
+    """Phonemize ``text`` into one phone group **per whitespace token**, in order.
 
-    Flatten with ``[p for w in words for p in w]`` to get ``reference_phonemes``'s
-    sequence. The per-word grouping is what lets the scorer map phone errors back
-    to whole words for the GUI's word-level highlight (task §6).
+    Returns exactly one group per ``text.split()`` token (an empty list for a token
+    that yields no phones, e.g. pure punctuation), so the groups align 1:1 with the
+    display tokens. This is what lets the scorer map phone errors back to the right
+    word for the GUI highlight (task §6).
+
+    Earlier this phonemized the whole sentence and split on espeak's own word
+    boundaries, which desynced from ``text.split()`` whenever espeak split or dropped
+    a token (numbers -> several words, punctuation-only tokens), mis-colouring every
+    word after the divergence. Phonemizing each token separately (one batched espeak
+    call) keeps the boundaries the GUI uses. Flatten with
+    ``[p for w in groups for p in w]`` to recover ``reference_phonemes``'s sequence.
     """
+    tokens = text.split()
+    if not tokens:
+        return []
+
     from phonemizer import phonemize
     from phonemizer.separator import Separator
 
     _ensure_espeak()
-    ipa = phonemize(
-        text,
+    # A list input phonemizes each token independently in a single backend call;
+    # word="" because each item is already one token (no internal boundary needed).
+    ipa_list = phonemize(
+        tokens,
         language=espeak_lang,
         backend="espeak",
         strip=True,
         with_stress=False,
         preserve_punctuation=False,
-        # Separate every phone with a space; mark word boundaries with newline.
-        separator=Separator(phone=" ", word="\n", syllable=""),
+        separator=Separator(phone=" ", word="", syllable=""),
     )
-    words = (_normalize_phones(_tokenize_ipa(word)) for word in ipa.split("\n"))
-    return [word for word in words if word]
+    # Some phonemizer versions return a bare str for a length-1 list; normalize.
+    if isinstance(ipa_list, str):
+        ipa_list = [ipa_list]
+    return [_normalize_phones(_tokenize_ipa(ipa)) for ipa in ipa_list]
 
 
 # =====================================================================
