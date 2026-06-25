@@ -95,6 +95,7 @@ HF_MODEL_REPOS = [
     ("facebook/wav2vec2-large-960h", "Wav2Vec2 (acoustic pronunciation engine, ~1.2 GB)"),
     ("facebook/wav2vec2-xlsr-53-espeak-cv-ft", "Wav2Vec2 phoneme engine (espeak IPA ASR, ~1.2 GB)"),
     ("hexgrad/Kokoro-82M", "Kokoro-82M (text-to-speech)"),
+    ("facebook/nllb-200-distilled-600M", "NLLB-200 distilled 600M (offline translator, ~2.4 GB)"),
 ]
 
 # CUDA wheel series, newest first. We pick the newest series whose CUDA version
@@ -120,7 +121,7 @@ REQUIRED_DISTS = [
     "numpy", "soundfile", "sounddevice", "kokoro", "openai",
     "torch", "transformers", "fastapi", "uvicorn", "llama-cpp-python",
     "torchaudio", "librosa", "scipy", "scikit-learn", "fastdtw",
-    "phonemizer-fork", "python-Levenshtein", "panphon",
+    "phonemizer-fork", "python-Levenshtein", "panphon", "sentencepiece",
 ]
 
 

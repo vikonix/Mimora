@@ -112,8 +112,9 @@ os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 
 # Repo IDs whose presence in the cache means "fully downloaded".
 _CACHED_REPOS = (
-    "hexgrad/Kokoro-82M",             # Kokoro TTS (model + voice files)
-    "facebook/wav2vec2-large-960h",   # Wav2Vec2 pronunciation model
+    "hexgrad/Kokoro-82M",                  # Kokoro TTS (model + voice files)
+    "facebook/wav2vec2-large-960h",        # Wav2Vec2 pronunciation model
+    "facebook/nllb-200-distilled-600M",    # NLLB-200 offline translator (§6)
 )
 
 
@@ -379,11 +380,18 @@ if PHRASE_LENGTH not in ("full", "fragment"):
           f"'fragment', got {PHRASE_LENGTH!r}; using 'full'", file=sys.stderr)
     PHRASE_LENGTH = "full"
 
+# Offline translation engine: a dedicated NLLB-200 model (mimora/translator.py),
+# NOT the chat LLM — the local 3B LLM produced unusable translations (empty CJK,
+# leaked English). NLLB is a 200-language MT model that is small and CPU-friendly.
+# The repo is also listed in _CACHED_REPOS above so offline-mode gating waits for
+# it; the installer pre-fetches it into model_cache/ (see install.py).
+NLLB_TRANSLATOR_MODEL_NAME = "facebook/nllb-200-distilled-600M"
+
 # Translation panel: language the practice phrase is translated into and shown
 # under the phrase card. The first ("") choice means "translation off" — it is
-# the default, so the panel and the extra LLM work stay opt-in. The language is
-# passed to the model by its English name (see LLMManager.generate_phrase) and
-# persisted as the chosen label via save_user_setting("translation_language", …).
+# the default, so the panel and the extra translation work stay opt-in. The
+# label is mapped to a FLORES-200 code for NLLB (see mimora/translator.py) and
+# persisted via save_user_setting("translation_language", …).
 TRANSLATION_LANGUAGES = ("", "Russian", "Ukrainian", "Spanish", "French",
                          "German", "Italian", "Chinese", "Japanese")
 TRANSLATION_LANGUAGE = _USER.get("translation_language", "")
