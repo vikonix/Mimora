@@ -386,6 +386,12 @@ if PHRASE_LENGTH not in ("full", "fragment"):
 # The repo is also listed in _CACHED_REPOS above so offline-mode gating waits for
 # it; the installer pre-fetches it into model_cache/ (see install.py).
 NLLB_TRANSLATOR_MODEL_NAME = "facebook/nllb-200-distilled-600M"
+# Device for the translator. Defaults to CPU on purpose: translation is
+# latency-tolerant (it runs in the background after the phrase is shown and the
+# reference has played), and keeping NLLB off the GPU avoids VRAM contention
+# with Kokoro / Wav2Vec2 / llama_cpp — matching §6's RAM (not VRAM) budget.
+# hwconfig may pin it to "cuda" on a machine with VRAM to spare.
+TRANSLATOR_DEVICE = _HW.get("TRANSLATOR_DEVICE") or "cpu"
 
 # Translation panel: language the practice phrase is translated into and shown
 # under the phrase card. The first ("") choice means "translation off" — it is

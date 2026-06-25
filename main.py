@@ -55,6 +55,7 @@ from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.audio_io import KOKORO_SAMPLE_RATE
 from mimora.tts import TTSManager, loudness_envelope
+from mimora.translator import TranslatorManager
 from mimora.recorder import (
     AudioRecorder,
     DEBUG_DUMP_RECORDINGS,
@@ -194,6 +195,9 @@ class PronunciationTrainerGUI:
 
         # Initialize core modular sub-managers
         self.tts_mgr = TTSManager()
+        # Offline phrase translator (NLLB-200). Loaded lazily: only when a
+        # translation language is selected (see load_components / translate).
+        self.translator_mgr = TranslatorManager()
 
         # LLM backend (used only to generate practice phrases)
         self.llm_backend = config.LLM_BACKEND
@@ -288,6 +292,15 @@ class PronunciationTrainerGUI:
             engine.load_models()
             logging.info("Pronunciation model loaded (engine=%s).", engine.name())
 
+            # Translator (NLLB) is loaded only when a language is selected at
+            # startup, so a session with translation off pays no RAM/time cost.
+            # If the user enables a language later, translate() loads on demand.
+            if config.TRANSLATION_LANGUAGE:
+                self.root.after(0, self.view.append_system_msg,
+                                "Loading translator (NLLB, ~2.4 GB)...")
+                self.translator_mgr.load_model()
+                logging.info("Translator model loaded.")
+
             if self.llm_backend == "local_server":
                 model_name = os.path.basename(config.EXTERNAL_MODEL_PATH)
                 self.root.after(0, self.view.append_system_msg, f"Starting LLM server with {model_name}...")
@@ -306,6 +319,8 @@ class PronunciationTrainerGUI:
             self.root.after(0, self.view.enter_warming_up)
             self.tts_mgr.warm_up()
             engine.warm_up()
+            if config.TRANSLATION_LANGUAGE:
+                self.translator_mgr.warm_up()
             logging.info("Models warmed up.")
 
             self.root.after(0, self.load_practice_text)
@@ -411,6 +426,13 @@ class PronunciationTrainerGUI:
             return self.view.get_voice() or config.KOKORO_VOICE
         except AttributeError:
             return config.KOKORO_VOICE
+
+    def _selected_translation_language(self) -> str:
+        """Return the selected translation-language label, or "" when off."""
+        try:
+            return self.view.get_translation_language() or ""
+        except AttributeError:
+            return ""
 
     def _persist_setting(self, key: str, value):
         """Save one UI setting to settings.json, reporting failure in the UI."""
@@ -532,8 +554,13 @@ class PronunciationTrainerGUI:
     def _generate_and_prompt(self, source_text: str):
         """Generate one phrase, synthesize the reference, and play it. (Background thread.)"""
         try:
-            phrase = self.llm_mgr.generate_phrase(
-                source_text, length=self._selected_length())
+            # Capture the length and translation language once, up front, so the
+            # phrase, its audio, and its translation all stay consistent even if
+            # the user changes a selector mid-generation. Fragments ("Few words")
+            # are not translated.
+            length = self._selected_length()
+            language = self._selected_translation_language()
+            phrase = self.llm_mgr.generate_phrase(source_text, length=length)
             if not phrase:
                 self.root.after(0, self._phrase_generation_failed, "The model returned no phrase. Try again.")
                 return
@@ -548,8 +575,9 @@ class PronunciationTrainerGUI:
                 return
 
             self.current_phrase = phrase
-            # Translation is filled by the dedicated translator (next step); until
-            # it is wired in, the panel shows "—" whenever a language is selected.
+            # Translation is filled later by _translate_into_panel (after the
+            # reference plays); until then the panel shows its "—" placeholder
+            # whenever a language is selected.
             self.current_translation = ""
             self.current_voice = voice
             self.reference_audio = reference_audio
@@ -565,11 +593,35 @@ class PronunciationTrainerGUI:
             self._play_with_face(self.reference_audio, effective_sr,
                                  self._new_playback_event())
 
+            # Re-enable the controls now, before translating: NLLB translation is
+            # latency-tolerant and (on its first call) pays a one-time model load,
+            # so it must not gate the app's readiness. The panel stays at its "—"
+            # placeholder until the translation arrives.
             self.root.after(0, self._phrase_ready)
+            self._translate_into_panel(phrase, language, length)
 
         except Exception as e:
             logging.exception("Phrase generation / prompt error:")
             self.root.after(0, self._phrase_generation_failed, f"Error: {e}")
+
+    def _translate_into_panel(self, phrase: str, language: str, length: str):
+        """Translate *phrase* and push it to the panel. (Background thread.)
+
+        Skips fragments and the "translation off" choice. Guards against a stale
+        result: if a newer phrase has replaced this one while the (CPU)
+        translation ran, the result is dropped, so the panel never shows a
+        translation that does not match the phrase on screen. A translator
+        failure returns "" and simply leaves the placeholder in place.
+        """
+        if not language or length != "full":
+            return
+        translated = self.translator_mgr.translate(phrase, language)
+        # current_phrase is replaced by a fresh generation; if it no longer
+        # matches, this translation is for a superseded phrase — drop it.
+        if not translated or self.current_phrase != phrase:
+            return
+        self.current_translation = translated
+        self.root.after(0, self.view.set_translation, translated)
 
     def _show_new_phrase(self, phrase: str):
         self.view.enter_reference_playing(phrase, self.current_translation)
