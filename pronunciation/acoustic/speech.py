@@ -11,13 +11,13 @@ never synthesizes speech itself and never touches the GUI.
 
 Public API:
     load_models()  -- load Wav2Vec2 weights once (call at mode startup, in a thread).
-    warm_up()      -- run a dummy pass to remove first-call latency (mirrors stt/tts).
+    warm_up()      -- run a dummy pass to remove first-call latency (mirrors tts.py).
     analyze(...)   -- single entry point returning a PronunciationResult.
 
 Design notes:
     * Models load lazily on first use; ``load_models`` only makes that explicit so the
       heavy download/initialisation can happen in a background daemon thread, matching
-      the warm-up pattern in ``stt.py`` / ``tts.py``.
+      the warm-up pattern in ``tts.py``.
     * Settings (model, device, accent, thresholds, log dir, user name) come from
       the library's own ``AnalyzerConfig`` (see pronounce/config.py), read at
       use-time. A host injects its values once with ``pronounce.configure(...)``;

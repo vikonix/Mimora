@@ -104,7 +104,7 @@ if not isinstance(USER_NAME, str):
 #
 # IMPORTANT: huggingface_hub / transformers read these env vars at *import* time,
 # so this block must run before those libraries are imported. config is the first
-# project module imported by main.py (before stt/tts/pronunciation), so it is early
+# project module imported by main.py (before tts/pronunciation), so it is early
 # enough. We use setdefault() so an externally set HF_HOME is respected.
 MODEL_CACHE_DIR = BASE_DIR / "model_cache"
 loader.ensure_dir(MODEL_CACHE_DIR)

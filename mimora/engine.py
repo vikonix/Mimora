@@ -7,8 +7,8 @@ The host (main.py) drives pronunciation through this one module instead of a
 specific engine, so it never knows which backend is active. The backend is chosen
 by ``config.ENGINE`` (set in mimora/config.py):
 
-    "acoustic" -> pronunciation.acoustic  (Wav2Vec2 embeddings + cosine-DTW; default)
-    "phoneme"  -> pronunciation.phoneme   (espeak reference + phoneme ASR + edit distance)
+    "acoustic" -> pronunciation.acoustic  (Wav2Vec2 embeddings + cosine-DTW)
+    "phoneme"  -> pronunciation.phoneme   (espeak reference + phoneme ASR + edit distance; default)
 
 Both backends expose the same small interface (``configure`` / ``load_models`` /
 ``warm_up`` / ``analyze``) and return the shared ``pronunciation.common.PronunciationResult``,
