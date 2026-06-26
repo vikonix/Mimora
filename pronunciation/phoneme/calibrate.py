@@ -43,23 +43,12 @@ import numpy as np
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
-from pronunciation.phoneme import speech, configure, AnalyzerConfig
+from pronunciation.phoneme import speech
 # Composition root: this CLI is the only place in pronunciation/phoneme/ that reads
-# the host application's settings, wiring them in with configure() so the analyzer
-# core stays app-agnostic.
-from mimora import config
-
-
-def _app_config() -> AnalyzerConfig:
-    """Build the analyzer configuration from the Mimora application settings."""
-    return AnalyzerConfig(
-        model_name=config.WAV2VEC2_PHONEME_MODEL_NAME,
-        device=config.WAV2VEC2_DEVICE,
-        espeak_language=config.ESPEAK_LANGUAGE,
-        score_threshold=config.PRONUNCIATION_SCORE_THRESHOLD,
-        log_dir=Path(config.LOG_DIR),
-        user_name=config.USER_NAME,
-    )
+# the host application's settings, wiring them in through the dispatcher's
+# engine.configure("phoneme"), which owns the single app-settings -> AnalyzerConfig
+# mapping, so the analyzer core stays app-agnostic and the mapping is not duplicated here.
+from mimora import config, engine
 
 
 # A sample counts as a "good attempt" when the phrase clearly matched.
@@ -105,8 +94,9 @@ def main() -> int:
     args = parser.parse_args()
 
     # Inject the application's settings so the sample-log path and user name match
-    # the running app.
-    configure(_app_config())
+    # the running app. The explicit "phoneme" keeps calibration on this engine
+    # regardless of config.ENGINE.
+    engine.configure("phoneme")
 
     samples = load_samples()
     samples = [s for s in samples if s.get("user_name", "") == config.USER_NAME]

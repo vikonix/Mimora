@@ -40,24 +40,13 @@ import numpy as np
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
-from pronunciation.acoustic import speech, configure, AnalyzerConfig
+from pronunciation.acoustic import speech
 # Composition root: this calibration CLI is the only place in pronunciation/acoustic/
-# that reads the host application's settings. It wires them into the analyzer with
-# configure() (see _app_config), so the analyzer core stays app-agnostic.
-from mimora import config
-
-
-def _app_config() -> AnalyzerConfig:
-    """Build the analyzer configuration from the Mimora application settings."""
-    return AnalyzerConfig(
-        model_name=config.WAV2VEC2_MODEL_NAME,
-        device=config.WAV2VEC2_DEVICE,
-        espeak_language=config.ESPEAK_LANGUAGE,
-        score_threshold=config.PRONUNCIATION_SCORE_THRESHOLD,
-        acoustic_good=config.PRONUNCIATION_ACOUSTIC_GOOD,
-        log_dir=Path(config.LOG_DIR),
-        user_name=config.USER_NAME,
-    )
+# that reads the host application's settings. It wires them into the analyzer through
+# the dispatcher's engine.configure("acoustic"), which owns the single app-settings ->
+# AnalyzerConfig mapping, so the analyzer core stays app-agnostic and the mapping is
+# not duplicated here.
+from mimora import config, engine
 
 # A sample counts as a "good attempt" when the text clearly matched.
 MAX_WORD_ERROR_RATE = 0.20
@@ -98,8 +87,9 @@ def main() -> int:
     args = parser.parse_args()
 
     # Inject the application's settings into the analyzer before using it, so the
-    # sample-log path, user name and floor default match the running app.
-    configure(_app_config())
+    # sample-log path, user name and floor default match the running app. The
+    # explicit "acoustic" keeps calibration on this engine regardless of config.ENGINE.
+    engine.configure("acoustic")
 
     # The acoustic floor is per practising user, so calibrate only from the
     # current user's attempts (matched on the user_name recorded by

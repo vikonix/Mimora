@@ -51,15 +51,25 @@ def _backend():
     return _module
 
 
-def configure() -> None:
-    """Build the active engine's AnalyzerConfig from app settings and inject it.
+def configure(engine_name: str | None = None) -> None:
+    """Build an engine's AnalyzerConfig from app settings and inject it.
 
     Each engine has its own AnalyzerConfig (different fields and model defaults), so
     the per-engine construction lives here -- the one place that knows both the app
-    settings and which backend is active. Call once at startup before load_models().
+    settings and which backend is active. Call once at startup (no args -> the active
+    engine) before load_models().
+
+    A calibration CLI passes an explicit ``engine_name`` to configure that specific
+    engine regardless of ``config.ENGINE`` (e.g. acoustic/calibrate.py always
+    calibrates "acoustic"), so the per-engine field mapping is not duplicated there.
     """
-    eng = _backend()
-    if name() == "phoneme":
+    if engine_name and engine_name in _BACKENDS:
+        eng = importlib.import_module(_BACKENDS[engine_name])
+        eng_name = engine_name
+    else:
+        eng = _backend()
+        eng_name = name()
+    if eng_name == "phoneme":
         cfg = eng.AnalyzerConfig(
             model_name=config.WAV2VEC2_PHONEME_MODEL_NAME,
             device=config.WAV2VEC2_DEVICE,
