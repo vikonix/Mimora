@@ -15,8 +15,11 @@ works without any host. A host injects its own values **once at startup** with
 pattern; later analysis simply reads whatever is active here.
 
 Data-derived scoring constants (the GOOD anchor, recall threshold, axis weights,
-insertion cap/gate) are NOT here: they live in ``calibration.json`` next to the
-engine so they stay shared with the eval/calibration tooling and out of source.
+insertion cap/gate, buckets) are NOT here: they live in the per-language model
+calibration next to the engine (``<lang>_model_calibration.json``, committed),
+with a machine-local ``calibration.json`` (gitignored) overriding only the GOOD
+anchor per user — so they stay shared with the eval/calibration tooling and out
+of source.
 """
 
 from __future__ import annotations
@@ -44,7 +47,8 @@ class AnalyzerConfig:
     # Score (0-100) at or above which a repetition is considered acceptable.
     score_threshold: float = 70.0
     # GOOD-anchor mode for the phoneme-quality axis:
-    #   "global"  -- the single PHONEME_GOOD constant from calibration.json (the
+    #   "global"  -- the single PHONEME_GOOD anchor from the model calibration,
+    #                optionally overridden per user by calibration.json (the
     #                default; the 0-5 bucket cutpoints were calibrated under this
     #                anchor, so production scores and the buckets stay consistent).
     #   "ceiling" -- per-phrase GOOD = the TTS reference's own per-phone distance,

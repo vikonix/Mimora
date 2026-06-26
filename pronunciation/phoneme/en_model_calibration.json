@@ -66,6 +66,6 @@
     "bucket_target": "accuracy",
     "bucket_spearman_score_vs_human": 0.7503,
     "bucket_n_labeled": 400,
-    "note": "Ported into the phoneme engine from prototypes-pronunciation/calibration.json. pass_bucket=4: a take 'passes' when it lands in bucket 4-5. insertion_conf_min kept explicit (engine defaults it to 0)."
+    "note": "Base (model) calibration for English, committed to the repo. Per-machine user re-anchoring of phoneme_good is written separately to calibration.json (gitignored), which overrides phoneme_good only. pass_bucket=4: a take 'passes' when it lands in bucket 4-5. insertion_conf_min kept explicit (engine defaults it to 0)."
   }
 }

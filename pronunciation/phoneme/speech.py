@@ -32,8 +32,11 @@ Implementation notes:
       scoped UTF-8 default on that error (never triggered when the app runs in
       UTF-8 mode -- set PYTHONUTF8=1 at launch).
     * Scoring constants (GOOD anchor, recall threshold, axis weights, insertion
-      cap/gate) load from a JSON config next to this module;
-      ``config.AnalyzerConfig`` holds only host settings.
+      cap/gate, buckets) load from a per-language model file next to this module
+      (``<lang>_model_calibration.json``, committed), selected by the configured
+      espeak language. A machine-local ``calibration.json`` (gitignored) overrides
+      only ``phoneme_good`` per language and user. ``config.AnalyzerConfig`` holds
+      only host settings.
 
 This module never touches the GUI.
 """
@@ -70,78 +73,175 @@ TARGET_SAMPLE_RATE = 16_000
 # Kokoro synthesises at 24 kHz; used as the default reference sample rate.
 KOKORO_SAMPLE_RATE = 24_000
 
-# Tunable scoring constants live in a JSON config next to this module. A
-# missing/malformed file degrades silently to the literal defaults so scoring
-# never breaks. Keys prefixed with ``_`` (``_meta``) are informational and
-# ignored by the ``.get`` lookups.
-_CALIBRATION_PATH = Path(__file__).resolve().parent / "calibration.json"
+# Tunable scoring constants live in JSON files next to this module, split into two
+# layers so per-user calibration never contaminates the shared engine baseline:
+#   * <lang>_model_calibration.json -- the base (model) calibration: anchors,
+#     buckets, gates and axis weights, fit offline against human labels. Committed
+#     to the repo and selected by the configured espeak language ("en-us" -> "en").
+#   * calibration.json             -- the machine-local user override (gitignored).
+#     Holds only a re-anchored ``phoneme_good`` per language and user, shaped
+#     {lang: {"users": {user_name: {"phoneme_good": float, ...}}}}; it overrides
+#     the model's ``phoneme_good`` and nothing else.
+# A missing/malformed file degrades silently to the literal defaults so scoring
+# never breaks. Keys prefixed with ``_`` (``_meta``) are informational.
+_DIR = Path(__file__).resolve().parent
+_DEFAULT_LANG = "en"
+# Where save_calibration() / phoneme/calibrate.py read and write the user anchor.
+CALIBRATION_FILE = _DIR / "calibration.json"
+
+# Intrinsic scoring constants -- not part of the data-fit calibration, so they
+# stay fixed regardless of language/user.
+BAD_MIN_SPAN = 0.10                                 # keep bad strictly above good
+BAD_BASELINE_DEFAULT = 0.5                          # ceiling when a sequence is empty
 
 
-def _load_calibration() -> dict:
-    """Return the config dict, or ``{}`` if the file is absent/malformed."""
+def _read_json(path: Path) -> dict:
+    """Return a JSON object from *path*, or ``{}`` when absent/malformed."""
     try:
-        with _CALIBRATION_PATH.open(encoding="utf-8") as fh:
+        with path.open(encoding="utf-8") as fh:
             data = json.load(fh)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
 
 
-_CALIB = _load_calibration()
+def _lang_key(espeak_language: str) -> str:
+    """Map an espeak dialect ("en-us"/"en-gb") to a calibration language key ("en")."""
+    return (espeak_language or "").split("-")[0] or _DEFAULT_LANG
 
-# --- Phoneme-quality axis anchors (see _score_from_distance / _bad_baseline). ---
-PHONEME_GOOD = _CALIB.get("phoneme_good", 0.0)      # per-phone distance scored 100
-BAD_MIN_SPAN = 0.10                                 # keep bad strictly above good
-BAD_BASELINE_DEFAULT = 0.5                          # ceiling when a sequence is empty
-BAD_SHRINK_PHONES = _CALIB.get("bad_shrink_phones", 12)   # short-phrase widening strength
-BAD_CEILING = _CALIB.get("bad_ceiling", 0.40)             # conservative "wrong" anchor
 
-# --- Insertion cap and confidence gate (recognizer-hallucination defenses). ---
-INSERTION_CAP_PER_PHONE = _CALIB.get("insertion_cap_per_phone", 0.25)
-INSERTION_CONF_MIN = _CALIB.get("insertion_conf_min", 0.0)   # tau; 0 == argmax baseline
-INSERTION_CONF_AGG = _CALIB.get("insertion_conf_agg", "max")  # "max" | "mean"
+def _model_calibration_path(lang: str) -> Path:
+    """Path of the committed model calibration for *lang* (e.g. en_model_calibration.json)."""
+    return _DIR / f"{lang}_model_calibration.json"
 
-# --- Recall axis and final blend (mirrors the core's quality/word split). ---
-RECALL_MAX_DIST = _CALIB.get("recall_max_dist", 0.13)   # per-phone dist counted as recalled
-WEIGHT_PHONEME = _CALIB.get("weight_phoneme", 0.7)
-WEIGHT_WORD = _CALIB.get("weight_word", 0.3)
-# A reference word is "correct" when at least this fraction of its phones are
-# recalled. Retained for back-compat; the per-word highlight now uses the mean
-# word distance (WORD_*_FRAC below), which agrees with the overall score.
-WORD_RECALL_MIN = _CALIB.get("word_recall_min", 0.5)
-# Three-level per-word highlight cutoffs, as a fraction of the [good, bad] window
-# (0 == flawless, 1 == completely wrong): <= good_frac is "good" (green), >=
-# bad_frac is "bad" (red), in between is "ok" (acceptable / light grey).
-WORD_GOOD_FRAC = _CALIB.get("word_good_frac", 0.33)
-WORD_BAD_FRAC = _CALIB.get("word_bad_frac", 0.66)
 
-# --- Over-production penalty (BUG-UI-2). The best-cost alignment lets extra/other
-# speech match reference phones for free (insertions cost nothing in recall and in
-# the per-word distance), so a long, completely different utterance cherry-picks a
-# close match for nearly every reference phone and reads all-green with an inflated
-# score. We penalise producing far more phones than the reference asked for: the
-# spoken length is allowed a tolerance band above the reference length, and the
-# excess beyond it scales a [0, 1] penalty applied to both the score and the
-# per-word colour. Normal (in-band) attempts get zero penalty, so calibration of
-# good speech is untouched. Set strength to 0 to disable. ---
-OVERPRODUCTION_TOLERANCE = _CALIB.get("overproduction_tolerance", 0.5)  # free headroom over reference length
-OVERPRODUCTION_STRENGTH = _CALIB.get("overproduction_strength", 1.0)    # how hard the excess is punished
+def _load_model_calibration(lang: str) -> dict:
+    """Read the model calibration for *lang*, falling back to English when absent."""
+    data = _read_json(_model_calibration_path(lang))
+    if not data and lang != _DEFAULT_LANG:
+        logging.warning("[phoneme] no model calibration for %r; using %r defaults",
+                        lang, _DEFAULT_LANG)
+        data = _read_json(_model_calibration_path(_DEFAULT_LANG))
+    return data
 
-# --- 0-5 bucketization (task §4). Coarsens the noisy raw 0-100 score onto a
-# human-calibrated 0-5 grade so good speech reliably reads 4-5. Cutpoints and the
-# bucket->percent bands live in calibration.json; an empty/absent block disables
-# bucketing (bucket stays -1 and scoring falls back to the raw threshold). ---
-_BUCKETS = _CALIB.get("buckets", {})
-# Ascending score thresholds; bucket = how many a score clears (0..len).
-BUCKET_CUTPOINTS = [float(c) for c in _BUCKETS.get("cutpoints", [])]
-# bucket (as str) -> [lo, hi] user-facing percent band; the displayed percent is
-# the band midpoint (flat per bucket, so engine noise within a bucket is hidden).
-BUCKET_TO_PERCENT = _CALIB.get("bucket_to_percent", {})
-# A take "passes" at or above this bucket (good speech is bucket 4-5; task §7).
-PASS_BUCKET = _CALIB.get("pass_bucket", 4)
 
-# Where save_calibration() / phoneme/calibrate.py read and write the anchor.
-CALIBRATION_FILE = _CALIBRATION_PATH
+def _user_phoneme_good(lang: str, user_name: str) -> Optional[float]:
+    """The user's re-anchored ``phoneme_good`` for *lang*, or None when uncalibrated.
+
+    User file shape: ``{lang: {"users": {user_name: {"phoneme_good": float, ...}}}}``.
+    """
+    data = _read_json(CALIBRATION_FILE)
+    lang_block = data.get(lang) if isinstance(data, dict) else None
+    users = lang_block.get("users") if isinstance(lang_block, dict) else None
+    entry = users.get(user_name) if isinstance(users, dict) else None
+    if isinstance(entry, dict) and "phoneme_good" in entry:
+        try:
+            return float(entry["phoneme_good"])
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def _apply_model_calibration(calib: dict) -> None:
+    """Bind a model-calibration dict to this module's scoring constants.
+
+    Called at import (with the English defaults, so the library stays usable on its
+    own and the offline unit tests have values) and again by ``_ensure_calibration``
+    once the host's espeak language is known. Keeping the constants as module globals
+    lets the tests patch them with ``mock.patch.object(speech, ...)`` as before.
+    """
+    global PHONEME_GOOD, BAD_SHRINK_PHONES, BAD_CEILING
+    global INSERTION_CAP_PER_PHONE, INSERTION_CONF_MIN, INSERTION_CONF_AGG
+    global RECALL_MAX_DIST, WEIGHT_PHONEME, WEIGHT_WORD, WORD_RECALL_MIN
+    global WORD_GOOD_FRAC, WORD_BAD_FRAC
+    global OVERPRODUCTION_TOLERANCE, OVERPRODUCTION_STRENGTH
+    global BUCKET_CUTPOINTS, BUCKET_TO_PERCENT, PASS_BUCKET
+
+    # Phoneme-quality axis anchor (see _score_from_distance / _bad_baseline).
+    PHONEME_GOOD = calib.get("phoneme_good", 0.0)           # per-phone distance scored 100
+    BAD_SHRINK_PHONES = calib.get("bad_shrink_phones", 12)  # short-phrase widening strength
+    BAD_CEILING = calib.get("bad_ceiling", 0.40)            # conservative "wrong" anchor
+
+    # Insertion cap and confidence gate (recognizer-hallucination defenses).
+    INSERTION_CAP_PER_PHONE = calib.get("insertion_cap_per_phone", 0.25)
+    INSERTION_CONF_MIN = calib.get("insertion_conf_min", 0.0)    # tau; 0 == argmax baseline
+    INSERTION_CONF_AGG = calib.get("insertion_conf_agg", "max")  # "max" | "mean"
+
+    # Recall axis and final blend (mirrors the core's quality/word split).
+    RECALL_MAX_DIST = calib.get("recall_max_dist", 0.13)   # per-phone dist counted as recalled
+    WEIGHT_PHONEME = calib.get("weight_phoneme", 0.7)
+    WEIGHT_WORD = calib.get("weight_word", 0.3)
+    # Retained for back-compat; the per-word highlight uses WORD_*_FRAC below.
+    WORD_RECALL_MIN = calib.get("word_recall_min", 0.5)
+    # Three-level per-word highlight cutoffs, as a fraction of the [good, bad] window
+    # (0 == flawless, 1 == completely wrong): <= good_frac is "good", >= bad_frac is
+    # "bad", in between is "ok".
+    WORD_GOOD_FRAC = calib.get("word_good_frac", 0.33)
+    WORD_BAD_FRAC = calib.get("word_bad_frac", 0.66)
+
+    # Over-production penalty (BUG-UI-2): far more spoken phones than the reference
+    # asked for scales a [0, 1] penalty; in-band attempts get zero. Strength 0 disables.
+    OVERPRODUCTION_TOLERANCE = calib.get("overproduction_tolerance", 0.5)
+    OVERPRODUCTION_STRENGTH = calib.get("overproduction_strength", 1.0)
+
+    # 0-5 bucketization (task §4): coarsen the raw 0-100 score onto a human-calibrated
+    # grade. An empty/absent block disables bucketing (bucket stays -1, raw threshold).
+    buckets = calib.get("buckets", {})
+    # Ascending score thresholds; bucket = how many a score clears (0..len).
+    BUCKET_CUTPOINTS = [float(c) for c in buckets.get("cutpoints", [])]
+    # bucket (as str) -> [lo, hi] user-facing percent band (displayed at the midpoint).
+    BUCKET_TO_PERCENT = calib.get("bucket_to_percent", {})
+    # A take "passes" at or above this bucket (good speech is bucket 4-5; task §7).
+    PASS_BUCKET = calib.get("pass_bucket", 4)
+
+
+# Import-time English defaults so the module is usable standalone (and the offline
+# unit tests have concrete values). _ensure_calibration() reloads per language and
+# applies the user override once a host injects its config via configure().
+_apply_model_calibration(_load_model_calibration(_DEFAULT_LANG))
+# Language/user the constants above currently reflect; None forces the first
+# _ensure_calibration() to (re)load even when the language is the default.
+_loaded_lang: Optional[str] = None
+_loaded_user: Optional[str] = None
+
+
+def _ensure_calibration() -> None:
+    """Load the model + user calibration for the configured language/user, if changed.
+
+    Mirrors the acoustic engine's ``current_acoustic_floor``: the model buckets and
+    anchors follow ``espeak_language``, and a per-user re-anchored ``phoneme_good``
+    (written by calibrate.py) overrides the model default. Reloads only when the
+    language or user actually changes, so steady-state analysis pays nothing.
+    """
+    global _loaded_lang, _loaded_user, PHONEME_GOOD
+    cfg = get_config()
+    lang = _lang_key(cfg.espeak_language)
+    user = cfg.user_name
+    if lang == _loaded_lang and user == _loaded_user:
+        return
+    model = _load_model_calibration(lang)
+    _apply_model_calibration(model)
+    user_good = _user_phoneme_good(lang, user)
+    if user_good is not None:
+        PHONEME_GOOD = user_good
+    # Log exactly what was loaded as JSON, so the effective scoring config is
+    # recoverable from logs/main.log. The model and the user override go on
+    # separate lines. Logged only on a (re)load -- i.e. once at startup and again
+    # if the language/user changes -- so it never floods the per-take analysis lines.
+    logging.info(
+        "[phoneme] model calibration loaded (lang=%s, file=%s): %s",
+        lang, _model_calibration_path(lang).name,
+        json.dumps(model, ensure_ascii=False),
+    )
+    logging.info(
+        "[phoneme] user calibration loaded (lang=%s, user=%r, file=%s): %s",
+        lang, user, CALIBRATION_FILE.name,
+        json.dumps({
+            "user_phoneme_good": user_good,
+            "effective_phoneme_good": PHONEME_GOOD,
+        }, ensure_ascii=False),
+    )
+    _loaded_lang, _loaded_user = lang, user
 
 
 # =====================================================================
@@ -172,28 +272,52 @@ def _append_sample(record: Dict[str, Any]) -> None:
 
 
 def current_phoneme_good() -> float:
-    """The GOOD anchor in effect (the calibrated PHONEME_GOOD)."""
+    """The GOOD anchor in effect for the configured language/user."""
+    _ensure_calibration()
     return PHONEME_GOOD
 
 
 def save_calibration(phoneme_good: float, extra: Optional[Dict[str, Any]] = None) -> None:
-    """Write a new PHONEME_GOOD into calibration.json, preserving the other keys.
+    """Write the current user's re-anchored ``phoneme_good`` into the user calibration.
 
-    Used by phoneme/calibrate.py. Only ``phoneme_good`` and a small ``_meta`` block
-    are updated; buckets / bucket_to_percent / gates are left untouched. The new
-    value is picked up on the next process start (module-load time).
+    Used by phoneme/calibrate.py. Stored under ``{lang: {"users": {user_name:
+    {...}}}}`` in calibration.json (machine-local, gitignored), keyed by the
+    configured espeak language and user name; other users' and languages' entries
+    are preserved. The committed per-language model calibration
+    (``<lang>_model_calibration.json``: buckets, gates, default anchor) is never
+    touched. The new value applies to this process at once and on the next start.
     """
-    data = _load_calibration()
-    data["phoneme_good"] = round(float(phoneme_good), 6)
-    meta = data.get("_meta", {}) if isinstance(data.get("_meta"), dict) else {}
-    meta.update({
-        "phoneme_good_recalibrated_at": datetime.now().isoformat(timespec="seconds"),
-        **(extra or {}),
-    })
-    data["_meta"] = meta
+    global PHONEME_GOOD, _loaded_lang, _loaded_user
+    cfg = get_config()
+    lang = _lang_key(cfg.espeak_language)
+    user = cfg.user_name
+
+    data = _read_json(CALIBRATION_FILE)
+    lang_block = data.get(lang)
+    if not isinstance(lang_block, dict):
+        lang_block = {}
+    users = lang_block.get("users")
+    if not isinstance(users, dict):
+        users = {}
+
+    entry: Dict[str, Any] = {
+        "phoneme_good": round(float(phoneme_good), 6),
+        "user_name": user,
+        "recalibrated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    if extra:
+        entry.update(extra)
+    users[user] = entry
+    lang_block["users"] = users
+    data[lang] = lang_block
+
     CALIBRATION_FILE.write_text(
         json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    logging.info("[phoneme] wrote phoneme_good=%.6f -> %s", phoneme_good, CALIBRATION_FILE)
+    # Apply to the running process immediately (mirrors the acoustic engine).
+    PHONEME_GOOD = float(phoneme_good)
+    _loaded_lang, _loaded_user = lang, user
+    logging.info("[phoneme] wrote phoneme_good=%.6f (lang=%s user=%r) -> %s",
+                 phoneme_good, lang, user, CALIBRATION_FILE)
 
 
 # =====================================================================
@@ -224,6 +348,7 @@ def load_models() -> None:
 def warm_up() -> None:
     """Run dummy passes to remove first-call latency (recognizer + panphon + espeak)."""
     load_models()
+    _ensure_calibration()
     cfg = get_config()
     dummy = np.zeros(TARGET_SAMPLE_RATE // 2, dtype=np.float32)  # 0.5 s of silence
     try:
@@ -771,9 +896,9 @@ def _word_level(word_avg: float, good: float, bad: float) -> str:
 
     Placed on the same [good, bad] window the phoneme-quality score uses, so the
     three-level highlight tracks the bucket: ``frac`` is the word's position from a
-    flawless read (0) to "completely wrong" (1). Cutoffs come from calibration.json
-    (``word_good_frac`` / ``word_bad_frac``); the defaults split the window roughly
-    in thirds.
+    flawless read (0) to "completely wrong" (1). Cutoffs come from the model
+    calibration (``word_good_frac`` / ``word_bad_frac``); the defaults split the
+    window roughly in thirds.
     """
     span = max(bad - good, BAD_MIN_SPAN)
     frac = (word_avg - good) / span
@@ -884,6 +1009,7 @@ def analyze(user_audio: np.ndarray,
     """
     cfg = get_config()
     _ensure_loaded()
+    _ensure_calibration()
 
     # Reference phonemes from text (per-word groups -> flat sequence).
     groups = reference_word_phonemes(expected_text, cfg.espeak_language)
