@@ -732,7 +732,6 @@ def analyze(user_audio: np.ndarray,
     # floor boosted by peak normalization), the TTS reference has almost none.
     user_wav = _trim_silence(_prepare_waveform(user_audio, user_sr))
     reference = _reference_features(reference_audio, reference_sr)
-    reference_wav = reference["wav"]
 
     # Acoustic similarity: cosine DTW between the two embedding sequences,
     # normalized by the alignment path length so it does not grow with phrase

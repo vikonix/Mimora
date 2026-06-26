@@ -14,7 +14,7 @@ license = { file = "LICENSE" }
 # The app is run from the project root (`python main.py`) and is not meant to
 # be installed; this file documents project metadata and the package layout.
 # Runtime dependencies stay in requirements.txt (plus llm_server/ and
-# pronounce/ requirements) because they are installed per-machine with
-# CPU/CUDA variants.
+# pronunciation/acoustic/, pronunciation/phoneme/ requirements) because they
+# are installed per-machine with CPU/CUDA variants.
 [tool.setuptools]
-packages = ["mimora", "pronounce"]
+packages = ["mimora", "pronunciation"]

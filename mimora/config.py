@@ -130,7 +130,6 @@ if loader.models_cached(Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):
 # Language Configuration
 # =====================================================================
 TARGET_LANGUAGE = "English"
-TARGET_LANG_CODE = "en"  # ISO code used for transcription routing
 
 # =====================================================================
 # Controls

@@ -304,7 +304,6 @@ def build_config(hardware: dict) -> dict:
     full offload plus GPU-side Wav2Vec2 needs a comfortable margin.
     """
     gpu = hardware["gpu"]
-    cores = hardware["cpu_cores"] or 4
 
     # LLM side: usable unless llama-cpp explicitly reports a CPU-only build
     # (None = probe unavailable, assume a present GPU is usable).
