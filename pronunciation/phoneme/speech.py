@@ -76,8 +76,8 @@ KOKORO_SAMPLE_RATE = 24_000
 # Tunable scoring constants live in JSON files next to this module, split into two
 # layers so per-user calibration never contaminates the shared engine baseline:
 #   * <lang>_model_calibration.json -- the base (model) calibration: anchors,
-#     buckets, gates and axis weights, fit offline against human labels. Committed
-#     to the repo and selected by the configured espeak language ("en-us" -> "en").
+#     buckets, gates and axis weights. Committed to the repo and selected by the
+#     configured espeak language ("en-us" -> "en").
 #   * calibration.json             -- the machine-local user override (gitignored).
 #     Holds only a re-anchored ``phoneme_good`` per language and user, shaped
 #     {lang: {"users": {user_name: {"phoneme_good": float, ...}}}}; it overrides

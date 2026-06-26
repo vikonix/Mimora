@@ -13,9 +13,8 @@ manage the recognizer lifecycle (call them in a background thread at mode startu
 Settings come from this package's own ``AnalyzerConfig``; a host injects values once
 at startup with ``configure()``, and the built-in defaults keep it autonomous.
 
-This package never imports from ``prototypes-pronunciation/`` and never touches the
-GUI; the result it returns is structurally identical to
-``pronunciation.acoustic.PronunciationResult`` so the UI stays engine-neutral.
+This package never touches the GUI; the result it returns is structurally identical
+to ``pronunciation.acoustic.PronunciationResult`` so the UI stays engine-neutral.
 """
 
 from .config import AnalyzerConfig, configure, get_config

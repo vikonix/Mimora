@@ -20,13 +20,12 @@ What it does, mirroring the acoustic floor calibration:
   * keeps attempts that clearly matched the phrase -- high phoneme recall and no
     word flagged "bad" -- so their per-phone distance samples "good pronunciation,
     different speaker";
-  * sets ``phoneme_good`` to a percentile of those distances (default 75, matching
-    the validation spike's ``anchor_good_percentile``), so a typical good attempt
-    lands near the top of the phoneme-quality scale.
+  * sets ``phoneme_good`` to a percentile of those distances (default 75), so a
+    typical good attempt lands near the top of the phoneme-quality scale.
 
 Only ``phoneme_good`` is rewritten; the 0-5 ``buckets`` / ``bucket_to_percent`` and
-the gates are left untouched (those are fit offline against human labels in
-``prototypes-pronunciation/``, not from one user's session).
+the gates are left untouched (they ship with the engine's model calibration and are
+not fit from one user's session).
 """
 
 import argparse
@@ -57,7 +56,7 @@ MIN_RECALL = 0.85          # most reference phones produced close to target
 # sessions (different mic, different voice habits) would skew the anchor.
 MAX_SAMPLES_USED = 300
 MIN_SAMPLES = 5
-DEFAULT_PERCENTILE = 75    # matches the spike's anchor_good_percentile
+DEFAULT_PERCENTILE = 75    # percentile of good-attempt distances used as the anchor
 
 
 def load_samples() -> list:
