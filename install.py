@@ -82,7 +82,10 @@ WHEEL_TESTED_MAX = (3, 12)
 # requirements step installs binary-only to stop an unsupported interpreter
 # from silently compiling a package that lacks a wheel; these few must be
 # exempted or the install would fail on them on every Python version.
-SOURCE_ONLY_PACKAGES = ("fastdtw", "docopt")
+# unicodecsv: pulled by panphon (phoneme engine); every panphon release depends
+# on it and it ships sdist-only, so --only-binary makes the resolve impossible
+# without this exemption. Pure-Python — builds from sdist with no compiler.
+SOURCE_ONLY_PACKAGES = ("fastdtw", "docopt", "unicodecsv")
 
 # The GGUF chat model. Default filename matches EXTERNAL_MODEL_PATH in
 # mimora/config.py, so the app finds it without any settings change.
