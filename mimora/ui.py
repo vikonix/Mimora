@@ -602,15 +602,14 @@ class TrainerView:
     def refresh_translation_ui(self):
         """Sync the translation panel and selector to the current UI state.
 
-        Shows the panel only when a language is selected and the phrase-length
-        mode is "Full phrase"; "Few words" fragments are not translated, so the
-        panel is hidden and the language selector is greyed out there. Safe to
-        call repeatedly — it reconciles to the current vars without side effects.
+        Shows the panel whenever a language is selected — in both "Full phrase"
+        and "Few words" modes (fragments are translated too). Safe to call
+        repeatedly — it reconciles to the current vars without side effects.
         """
-        is_fragment = (self.length_var.get() == LENGTH_FEW_WORDS)
-        # Grey out the language selector in fragment mode (fragments aren't translated).
-        self.translation_selector.config(state="disabled" if is_fragment else "readonly")
-        show = bool(self.translation_var.get()) and not is_fragment
+        # The language selector is always usable; translation applies to whatever
+        # the next phrase is, fragment or full sentence.
+        self.translation_selector.config(state="readonly")
+        show = bool(self.translation_var.get())
         packed = self.translation_frame.winfo_manager() == "pack"
         if show and not packed:
             # Insert directly under the phrase card. Top gap of 3 plus the phrase

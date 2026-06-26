@@ -556,8 +556,7 @@ class PronunciationTrainerGUI:
         try:
             # Capture the length and translation language once, up front, so the
             # phrase, its audio, and its translation all stay consistent even if
-            # the user changes a selector mid-generation. Fragments ("Few words")
-            # are not translated.
+            # the user changes a selector mid-generation.
             length = self._selected_length()
             language = self._selected_translation_language()
             phrase = self.llm_mgr.generate_phrase(source_text, length=length)
@@ -598,22 +597,23 @@ class PronunciationTrainerGUI:
             # so it must not gate the app's readiness. The panel stays at its "—"
             # placeholder until the translation arrives.
             self.root.after(0, self._phrase_ready)
-            self._translate_into_panel(phrase, language, length)
+            self._translate_into_panel(phrase, language)
 
         except Exception as e:
             logging.exception("Phrase generation / prompt error:")
             self.root.after(0, self._phrase_generation_failed, f"Error: {e}")
 
-    def _translate_into_panel(self, phrase: str, language: str, length: str):
+    def _translate_into_panel(self, phrase: str, language: str):
         """Translate *phrase* and push it to the panel. (Background thread.)
 
-        Skips fragments and the "translation off" choice. Guards against a stale
-        result: if a newer phrase has replaced this one while the (CPU)
-        translation ran, the result is dropped, so the panel never shows a
-        translation that does not match the phrase on screen. A translator
-        failure returns "" and simply leaves the placeholder in place.
+        Translates both full sentences and "Few words" fragments; only the
+        "translation off" choice is skipped. Guards against a stale result: if a
+        newer phrase has replaced this one while the (CPU) translation ran, the
+        result is dropped, so the panel never shows a translation that does not
+        match the phrase on screen. A translator failure returns "" and simply
+        leaves the placeholder in place.
         """
-        if not language or length != "full":
+        if not language:
             return
         translated = self.translator_mgr.translate(phrase, language)
         # current_phrase is replaced by a fresh generation; if it no longer
