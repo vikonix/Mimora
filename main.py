@@ -50,7 +50,7 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 warnings.filterwarnings("ignore", message="dropout option adds dropout.*")
 warnings.filterwarnings("ignore", message=".*weight_norm.*deprecated.*")
 
-from mimora import config, prosody
+from mimora import config, prosody, __version__
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.audio_io import KOKORO_SAMPLE_RATE
@@ -109,11 +109,11 @@ class PronunciationTrainerGUI:
     """
 
     def __init__(self):
-        logging.info("Starting Mimora Pronunciation Trainer...")
+        logging.info("Starting Mimora Pronunciation Trainer v%s...", __version__)
 
         # Core Tkinter setup
         self.root = tk.Tk()
-        self.root.title("Mimora - Pronunciation Trainer")
+        self.root.title(f"Mimora - Pronunciation Trainer v{__version__}")
 
         # Fixed width; the window spans the full usable screen height. We query the
         # Windows desktop work area (screen minus the taskbar) so the window fits
@@ -1080,5 +1080,14 @@ class PronunciationTrainerGUI:
 
 
 if __name__ == "__main__":
+    import argparse
+
+    # Parse CLI args before the heavy GUI/model startup so `--version` returns fast.
+    parser = argparse.ArgumentParser(
+        prog="mimora", description="Mimora pronunciation trainer.")
+    parser.add_argument(
+        "--version", action="version", version=f"Mimora {__version__}")
+    parser.parse_args()
+
     app = PronunciationTrainerGUI()
     app.run()

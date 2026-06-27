@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mimora"
-version = "0.1.0"
+# Version is the single source of truth in mimora/__init__.py (read dynamically below).
+dynamic = ["version"]
 description = "Local, offline pronunciation trainer: Kokoro TTS prompts, Wav2Vec2 scoring, local LLM phrase generation."
 readme = "README.md"
 # Tested on 3.11 and 3.12; 3.13+ not yet supported (as of June 2026).
@@ -18,3 +19,6 @@ license = { file = "LICENSE" }
 # are installed per-machine with CPU/CUDA variants.
 [tool.setuptools]
 packages = ["mimora", "pronunciation"]
+
+[tool.setuptools.dynamic]
+version = { attr = "mimora.__version__" }
