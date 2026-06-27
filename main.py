@@ -6,7 +6,7 @@
 Wires together the pronunciation-trainer components and runs the Tkinter GUI:
 the local LLM (LLMManager / LLMServerController), text-to-speech (TTSManager,
 Kokoro), audio capture (AudioRecorder) and Wav2Vec2-based pronunciation
-analysis (pronounce/), all driven from PronunciationTrainerGUI, which composes
+analysis (pronunciation/acoustic/), all driven from PronunciationTrainerGUI, which composes
 the TrainerView (mimora/ui.py) for the widgets.
 
 It also installs the root logging configuration (console + logs/main.log) for
@@ -68,15 +68,15 @@ from mimora.recorder import (
     normalize_audio,
 )
 # Pronunciation runs through the engine dispatcher (mimora/engine.py), which binds
-# the backend chosen by config.ENGINE ("acoustic" -> pronounce/, "phoneme" ->
-# pronounce_phoneme/) and exposes one interface. main.py never imports an engine
+# the backend chosen by config.ENGINE ("acoustic" -> pronunciation/acoustic/, "phoneme" ->
+# pronunciation/phoneme/) and exposes one interface. main.py never imports an engine
 # directly, so switching is a single settings.json flip.
 from mimora import engine
 from mimora.ui import TrainerView, ViewCallbacks, LENGTH_FEW_WORDS
 
 # Configure comprehensive events logging (console + file). force=True replaces
 # any handlers auto-installed by logging calls during the imports above (e.g.
-# pronounce loads calibration.json at import and logs it), which would otherwise
+# the acoustic engine loads calibration.json at import and logs it), which would otherwise
 # turn this basicConfig into a silent no-op and leave main.log empty.
 log_format = "%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s"
 logging.basicConfig(

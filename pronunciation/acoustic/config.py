@@ -39,7 +39,7 @@ class AnalyzerConfig:
     # Pre-calibration acoustic floor: the typical per-step cosine DTW distance
     # of a *good* attempt. A per-user value in calibration.json overrides it.
     acoustic_good: float = 0.20
-    # Directory the calibration sample log (pronounce_samples.jsonl) is written to.
+    # Directory the calibration sample log (acoustic_samples.jsonl) is written to.
     log_dir: Path = Path("logs")
     # Practising user; calibration is per-user ("" when unset).
     user_name: str = ""

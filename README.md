@@ -48,7 +48,7 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 | `pronunciation/phoneme/speech.py` | **Default** pronunciation engine - espeak reference phonemes vs a wav2vec2 phoneme recognizer, feature-weighted edit distance, calibrated 0-5 grade. No GUI dependency. |
 | `pronunciation/phoneme/calibrate.py` | On-request scoring calibration for the **default** phoneme engine: reads the per-attempt samples from `logs/phoneme_samples.jsonl` and writes `pronunciation/phoneme/calibration.json`. |
 | `pronunciation/acoustic/speech.py` | Alternative pronunciation engine (adapted from OpenPronounce). Single entry point `analyze(...)`; Wav2Vec2 embeddings + DTW, phoneme comparison, scoring. No GUI dependency. |
-| `pronunciation/acoustic/calibrate.py` | On-request scoring calibration for the acoustic engine: reads the per-attempt samples from `logs/pronounce_samples.jsonl` and writes the acoustic floor to `pronunciation/acoustic/calibration.json`. |
+| `pronunciation/acoustic/calibrate.py` | On-request scoring calibration for the acoustic engine: reads the per-attempt samples from `logs/acoustic_samples.jsonl` and writes the acoustic floor to `pronunciation/acoustic/calibration.json`. |
 | `config/` | User configuration data: `settings.json` (hand-edited preferences) and `themes/` (UI color schemes). |
 | `texts/practice_text.txt` | Default source text shown in the input panel at startup; put your own practice texts in `texts/`. |
 | `hwconfig/detect_hardware.py` | Standalone hardware probe (RAM/CPU/GPU/VRAM/audio). Writes `hwconfig/hardware_config.json`, whose `config` section supplies machine-derived overrides (e.g. `EXTERNAL_N_GPU_LAYERS`, `WAV2VEC2_DEVICE`) that `mimora/config.py` reads in preference to its defaults. |
@@ -272,7 +272,7 @@ Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by
 
 - **Practice language is English for now.** The `acoustic` engine is English-only (English ASR model + phonemizer `en-us`). The default `phoneme` engine uses a multilingual IPA recognizer and is planned to be calibrated for other languages in future releases. (The translation panel already targets many languages - that is the practice phrase's translation, not the practice language itself.)
 - The transcription-based word errors only surface mistakes the ASR actually "hears"; subtle distortions where the word is still recognized may not appear in the word list (the default phoneme engine's IPA edit distance, or the acoustic engine's DTW, plus prosody partially compensate).
-- Scoring is **heuristic** and depends on your voice and microphone. After a practice session, re-anchor the active engine to your data: `python pronunciation/phoneme/calibrate.py` (default engine) or `python pronunciation/acoustic/calibrate.py` (acoustic engine); `--dry-run` previews the change. Every attempt's raw components are logged to `logs/phoneme_samples.jsonl` (or `logs/pronounce_samples.jsonl`) and `logs/main.log` for inspection.
+- Scoring is **heuristic** and depends on your voice and microphone. After a practice session, re-anchor the active engine to your data: `python pronunciation/phoneme/calibrate.py` (default engine) or `python pronunciation/acoustic/calibrate.py` (acoustic engine); `--dry-run` previews the change. Every attempt's raw components are logged to `logs/phoneme_samples.jsonl` (or `logs/acoustic_samples.jsonl`) and `logs/main.log` for inspection.
 
 ---
 

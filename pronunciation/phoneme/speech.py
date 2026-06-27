@@ -17,7 +17,7 @@ in the optional ``good_mode="ceiling"``, recognized once to anchor a flawless re
 to 100 per phrase; the default ``good_mode="global"`` scores against the single
 calibrated PHONEME_GOOD (matching how the 0-5 buckets were fit).
 
-Public API mirrors ``pronounce/`` exactly so the dispatcher (task stage B) can
+Public API mirrors ``acoustic/`` exactly so the dispatcher (task stage B) can
 treat both engines the same:
     load_models()  -- load the wav2vec2 phoneme weights once (call in a thread).
     warm_up()      -- dummy pass to remove first-call latency.
@@ -248,7 +248,7 @@ def _ensure_calibration() -> None:
 # Sample log + calibration write-back (task §5.3; mirrors the acoustic engine).
 # analyze() appends one record per take to logs/phoneme_samples.jsonl; the offline
 # phoneme/calibrate.py re-anchors PHONEME_GOOD from the reference self-tests there.
-# Kept separate from the acoustic pronounce_samples.jsonl so the two engines' logs
+# Kept separate from the acoustic acoustic_samples.jsonl so the two engines' logs
 # never mix.
 # =====================================================================
 def samples_file() -> Path:
@@ -332,7 +332,7 @@ def load_models() -> None:
     """Load the wav2vec2 phoneme weights into memory once. Safe to call repeatedly.
 
     Heavy (~1.2 GB download on first run); call from a background daemon thread at
-    mode startup so the GUI stays responsive (mirrors pronounce.load_models).
+    mode startup so the GUI stays responsive (mirrors acoustic.load_models).
     """
     global _processor, _model
     with _load_lock:
@@ -821,7 +821,7 @@ def align_and_score(reference: List[str], spoken: List[str],
 # =====================================================================
 # Reference recognition cache (ceiling-mode GOOD anchor + retry reuse).
 # The same reference take is scored on every retry of a phrase; recognizing it once
-# mirrors pronounce's _reference_features. Keyed by content hash + sample rate; the
+# mirrors acoustic's _reference_features. Keyed by content hash + sample rate; the
 # cache is tiny and self-clearing, so it never grows on a long session.
 # =====================================================================
 _ref_cache: Dict[Tuple[int, int], List[str]] = {}
@@ -1092,7 +1092,7 @@ def analyze(user_audio: np.ndarray,
     )
 
     # Calibration / analysis sample log (best effort; mirrors the acoustic engine's
-    # pronounce_samples.jsonl). phoneme/calibrate.py re-anchors PHONEME_GOOD from the
+    # acoustic_samples.jsonl). phoneme/calibrate.py re-anchors PHONEME_GOOD from the
     # good *real* attempts here (it drops the is_reference self-tests, whose ~0
     # distance would wreck the anchor); the per-word block and the two phoneme
     # strings make a low score easy to inspect after the fact.

@@ -3,7 +3,7 @@
 
 """Semi-automatic calibration of the acoustic scoring floor (on request).
 
-Every ``analyze()`` call appends its raw components to logs/pronounce_samples.jsonl.
+Every ``analyze()`` call appends its raw components to logs/acoustic_samples.jsonl.
 After a practice session (10+ honest attempts), run:
 
     python pronunciation/acoustic/calibrate.py            # compute and write calibration.json

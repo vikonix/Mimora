@@ -19,8 +19,8 @@ Design notes:
       heavy download/initialisation can happen in a background daemon thread, matching
       the warm-up pattern in ``tts.py``.
     * Settings (model, device, accent, thresholds, log dir, user name) come from
-      the library's own ``AnalyzerConfig`` (see pronounce/config.py), read at
-      use-time. A host injects its values once with ``pronounce.configure(...)``;
+      the library's own ``AnalyzerConfig`` (see acoustic/config.py), read at
+      use-time. A host injects its values once with ``acoustic.configure(...)``;
       the defaults keep the package autonomous, so it never imports the host app.
     * Wav2Vec2 needs 16 kHz mono audio. User audio already arrives at 16 kHz from the
       recording path; the Kokoro reference is 24 kHz, so it is resampled here.
@@ -44,9 +44,9 @@ from scipy.spatial.distance import cosine
 from transformers import Wav2Vec2Processor, Wav2Vec2Model, Wav2Vec2ForCTC
 from phonemizer import phonemize
 
-# Settings come from the library's own AnalyzerConfig (see pronounce/config.py),
+# Settings come from the library's own AnalyzerConfig (see acoustic/config.py),
 # never from the host application: a host injects its values once at startup via
-# pronounce.configure(). get_config() returns the active configuration.
+# acoustic.configure(). get_config() returns the active configuration.
 from .config import get_config
 
 
@@ -56,7 +56,7 @@ from .config import get_config
 # All host-tunable settings (model, device, espeak accent, score threshold,
 # acoustic floor default, log dir, user name) come from the active
 # AnalyzerConfig via get_config(); they are read at use-time so a host app can
-# inject them with pronounce.configure() after import but before analysis.
+# inject them with acoustic.configure() after import but before analysis.
 # The constants below are intrinsic to the analyzer and are not host-tunable.
 # =====================================================================
 # Wav2Vec2 expects strictly 16 kHz mono input.
@@ -72,7 +72,7 @@ KOKORO_SAMPLE_RATE = 24_000
 #   * floor (the acoustic "good" distance) — typical per-step distance of a
 #     *good* attempt by a different speaker (the user vs the TTS voice never
 #     reach 0). Configurable default in AnalyzerConfig.acoustic_good; calibrated
-#     per voice/microphone by ``python pronounce/calibrate.py``, which writes it
+#     per voice/microphone by ``python acoustic/calibrate.py``, which writes it
 #     to calibration.json. current_acoustic_floor() returns the value in effect.
 #   * ceiling — per-step distance when content does not match. Derived
 #     automatically per utterance from the random-pair baseline (the mean
@@ -91,10 +91,10 @@ CALIBRATION_FILE = Path(__file__).resolve().parent / "calibration.json"
 def samples_file() -> Path:
     """Path of the per-attempt calibration sample log.
 
-    Lives under the configured log directory; ``pronounce/calibrate.py`` reads it
+    Lives under the configured log directory; ``acoustic/calibrate.py`` reads it
     to recompute the acoustic floor on request.
     """
-    return Path(get_config().log_dir) / "pronounce_samples.jsonl"
+    return Path(get_config().log_dir) / "acoustic_samples.jsonl"
 
 
 # The acoustic floor is per practising user: calibration.json maps a user name
@@ -687,7 +687,7 @@ def _reference_features(reference_audio: np.ndarray, reference_sr: int) -> Dict[
 def _append_calibration_sample(record: Dict[str, Any]) -> None:
     """Append one analysis record to the calibration sample log (best effort).
 
-    The file feeds ``pronounce/calibrate.py``; a write failure must never break
+    The file feeds ``acoustic/calibrate.py``; a write failure must never break
     the analysis itself.
     """
     try:
