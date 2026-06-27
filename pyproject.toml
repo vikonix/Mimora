@@ -18,7 +18,13 @@ license = { file = "LICENSE" }
 # pronunciation/acoustic/, pronunciation/phoneme/ requirements) because they
 # are installed per-machine with CPU/CUDA variants.
 [tool.setuptools]
-packages = ["mimora", "pronunciation"]
+packages = [
+    "mimora",
+    "pronunciation",
+    "pronunciation.acoustic",
+    "pronunciation.common",
+    "pronunciation.phoneme",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "mimora.__version__" }

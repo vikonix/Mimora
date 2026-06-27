@@ -7,8 +7,9 @@ Pitch (F0) and energy contours describe *how* something was said (intonation,
 stress, rhythm), independent of *which* pronunciation engine scores the words.
 So they live here, in a light module computed from the raw user and reference
 waveforms in ``main.py`` regardless of the active engine — not inside any single
-engine. Both the acoustic (``pronunciation/acoustic/``) and the future phoneme engine show
-the exact same two charts because neither computes prosody anymore.
+engine. Both the phoneme (``pronunciation/phoneme/``, the default) and the acoustic
+(``pronunciation/acoustic/``) engine show the exact same two charts because neither
+computes prosody anymore.
 
 Why a separate module from ``mimora/prosody_utils.py``: that file holds *pure*
 arithmetic helpers (``to_semitones`` / ``resample_series``) and is deliberately

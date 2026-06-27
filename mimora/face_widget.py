@@ -166,7 +166,7 @@ class FaceWidget(tk.Canvas):
         self._mouth_cy = self._cy + radius * 0.38
         self._mouth_rx = radius * 0.34           # half-width of the mouth
         self._mouth_ry_min = max(1.0, radius * 0.02)  # closed = thin line
-        self._mouth_ry_max = radius * 0.28       # loud speech (toned down, §9)
+        self._mouth_ry_max = radius * 0.28       # loud speech (deliberately toned down)
         self._smile_amp = radius * 0.16          # corner/mid offset at full curl
         self._line_w = max(2, int(dim * 0.02))
 

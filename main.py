@@ -5,8 +5,9 @@
 
 Wires together the pronunciation-trainer components and runs the Tkinter GUI:
 the local LLM (LLMManager / LLMServerController), text-to-speech (TTSManager,
-Kokoro), audio capture (AudioRecorder) and Wav2Vec2-based pronunciation
-analysis (pronunciation/acoustic/), all driven from PronunciationTrainerGUI, which composes
+Kokoro), audio capture (AudioRecorder) and pronunciation analysis via the engine
+dispatcher (mimora/engine.py, which binds the backend chosen by config.ENGINE -
+"phoneme" by default), all driven from PronunciationTrainerGUI, which composes
 the TrainerView (mimora/ui.py) for the widgets.
 
 It also installs the root logging configuration (console + logs/main.log) for
@@ -27,7 +28,7 @@ import sys
 # process then fails any print with "[Errno 22] Invalid argument"). Instead we set
 # the hint for child processes and switch our own console streams to UTF-8 where the
 # stream supports it. The in-process file reads that mattered (panphon's tables) keep
-# their own narrow UTF-8 fallback in pronunciation/phoneme/speech.py (task §2).
+# their own narrow UTF-8 fallback in pronunciation/phoneme/speech.py.
 os.environ.setdefault("PYTHONUTF8", "1")
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 for _stream in (sys.stdout, sys.stderr):
@@ -99,7 +100,7 @@ class PronunciationTrainerGUI:
     controller. Microphone capture lives in mimora/recorder.py and the local
     LLM server lifecycle in mimora/llm_server_ctl.py.
 
-    Flow per phrase (spec state machine):
+    Flow per phrase (state machine):
         Prompt   -> Kokoro speaks an LLM-generated reference phrase.
         Record   -> user repeats it (shared recording path).
         Analyze  -> engine.analyze() runs in a daemon thread.
@@ -181,7 +182,7 @@ class PronunciationTrainerGUI:
         self._closing = False  # guards quit_app against double invocation
         self.current_phrase: Optional[str] = None
         # Translation of the current phrase shown under the phrase card. Filled by
-        # the phrase generator (§6) when a translation language is selected; kept
+        # the phrase generator when a translation language is selected; kept
         # beside current_phrase so the two are always shown together.
         self.current_translation: str = ""
         # Kokoro voice the current reference was synthesized with (logged with
@@ -357,7 +358,7 @@ class PronunciationTrainerGUI:
             initialdir=os.path.dirname(config.PRACTICE_TEXT_FILE),
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
         )
-        # Return focus to the window so the spacebar push-to-talk keeps working.
+        # Return focus to the window so the spacebar record toggle keeps working.
         self.root.focus_set()
         if not path:
             return  # dialog cancelled
@@ -448,7 +449,7 @@ class PronunciationTrainerGUI:
         """
         logging.info(f"Reference voice changed to {self._selected_voice()}.")
         self._persist_setting("voice", self._selected_voice())
-        # Return focus to the window so the spacebar push-to-talk keeps working.
+        # Return focus to the window so the spacebar record toggle keeps working.
         self.root.focus_set()
         if self.app_ready and not self.is_generating:
             self.on_generate_phrase()
@@ -464,7 +465,7 @@ class PronunciationTrainerGUI:
         """Replay the reference at the newly selected speed so it is heard right away."""
         logging.info(f"Reference speed changed to {self.view.get_speed_label()!r}.")
         self._persist_setting("reference_speed", self._selected_speed())
-        # Return focus to the window so the spacebar push-to-talk keeps working.
+        # Return focus to the window so the spacebar record toggle keeps working.
         self.root.focus_set()
         # Replay only when the Reference button is also allowed (a phrase is
         # ready and nothing is recording/analyzing).
@@ -489,7 +490,7 @@ class PronunciationTrainerGUI:
         # The translation panel and selector depend on the length mode (fragments
         # are not translated), so reconcile them before anything else.
         self.view.refresh_translation_ui()
-        # Return focus to the window so the spacebar push-to-talk keeps working.
+        # Return focus to the window so the spacebar record toggle keeps working.
         self.root.focus_set()
         if self.app_ready and not self.is_generating:
             self.on_generate_phrase()
@@ -511,7 +512,7 @@ class PronunciationTrainerGUI:
         self.current_translation = ""
         self.view.set_translation("")
         self.view.refresh_translation_ui()
-        # Return focus to the window so the spacebar push-to-talk keeps working
+        # Return focus to the window so the spacebar record toggle keeps working
         # (a focused combobox would otherwise capture the spacebar).
         self.root.focus_set()
 
@@ -839,7 +840,7 @@ class PronunciationTrainerGUI:
             audio = self.recorder.get_audio()
             if audio is None or len(audio) < config.AUDIO_SAMPLE_RATE * 0.2:
                 logging.warning("Captured audio too short or empty.")
-                self.root.after(0, self.view.append_error_msg, "Audio is too short. Hold the mic longer and try again.")
+                self.root.after(0, self.view.append_error_msg, "Audio is too short. Speak a little longer and try again.")
                 self.root.after(0, self._reset_to_retry)
                 return
 

@@ -9,7 +9,7 @@ torch>=2.0.0
 # 5.x needs torch>=2.7 (torch.float8_e8m0fnu) — satisfied by the installed cu128 torch 2.11.
 transformers>=5.3
 
-# NLLB-200 offline translator (mimora/translator.py, §6). The model is loaded
+# NLLB-200 offline translator (mimora/translator.py). The model is loaded
 # through transformers (above) on torch; sentencepiece backs the NLLB tokenizer
 # (used by the slow-tokenizer path and the standard NLLB setup).
 sentencepiece>=0.1.99

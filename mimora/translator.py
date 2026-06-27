@@ -4,8 +4,8 @@
 """Offline phrase translator (NLLB-200).
 
 A dedicated machine-translation model -- NOT the chat LLM -- turns each generated
-practice phrase into the language chosen in the translation panel (see §6 of the
-UI task). The local 3B chat model produced unusable translations (empty CJK,
+practice phrase into the language chosen in the translation panel. The local 3B
+chat model produced unusable translations (empty CJK,
 leaked English words), so translation is delegated to
 ``facebook/nllb-200-distilled-600M``: a 200-language MT model that is small and
 CPU-friendly.

@@ -97,34 +97,21 @@ if not isinstance(USER_NAME, str):
 # =====================================================================
 # Kokoro and Wav2Vec2 are pulled from the HuggingFace Hub. We pin
 # their cache to a project-local folder so the weights live next to the code and
-# survive a cleared home-directory cache. Once every model is present we flip the
-# Hub into offline mode, which skips the per-start network round-trip HF normally
-# makes to re-validate file revisions — that check is what makes startup feel like
-# it "re-downloads" on every launch.
+# survive a cleared home-directory cache. Once every model the run actually needs
+# is present we flip the Hub into offline mode, which skips the per-start network
+# round-trip HF normally makes to re-validate file revisions — that check is what
+# makes startup feel like it "re-downloads" on every launch.
 #
 # IMPORTANT: huggingface_hub / transformers read these env vars at *import* time,
-# so this block must run before those libraries are imported. config is the first
-# project module imported by main.py (before tts/pronunciation), so it is early
-# enough. We use setdefault() so an externally set HF_HOME is respected.
+# so they must be set before those libraries are imported. config is the first
+# project module imported by main.py (before tts/pronunciation) and runs to the end
+# during that import, so HF_HOME here and the offline flags set in the
+# "Offline-mode gating" section below (after the active engine and its model name
+# are known) all land early enough. We use setdefault() so an externally set
+# HF_HOME is respected.
 MODEL_CACHE_DIR = BASE_DIR / "model_cache"
 loader.ensure_dir(MODEL_CACHE_DIR)
 os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
-
-# Repo IDs whose presence in the cache means "fully downloaded".
-_CACHED_REPOS = (
-    "hexgrad/Kokoro-82M",                  # Kokoro TTS (model + voice files)
-    "facebook/wav2vec2-large-960h",        # Wav2Vec2 pronunciation model
-    "facebook/nllb-200-distilled-600M",    # NLLB-200 offline translator (§6)
-)
-
-
-# Auto offline: the first run downloads online; once everything is cached, every
-# later run loads straight from disk with no network access. Delete model_cache/
-# to force a fresh download. HF_HOME is read from os.environ (not MODEL_CACHE_DIR)
-# so an externally set cache location is honored.
-if loader.models_cached(Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 # =====================================================================
 # Language Configuration
@@ -190,7 +177,7 @@ LOCAL_SERVER_MODEL = "local-model"
 LOCAL_SERVER_STARTUP_TIMEOUT = 60
 
 # =====================================================================
-# GGUF Model Settings (shared by "local_server" and "local_gguf" backends)
+# GGUF Model Settings (used by the "local_server" backend)
 # =====================================================================
 # GGUF file, read from settings.json ("external_model_path"); a relative path
 # resolves against the project root.
@@ -382,15 +369,43 @@ if PHRASE_LENGTH not in ("full", "fragment"):
 # Offline translation engine: a dedicated NLLB-200 model (mimora/translator.py),
 # NOT the chat LLM — the local 3B LLM produced unusable translations (empty CJK,
 # leaked English). NLLB is a 200-language MT model that is small and CPU-friendly.
-# The repo is also listed in _CACHED_REPOS above so offline-mode gating waits for
-# it; the installer pre-fetches it into model_cache/ (see install.py).
+# The repo is also part of _CACHED_REPOS (see the offline-mode gating below) so
+# offline-mode gating waits for it; the installer pre-fetches it into model_cache/
+# (see install.py).
 NLLB_TRANSLATOR_MODEL_NAME = "facebook/nllb-200-distilled-600M"
 # Device for the translator. Defaults to CPU on purpose: translation is
 # latency-tolerant (it runs in the background after the phrase is shown and the
 # reference has played), and keeping NLLB off the GPU avoids VRAM contention
-# with Kokoro / Wav2Vec2 / llama_cpp — matching §6's RAM (not VRAM) budget.
+# with Kokoro / Wav2Vec2 / llama_cpp — matching the translator's RAM (not VRAM) budget.
 # hwconfig may pin it to "cuda" on a machine with VRAM to spare.
 TRANSLATOR_DEVICE = _HW.get("TRANSLATOR_DEVICE") or "cpu"
+
+# =====================================================================
+# Offline-mode gating
+# =====================================================================
+# Auto offline: the first run downloads online; once every model the run actually
+# needs is cached, every later run loads straight from disk with no network access.
+# Delete model_cache/ to force a fresh download.
+#
+# The set of required repos is engine-aware: the always-used shared models (Kokoro
+# TTS, the NLLB translator) plus the ACTIVE engine's Wav2Vec2 model only. The
+# dispatcher never loads the inactive engine's weights, so requiring them would
+# needlessly keep the Hub online (and waste ~1.2 GB the run never touches).
+_ENGINE_MODEL_REPO = {
+    "phoneme": WAV2VEC2_PHONEME_MODEL_NAME,   # default engine
+    "acoustic": WAV2VEC2_MODEL_NAME,
+}
+# Fall back to the default engine's model for an unknown ENGINE, matching engine.name().
+_CACHED_REPOS = (
+    "hexgrad/Kokoro-82M",                                       # Kokoro TTS (model + voice files)
+    NLLB_TRANSLATOR_MODEL_NAME,                                 # NLLB-200 offline translator
+    _ENGINE_MODEL_REPO.get(ENGINE, WAV2VEC2_PHONEME_MODEL_NAME),  # active engine's recognizer
+)
+# HF_HOME is read from os.environ (not MODEL_CACHE_DIR) so an externally set cache
+# location is honored.
+if loader.models_cached(Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 # Translation panel: language the practice phrase is translated into and shown
 # under the phrase card. The first ("") choice means "translation off" — it is

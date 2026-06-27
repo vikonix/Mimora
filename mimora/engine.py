@@ -13,11 +13,11 @@ by ``config.ENGINE`` (set in mimora/config.py):
 Both backends expose the same small interface (``configure`` / ``load_models`` /
 ``warm_up`` / ``analyze``) and return the shared ``pronunciation.common.PronunciationResult``,
 so switching is a single config flip. Only the selected backend is imported, so the
-inactive engine's (heavy) weights are never loaded -- task §3 requirement #3.
+inactive engine's (heavy) weights are never loaded.
 
 To switch engines, edit ``ENGINE`` in mimora/config.py and restart; the process
-binds one backend at startup (the first ``_backend()`` call). Hot-swapping without
-a restart is part of the acceptance step (§7) and is not done here.
+binds one backend at startup (the first ``_backend()`` call). Hot-swapping engines
+without a restart is intentionally not supported here.
 """
 
 from __future__ import annotations
@@ -39,8 +39,8 @@ _module = None
 
 
 def name() -> str:
-    """The active engine name, falling back to 'acoustic' for an unknown value."""
-    return config.ENGINE if config.ENGINE in _BACKENDS else "acoustic"
+    """The active engine name, falling back to the default 'phoneme' for an unknown value."""
+    return config.ENGINE if config.ENGINE in _BACKENDS else "phoneme"
 
 
 def _backend():

@@ -4,11 +4,10 @@
 """Engine-neutral result type shared by the pronunciation engines.
 
 Both ``pronunciation.acoustic`` and ``pronunciation.phoneme`` (text-only) return
-the *same* :class:`PronunciationResult` so the GUI reads one stable shape
-regardless of which engine the dispatcher (``mimora/engine.py``) selected -- this
-is the "общий тип результата, который понимает UI" of the productionization task
-(§3). Keeping it in its own tiny package (not inside either engine) avoids a
-dependency from one engine on the other.
+the *same* :class:`PronunciationResult` so the GUI reads one stable result shape
+regardless of which engine the dispatcher (``mimora/engine.py``) selected. Keeping
+it in its own tiny package (not inside either engine) avoids a dependency from one
+engine on the other.
 
 The four fields the GUI strictly requires are ``score``, ``word_errors``,
 ``prosody`` and ``transcription``. Everything else is engine-specific extra with a
@@ -42,13 +41,13 @@ class PronunciationResult:
     passed: bool = False                          # acoustic: score >= threshold; phoneme: bucket >= pass_bucket
     feedback: str = ""                            # human-readable summary
 
-    # --- Coarse 0-5 score (phoneme engine; task §4). ---
+    # --- Coarse 0-5 score (phoneme engine). ---
     # bucket: calibrated 0-5 grade of ``score`` (the GUI shows this instead of the raw
     # 0-100 when present). -1 means the engine does not bucketize (the acoustic engine),
     # so the GUI falls back to the raw 0-100 score line.
     bucket: int = -1
     # user_percent: the bucket mapped to a user-facing percent (band midpoint), so the
-    # "good >= 90% / reference >= 95%" product requirement holds by construction (§4.2).
+    # "good >= 90% / reference >= 95%" product requirement holds by construction.
     # Kept for logs/diagnostics; the GUI currently displays only ``bucket``.
     user_percent: float = 0.0
 
@@ -69,7 +68,7 @@ class PronunciationResult:
     # engine; the GUI renders both the same way, so the "Heard" line works for both.
     recognized_units: List[Dict[str, Any]] = field(default_factory=list)
     # weak_phonemes: the few reference phones pronounced worst, most-to-least
-    # severe, each {"phoneme", "severity", "count"} (§11). The phoneme engine
+    # severe, each {"phoneme", "severity", "count"}. The phoneme engine
     # fills this; the acoustic engine leaves it empty (no per-phone breakdown),
     # so the GUI falls back gracefully.
     weak_phonemes: List[Dict[str, Any]] = field(default_factory=list)

@@ -11,9 +11,9 @@ The pronunciation-scoring core in `pronunciation/acoustic/` is adapted from [Ope
 ## Running the App
 
 ```bash
+# Root requirements.txt pulls in the subproject files via -r (llm_server,
+# pronunciation/acoustic and pronunciation/phoneme), so one install covers all:
 pip install -r requirements.txt
-pip install -r llm_server/requirements.txt
-pip install -r pronunciation/acoustic/requirements.txt
 python main.py
 ```
 
@@ -41,7 +41,7 @@ Also requires the native **espeak-ng** binary on `PATH` (used by `phonemizer`) a
 ## State Machine (pronunciation loop)
 
 1. **Prompt** — `llm_mgr.generate_phrase(source_text)` → `tts_mgr.synthesize(phrase)`. The synthesized array is stored as `self.reference_audio` and played for the user. Phrase generation + synth + playback all run in one daemon thread (`_generate_and_prompt`).
-2. **Record** — shared recording path (`record_loop` → `get_recorded_audio`), 16 kHz mono. Gated by `_can_record()` (a phrase must be ready and nothing else busy).
+2. **Record** — shared recording path (`AudioRecorder._record_loop` → `AudioRecorder.get_audio`), 16 kHz mono. Gated by `_can_record()` (a phrase must be ready and nothing else busy).
 3. **Analyze** — `_finalize_recording` → `analyze_recording` (daemon thread) calls `engine.analyze(...)` — the dispatcher in `mimora/engine.py`, which selects `pronunciation.acoustic` or `pronunciation.phoneme` by `config.ENGINE`.
 4. **Feedback** — `_show_feedback` (via `root.after`) shows score, transcription, problem words; enables replay buttons.
 5. **Loop** — if `result.passed` the user can generate the next phrase; otherwise the same phrase/reference are retained for another attempt.

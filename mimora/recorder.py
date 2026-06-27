@@ -104,7 +104,7 @@ def dump_record_text(text: str, file_name: str):
 
 
 class AudioRecorder:
-    """Push-to-talk microphone capture running on its own daemon thread.
+    """One-press microphone capture running on its own daemon thread.
 
     Usage: start() opens the capture thread, stop() asks it to finish, join()
     waits for it, get_audio() returns the take as one 16 kHz float32 array.

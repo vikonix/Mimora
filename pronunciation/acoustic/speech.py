@@ -207,7 +207,7 @@ _load_lock = threading.Lock()
 # =====================================================================
 # PronunciationResult is the engine-neutral shared type (pronunciation.common):
 # both this acoustic engine and pronunciation.phoneme return the same shape so the
-# GUI is engine-agnostic (task §3). Re-exported via this package's __init__, so
+# GUI is engine-agnostic. Re-exported via this package's __init__, so
 # ``pronunciation.acoustic.PronunciationResult`` keeps working. This engine fills
 # the ``acoustic_*`` fields; the phoneme-specific fields stay at their defaults.
 from pronunciation.common import PronunciationResult
@@ -816,7 +816,7 @@ def analyze(user_audio: np.ndarray,
         recognized_units=[{"unit": t["word"], "correct": t["correct"]}
                           for t in heard_word_tags(transcription, expected_text)],
         # The acoustic engine has no per-phone breakdown, so it cannot rank weak
-        # phonemes (§11); passed explicitly (empty) to keep the result API uniform
+        # phonemes; passed explicitly (empty) to keep the result API uniform
         # with the phoneme engine. The GUI falls back to its "Heard" line here.
         weak_phonemes=[],
     )

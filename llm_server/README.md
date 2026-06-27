@@ -72,7 +72,7 @@ All parameters:
 
 ## Automatic Startup from the App
 
-When `LLM_BACKEND = "local_server"` is set in `config.py`, the main application launches the server automatically and waits for it to become ready (up to `LOCAL_SERVER_STARTUP_TIMEOUT` seconds).
+When the LLM backend is `local_server` (the default; set via `"llm_backend"` in `config/settings.json`, read by `config.py`), the main application launches the server automatically and waits for it to become ready (up to `LOCAL_SERVER_STARTUP_TIMEOUT` seconds).
 
 ## Endpoints
 

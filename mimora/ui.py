@@ -220,7 +220,7 @@ class TrainerView:
         tk.Label(text_header, text="Name:", font=(FONT_FAMILY, 9),
                  fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.RIGHT, padx=(0, 6))
         # Save on focus loss; Enter just drops focus (which triggers the save
-        # and returns the spacebar to push-to-talk duty).
+        # and returns the spacebar to record-toggle duty).
         self.user_name_entry.bind("<FocusOut>", self._cb.on_user_name_changed)
         self.user_name_entry.bind("<Return>", lambda e: self.root.focus_set())
 
@@ -303,7 +303,7 @@ class TrainerView:
 
         # 5a. Translation card — a SEPARATE panel below the phrase card (its own
         # frame, not a sub-section of it), shown only when a translation language
-        # is selected (see §4/§5). Same panel background as the phrase card; the
+        # is selected. Same panel background as the phrase card; the
         # small gap between the two (their pack pady) reads as two independent
         # cards. Dimmer and smaller text so the phrase stays the focus. The frame
         # is packed/unpacked right after the phrase card by refresh_translation_ui();
@@ -383,7 +383,7 @@ class TrainerView:
                                    highlightthickness=1, highlightbackground=THEME["border"])
         # Fix the panel width at 105px: turn off geometry propagation so the
         # FaceWidget inside cannot stretch the frame to its own requested width
-        # (§3). Height still comes from fill=Y (the charts row), and the face
+        # Height still comes from fill=Y (the charts row), and the face
         # stays circular/centred for whatever box it gets.
         self.face_frame.pack_propagate(False)
         self.face = FaceWidget(self.face_frame, size=110, bg=THEME["bg_panel"],
@@ -837,12 +837,12 @@ class TrainerView:
         ``bucket == -1``, shown as ``Score: 55 (-)`` (a dash instead of ``-1``).
         """
         bucket_text = str(bucket) if bucket >= 0 else "-"
-        # Colour the score by the same quality band as the status line (§10), so
+        # Colour the score by the same quality band as the status line, so
         # the two score read-outs always agree visually.
         _, color = self._quality_label(score)
         self.stats_label.configure(text=f"Score: {score:.0f} ({bucket_text})", fg=color)
 
-    # Qualitative rating bands for the status line (§10), replacing the old
+    # Qualitative rating bands for the status line, replacing the old
     # Passed/Keep-practicing copy. Bands run on the raw 0-100 score and the
     # colour escalates with quality, so the status line, the face (neutral at
     # 50) and the Score bar all tell a consistent story.
@@ -906,7 +906,7 @@ class TrainerView:
 
     def toggle_prosody_charts(self):
         """Show/hide each prosody canvas to match its title checkbox."""
-        # Return focus to the window so the spacebar push-to-talk keeps working
+        # Return focus to the window so the spacebar record toggle keeps working
         # (a focused checkbox would otherwise capture the spacebar and toggle).
         self.root.focus_set()
         # Pitch chart leads the charts column (its title is above the row), so
@@ -958,8 +958,8 @@ class TrainerView:
         self.face.set_score(result.score)
         self.feedback_display.configure(state=tk.NORMAL)
         # The numeric score moved out of this panel: the raw score/bucket now lives
-        # in the status bar (§1) and the qualitative label (§10). This panel keeps
-        # only the actionable Phrase/Heard breakdown.
+        # in the status bar and the qualitative label. This panel keeps only the
+        # actionable Phrase/Heard breakdown.
         # First line: the target phrase, highlighting what was said well (green)
         # vs mispronounced (red). Driven by the engine-neutral reference_words
         # tags; falls back to the raw phrase if an engine left them empty.
@@ -979,7 +979,7 @@ class TrainerView:
                 self.feedback_display.insert(tk.END, token + " ", "text")
         self.feedback_display.insert(tk.END, "\n")
 
-        # Second line (§11): the few phonemes worth working on, instead of the
+        # Second line: the few phonemes worth working on, instead of the
         # full recognised transcription -- the panel now says "what to fix", not
         # "what was heard". The phoneme engine supplies weak_phonemes (worst
         # first); the acoustic engine has no per-phone breakdown, so it keeps the

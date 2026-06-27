@@ -17,8 +17,8 @@ in the optional ``good_mode="ceiling"``, recognized once to anchor a flawless re
 to 100 per phrase; the default ``good_mode="global"`` scores against the single
 calibrated PHONEME_GOOD (matching how the 0-5 buckets were fit).
 
-Public API mirrors ``acoustic/`` exactly so the dispatcher (task stage B) can
-treat both engines the same:
+Public API mirrors ``acoustic/`` exactly so the dispatcher can treat both engines
+the same:
     load_models()  -- load the wav2vec2 phoneme weights once (call in a thread).
     warm_up()      -- dummy pass to remove first-call latency.
     analyze(...)   -- single entry point returning a PronunciationResult.
@@ -59,7 +59,7 @@ import numpy as np
 from .config import get_config
 
 # Engine-neutral result type shared with the acoustic engine, so the GUI reads one
-# stable shape regardless of the active engine (task §3). This engine fills the
+# stable shape regardless of the active engine. This engine fills the
 # phoneme-specific fields (per_phone_distance / phoneme_score / recall / good_anchor);
 # the acoustic_* fields stay at their defaults.
 from pronunciation.common import PronunciationResult
@@ -152,7 +152,7 @@ def _apply_model_calibration(calib: dict) -> None:
     """
     global PHONEME_GOOD, BAD_SHRINK_PHONES, BAD_CEILING
     global INSERTION_CAP_PER_PHONE, INSERTION_CONF_MIN, INSERTION_CONF_AGG
-    global RECALL_MAX_DIST, WEIGHT_PHONEME, WEIGHT_WORD, WORD_RECALL_MIN
+    global RECALL_MAX_DIST, WEIGHT_PHONEME, WEIGHT_WORD
     global WORD_GOOD_FRAC, WORD_BAD_FRAC
     global OVERPRODUCTION_TOLERANCE, OVERPRODUCTION_STRENGTH
     global BUCKET_CUTPOINTS, BUCKET_TO_PERCENT, PASS_BUCKET
@@ -171,27 +171,25 @@ def _apply_model_calibration(calib: dict) -> None:
     RECALL_MAX_DIST = calib.get("recall_max_dist", 0.13)   # per-phone dist counted as recalled
     WEIGHT_PHONEME = calib.get("weight_phoneme", 0.7)
     WEIGHT_WORD = calib.get("weight_word", 0.3)
-    # Retained for back-compat; the per-word highlight uses WORD_*_FRAC below.
-    WORD_RECALL_MIN = calib.get("word_recall_min", 0.5)
     # Three-level per-word highlight cutoffs, as a fraction of the [good, bad] window
     # (0 == flawless, 1 == completely wrong): <= good_frac is "good", >= bad_frac is
     # "bad", in between is "ok".
     WORD_GOOD_FRAC = calib.get("word_good_frac", 0.33)
     WORD_BAD_FRAC = calib.get("word_bad_frac", 0.66)
 
-    # Over-production penalty (BUG-UI-2): far more spoken phones than the reference
+    # Over-production penalty: far more spoken phones than the reference
     # asked for scales a [0, 1] penalty; in-band attempts get zero. Strength 0 disables.
     OVERPRODUCTION_TOLERANCE = calib.get("overproduction_tolerance", 0.5)
     OVERPRODUCTION_STRENGTH = calib.get("overproduction_strength", 1.0)
 
-    # 0-5 bucketization (task §4): coarsen the raw 0-100 score onto a human-calibrated
+    # 0-5 bucketization: coarsen the raw 0-100 score onto a human-calibrated
     # grade. An empty/absent block disables bucketing (bucket stays -1, raw threshold).
     buckets = calib.get("buckets", {})
     # Ascending score thresholds; bucket = how many a score clears (0..len).
     BUCKET_CUTPOINTS = [float(c) for c in buckets.get("cutpoints", [])]
     # bucket (as str) -> [lo, hi] user-facing percent band (displayed at the midpoint).
     BUCKET_TO_PERCENT = calib.get("bucket_to_percent", {})
-    # A take "passes" at or above this bucket (good speech is bucket 4-5; task §7).
+    # A take "passes" at or above this bucket (good speech is bucket 4-5).
     PASS_BUCKET = calib.get("pass_bucket", 4)
 
 
@@ -245,7 +243,7 @@ def _ensure_calibration() -> None:
 
 
 # =====================================================================
-# Sample log + calibration write-back (task §5.3; mirrors the acoustic engine).
+# Sample log + calibration write-back (mirrors the acoustic engine).
 # analyze() appends one record per take to logs/phoneme_samples.jsonl; the offline
 # phoneme/calibrate.py re-anchors PHONEME_GOOD from the reference self-tests there.
 # Kept separate from the acoustic acoustic_samples.jsonl so the two engines' logs
@@ -506,7 +504,7 @@ def reference_word_phonemes(text: str, espeak_lang: str) -> List[List[str]]:
     Returns exactly one group per ``text.split()`` token (an empty list for a token
     that yields no phones, e.g. pure punctuation), so the groups align 1:1 with the
     display tokens. This is what lets the scorer map phone errors back to the right
-    word for the GUI highlight (task §6).
+    word for the GUI highlight.
 
     Earlier this phonemized the whole sentence and split on espeak's own word
     boundaries, which desynced from ``text.split()`` whenever espeak split or dropped
@@ -729,7 +727,7 @@ def _score_from_distance(per_phone_distance: float, bad: float, good: float) -> 
 
 def _weak_phonemes(pairs: List[Tuple[str, str]],
                    max_count: int = 3) -> List[Dict[str, Any]]:
-    """The reference phones pronounced worst, for the GUI's "work on these" line (§11).
+    """The reference phones pronounced worst, for the GUI's "work on these" line.
 
     For every reference phone in the alignment (substitution or deletion) measure
     an error severity in [0, 1]: the feature distance to what was heard, or 1.0
@@ -842,7 +840,7 @@ def _recognize_reference(reference_audio: np.ndarray, reference_sr: int,
 
 
 # =====================================================================
-# Phone-error -> word mapping (for the GUI's word-level highlight, task §6).
+# Phone-error -> word mapping (for the GUI's word-level highlight).
 # =====================================================================
 def _word_recall(groups: List[List[str]],
                  pairs: List[Tuple[str, str]]
@@ -858,7 +856,7 @@ def _word_recall(groups: List[List[str]],
     (not spoken) contributes the maximum 1.0. This is the same axis the overall
     score uses, so the per-word highlight agrees with the bucket -- a "dirty" or
     swapped word is far from the reference and reads as such, unlike the lenient
-    50%-recall flag it replaces (task §6).
+    50%-recall flag it replaces.
     """
     word_of: List[int] = []
     for wi, group in enumerate(groups):
@@ -914,7 +912,7 @@ def _overproduction_penalty(n_reference: int, n_spoken: int) -> float:
 
     Recall and the best-cost alignment leave extra speech free, so a long, totally
     different utterance cherry-picks a close match for nearly every reference phone
-    and reads all-green with an inflated score (BUG-UI-2). This measures how far the
+    and reads all-green with an inflated score. This measures how far the
     spoken length runs past a tolerance band above the reference length: 0 while
     within tolerance (normal/accented speech is untouched), rising to 1 as the
     over-production grows. OVERPRODUCTION_STRENGTH == 0 disables it.
@@ -952,7 +950,7 @@ def _reference_word_tags(tokens: List[str], levels: List[str]) -> List[Dict[str,
 
 
 # =====================================================================
-# 0-5 bucketization (task §4): raw 0-100 score -> human-calibrated grade + percent.
+# 0-5 bucketization: raw 0-100 score -> human-calibrated grade + percent.
 # =====================================================================
 def _score_to_bucket(score: float) -> int:
     """Coarse 0-5 grade: how many ascending cutpoints the score clears (0..5).
@@ -969,7 +967,7 @@ def _bucket_to_percent(bucket: int, fallback: float) -> float:
     """User-facing percent for a bucket: the midpoint of its [lo, hi] band.
 
     The midpoint keeps every take in a bucket on one number (flat), so within-bucket
-    engine noise is hidden (task §4.3). Falls back to ``fallback`` (the raw score)
+    engine noise is hidden. Falls back to ``fallback`` (the raw score)
     when the bucket has no configured band.
     """
     band = BUCKET_TO_PERCENT.get(str(bucket))
@@ -1029,7 +1027,7 @@ def analyze(user_audio: np.ndarray,
     # three-level colour (good/ok/bad) tracks the bucket rather than a lenient recall.
     tokens = expected_text.split()
     _recalled, heard, word_dist = _word_recall(groups, result.pairs)
-    # Same over-production penalty the score uses (BUG-UI-2): nudge each word's
+    # Same over-production penalty the score uses: nudge each word's
     # distance toward the bad anchor so a long, completely different utterance
     # colours red instead of cherry-picking its way to all-green.
     overprod = _overproduction_penalty(len(reference), len(spoken))
@@ -1069,7 +1067,7 @@ def analyze(user_audio: np.ndarray,
 
     transcription = " ".join(spoken)
 
-    # Coarsen the raw 0-100 score to a 0-5 bucket (task §4). When buckets are
+    # Coarsen the raw 0-100 score to a 0-5 bucket. When buckets are
     # configured, "passed" and the user percent come from the bucket; otherwise the
     # engine degrades to the raw score and its threshold (no calibration -> no crash).
     bucket = _score_to_bucket(result.score)

@@ -3,7 +3,7 @@
 
 """Semi-automatic re-anchoring of the phoneme GOOD anchor (on request).
 
-The direct analog of ``pronunciation/acoustic/calibrate.py`` (task §5.3). Every
+The direct analog of ``pronunciation/acoustic/calibrate.py``. Every
 ``analyze()`` call appends its components to ``logs/phoneme_samples.jsonl``; after a
 practice session run:
 
