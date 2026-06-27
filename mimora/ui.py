@@ -379,15 +379,20 @@ class TrainerView:
         # height, with the articulation face centred inside. The face fill uses
         # the brightest theme colour and its features the panel colour, so it
         # reads as a white face on dark themes and a dark face on light ones.
-        self.face_frame = tk.Frame(prosody_body, width=105, bg=THEME["bg_panel"],
+        self.face_frame = tk.Frame(prosody_body, width=105, height=100,
+                                   bg=THEME["bg_panel"],
                                    highlightthickness=1, highlightbackground=THEME["border"])
         # Fix the panel width at 105px: turn off geometry propagation so the
-        # FaceWidget inside cannot stretch the frame to its own requested width
-        # Height still comes from fill=Y (the charts row), and the face
-        # stays circular/centred for whatever box it gets.
+        # FaceWidget inside cannot stretch the frame to its own requested width.
+        # The 100px height is a *minimum*: with fill=Y the panel still grows to
+        # match a taller charts row, but when both charts are hidden the row
+        # would otherwise collapse to a checkbox's height and shrink the face to
+        # nothing, so this floor keeps the face a usable size on its own.
+        # The face stays circular/centred for whatever box it gets.
         self.face_frame.pack_propagate(False)
         self.face = FaceWidget(self.face_frame, size=110, bg=THEME["bg_panel"],
-                               face_color=THEME["text_bright"], ink=THEME["bg_panel"])
+                               face_color=THEME["face"], face_outline=THEME["border"],
+                               eye_color=THEME["eyes"], mouth_color=THEME["mouth"])
         # Let the charts column decide the row height: a tiny requested height
         # stops the face from inflating the row, while fill=BOTH makes it fill
         # whatever height the panel gets. Its responsive rebuild keeps the face
@@ -710,6 +715,9 @@ class TrainerView:
 
     def enter_recording(self):
         """Microphone is open: lock out playback so it cannot bleed into the take."""
+        # Drop the previous take's charts and result the moment the mic opens,
+        # so the user starts each recording from a clean slate.
+        self.clear_previous_result()
         self._set_actions(generate=False, reference=False, user=False, test=False)
         self.draw_mic_button("recording")
         self.update_status("Recording...", THEME["bad"])
@@ -841,6 +849,22 @@ class TrainerView:
         # the two score read-outs always agree visually.
         _, color = self._quality_label(score)
         self.stats_label.configure(text=f"Score: {score:.0f} ({bucket_text})", fg=color)
+
+    def clear_previous_result(self):
+        """Wipe the previous take's result before a new recording starts.
+
+        Clears the Phrase/Work-on feedback panel, resets the Score read-out in
+        the status bar to its placeholder and erases both prosody charts, so a
+        stale result can never be mistaken for the take in progress. The status
+        *line* is set separately by the caller (enter_recording -> "Recording...").
+        """
+        self.feedback_display.configure(state=tk.NORMAL)
+        self.feedback_display.delete("1.0", tk.END)
+        self.feedback_display.configure(state=tk.DISABLED)
+        self.stats_label.configure(text="Score: - (-)", fg=THEME["text_dim"])
+        self._last_prosody = None
+        self.f0_canvas.delete("all")
+        self.en_canvas.delete("all")
 
     # Qualitative rating bands for the status line, replacing the old
     # Passed/Keep-practicing copy. Bands run on the raw 0-100 score and the

@@ -32,7 +32,8 @@ Design constraints this module is built around:
 Typical use::
 
     face = FaceWidget(parent_frame, size=160, bg=THEME["bg_panel"],
-                      ink=THEME["text_bright"])
+                      face_color=THEME["face"], eye_color=THEME["eyes"],
+                      mouth_color=THEME["mouth"])
     face.pack()
     ...
     # inside the audio playback callback (any thread):
@@ -64,7 +65,9 @@ class FaceWidget(tk.Canvas):
         *,
         bg: str = "#1e1e1e",
         face_color: str = "#ffffff",
-        ink: str = "#1e1e1e",
+        face_outline: str = "",
+        eye_color: str = "#1e2a44",
+        mouth_color: str = "#8a3a2c",
         fps: int = 30,
         attack: float = 0.6,
         release: float = 0.15,
@@ -77,7 +80,13 @@ class FaceWidget(tk.Canvas):
                 from this, so this is the only sizing knob you need.
             bg: canvas background colour (the panel behind the face).
             face_color: fill colour of the face disc.
-            ink: colour of the eyes and mouth, drawn on top of the face.
+            face_outline: outline colour of the face disc. Empty string (the
+                default) draws no outline; pass a colour so the disc stays
+                visible when its fill matches the panel behind it (e.g. a white
+                face on a white panel in the light theme).
+            eye_color: colour of the two dot eyes, drawn on top of the face.
+            mouth_color: colour of the mouth (talking ellipse and smiley),
+                drawn on top of the face.
             fps: redraw rate of the animation loop.
             attack: smoothing factor used while the mouth is *opening* (target
                 louder than current). Higher = snappier. Range (0, 1].
@@ -88,8 +97,10 @@ class FaceWidget(tk.Canvas):
         super().__init__(parent, width=size, height=size, bg=bg,
                          highlightthickness=0, bd=0)
 
-        self._ink = ink
+        self._eye_color = eye_color
+        self._mouth_color = mouth_color
         self._face_color = face_color
+        self._face_outline = face_outline
         self._frame_ms = max(1, int(1000 / fps))
         self.fps = fps
         self._attack = attack
@@ -169,16 +180,18 @@ class FaceWidget(tk.Canvas):
         self._mouth_ry_max = radius * 0.28       # loud speech (deliberately toned down)
         self._smile_amp = radius * 0.16          # corner/mid offset at full curl
         self._line_w = max(2, int(dim * 0.02))
+        self._outline_w = max(2, int(dim * 0.03))  # disc edge when shown
 
     def _draw_static(self) -> None:
         """Draw the parts that never move: head outline and eyes."""
         r = self._head_r
         self.create_oval(self._cx - r, self._cy - r, self._cx + r, self._cy + r,
-                         outline="", fill=self._face_color)
+                         outline=self._face_outline, width=self._outline_w,
+                         fill=self._face_color)
         er = self._eye_r
         for ex, ey in (self._eye_l, self._eye_r_pos):
             self.create_oval(ex - er, ey - er, ex + er, ey + er,
-                             outline="", fill=self._ink)
+                             outline="", fill=self._eye_color)
 
     def _smile_points(self, curl: float) -> list[float]:
         """Three smooth-curve points for the paused smiley.
@@ -202,11 +215,11 @@ class FaceWidget(tk.Canvas):
         self._mouth_oval = self.create_oval(
             self._cx - rx, self._mouth_cy - ry,
             self._cx + rx, self._mouth_cy + ry,
-            outline=self._ink, width=self._line_w, fill="", state="hidden",
+            outline=self._mouth_color, width=self._line_w, fill="", state="hidden",
         )
         # Paused smiley (shown when idle). Starts visible and flat.
         self._mouth_smile = self.create_line(
-            self._smile_points(0.0), fill=self._ink, width=self._line_w,
+            self._smile_points(0.0), fill=self._mouth_color, width=self._line_w,
             smooth=True, capstyle=tk.ROUND,
         )
 
@@ -380,7 +393,8 @@ if __name__ == "__main__":
     root.title("FaceWidget demo")
     root.configure(bg="#1e1e1e")
     face = FaceWidget(root, size=220, bg="#1e1e1e",
-                      face_color="#ffffff", ink="#1e1e1e")
+                      face_color="#ffffff", eye_color="#1e2a44",
+                      mouth_color="#8a3a2c")
     face.pack(padx=24, pady=24)
 
     expressions = [":)", ":|", ":("]

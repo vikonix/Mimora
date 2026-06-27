@@ -19,6 +19,11 @@
   "text_disabled": "#a6a6b0",
   "text_disabled_dim": "#c2c2ca",
 
+  "_face": "Articulation face beside the prosody charts: white disc, dark-blue eyes, red-brown mouth. Kept identical to the dark theme on purpose.",
+  "face": "#ffffff",
+  "eyes": "#1e2a44",
+  "mouth": "#8a3a2c",
+
   "_status": "Status and feedback colors, darkened to stay readable on light backgrounds. 'reference' marks everything related to the reference audio (status texts, prosody curve).",
   "good": "#1e9e4a",
   "ready": "#009457",

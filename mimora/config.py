@@ -460,6 +460,11 @@ _DARK_THEME = {
     "text_accent": "#d6c2ff",       # text on accent-tinted controls
     "text_disabled": "#555560",
     "text_disabled_dim": "#3a3a40",
+    # Articulation face (intentionally identical in every theme; the disc is
+    # white with dark-blue eyes and a red-brown mouth, see face_widget.py)
+    "face": "#ffffff",
+    "eyes": "#1e2a44",
+    "mouth": "#8a3a2c",
     # Status / feedback ("reference" marks everything tied to the reference
     # audio: status texts and the reference prosody curve)
     "good": "#50fa7b",
