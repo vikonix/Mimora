@@ -2,7 +2,7 @@
 
 **A local, offline pronunciation trainer.** Mimora says a phrase out loud, you repeat it, and it scores how close you were — highlighting the words to work on. Practice the same phrase until you pass, then move on to the next one. Everything runs on your machine: speech synthesis, speech recognition, phrase generation, and acoustic analysis.
 
-Mimora is built on the SpeakLoop voice-tutor stack and reuses the pronunciation-scoring core of [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) as a library.
+Mimora is built on the SpeakLoop voice-tutor stack. Its default **phoneme** scoring engine is Mimora's own; the alternative **acoustic** engine reuses the pronunciation-scoring core of [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) as a library.
 
 ---
 
@@ -64,13 +64,15 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 ### Models
 
 `install.py` pre-downloads all of these (see [Quick install](#quick-install-script)).
-Otherwise the two Hugging Face models are fetched automatically on first run,
+Otherwise the four Hugging Face models are fetched automatically on first run,
 and only the GGUF chat model must be obtained manually.
 
 | Model | Used by | Notes |
 |---|---|---|
-| `facebook/wav2vec2-large-960h` | pronunciation analysis | ~1.2 GB; via `install.py` or on first run |
+| `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | pronunciation analysis (**phoneme** engine, default) | espeak IPA phoneme recognizer, ~1.2 GB; via `install.py` or on first run |
+| `facebook/wav2vec2-large-960h` | pronunciation analysis (**acoustic** engine) | ~1.2 GB; via `install.py` or on first run |
 | Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech | via `install.py` or on first run |
+| `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | NLLB-200 200-language translator, ~2.4 GB; via `install.py` or on first run |
 | A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | via `install.py`, or **download manually** into `models/` |
 
 ---
@@ -106,6 +108,10 @@ it (answer `Y` to run, `n` to abort, `s` to skip). Anything already installed is
 detected and offered as reinstall-or-skip rather than blindly redone. The full
 run is logged to `logs/install.log`.
 
+Expect the full run to take **several minutes** (mostly downloads, so it depends
+on your internet speed), and to use roughly **10 GB** of disk once all packages
+and models are in place.
+
 Useful flags:
 
 - `--yes` — run non-interactively (skips already-installed steps; add `--reinstall` to force them)
@@ -129,9 +135,15 @@ cd Mimora
 pip install -r requirements.txt
 pip install -r llm_server/requirements.txt
 
-# 3. Pronunciation module dependencies (Wav2Vec2, phonemizer, DTW, etc.)
+# 3. Pronunciation module dependencies (Wav2Vec2, phonemizer, etc.)
+#    The phoneme engine is the default — its requirements add panphon on top of the root deps:
+pip install -r pronunciation/phoneme/requirements.txt
+#    Only if you switch ENGINE to "acoustic" (DTW core):
 pip install -r pronunciation/acoustic/requirements.txt
 ```
+
+The offline translator (NLLB-200) needs no extra step — its dependencies
+(`transformers`, `sentencepiece`) are already in the root `requirements.txt` from step 2.
 
 ### Install espeak-ng (required for phoneme analysis)
 
@@ -171,13 +183,17 @@ To do it manually instead, download a small instruct model (e.g. `Llama-3.2-3B-I
 python main.py
 ```
 
-On first launch the app loads the TTS and pronunciation (Wav2Vec2) models and starts the LLM server (this takes a while and downloads several GB). Once it shows **Ready**:
+On first launch the app loads the TTS and pronunciation (Wav2Vec2) models and starts the LLM server. If you ran `install.py` (or already launched once), the models are cached and this is just a load that takes a moment; if any model is still missing, it is downloaded first (several GB), which takes a while. Once it shows **Ready**:
 
 1. Edit the **Practice text** panel (or keep the default).
 2. Click **🎲 New phrase** — Mimora generates a phrase and speaks it.
 3. **Hold `SPACE`** (or press and hold the mic button) and repeat the phrase; release when done.
 4. Read your **score** and the words to improve in the feedback panel.
 5. Use **▶ Reference** / **▶ My recording** to compare, then repeat or generate the next phrase.
+
+The **first few phrases run noticeably slowly** — the models are still warming up
+and loading their data into memory on their first call. This is normal; speed
+settles to its steady state after the initial requests.
 
 Press `ESC` or close the window to quit (the LLM server subprocess is terminated cleanly).
 
@@ -189,9 +205,10 @@ Key options in [`mimora/config.py`](mimora/config.py) (overridable via [`config/
 
 | Setting | Default | Description |
 |---|---|---|
-| `ENGINE` | `phoneme` | Active scoring engine: `phoneme` (default) or `acoustic`. Code-only, set in `mimora/config.py`. |
-| `WAV2VEC2_MODEL_NAME` | `facebook/wav2vec2-large-960h` | Pronunciation/transcription model. |
-| `WAV2VEC2_DEVICE` | `DEVICE` (cuda/cpu) | Set to `"cpu"` to avoid VRAM contention with llama_cpp / Kokoro. |
+| `ENGINE` | `phoneme` | Active scoring engine: `phoneme` (**default**) or `acoustic`. Code-only, set in `mimora/config.py`. |
+| `WAV2VEC2_PHONEME_MODEL_NAME` | `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | Phoneme-ASR model for the **default** `phoneme` engine (emits espeak-style IPA). |
+| `WAV2VEC2_MODEL_NAME` | `facebook/wav2vec2-large-960h` | Embedding/transcription model used only by the `acoustic` engine. |
+| `WAV2VEC2_DEVICE` | `DEVICE` (cuda/cpu) | Device for the active engine's Wav2Vec2 model. Set to `"cpu"` to avoid VRAM contention with llama_cpp / Kokoro. |
 | `PRONUNCIATION_SCORE_THRESHOLD` | `70.0` | Score (0–100) required to pass a phrase. |
 | `PRACTICE_TEXT_FILE` | `texts/practice_text.txt` | Source text pre-loaded into the input panel. |
 | `PHRASE_GEN_TEMPERATURE` / `PHRASE_GEN_MAX_TOKENS` | `0.7` / `40` | Phrase-generation sampling. |
@@ -204,14 +221,14 @@ Key options in [`mimora/config.py`](mimora/config.py) (overridable via [`config/
 
 ## Using the pronunciation core as a library
 
-The `pronunciation/acoustic/` package is GUI-agnostic and can be used on its own:
+Both engine packages are GUI-agnostic and can be used on their own. The example below uses the **default** `phoneme` engine; the `acoustic` package exposes the same `load_models()` / `analyze(...)` interface:
 
 ```python
-from pronunciation import acoustic   # or: from pronunciation import phoneme
+from pronunciation import phoneme   # default engine; or: from pronunciation import acoustic
 
-acoustic.load_models()   # load Wav2Vec2 once (and warm_up() to remove first-call latency)
+phoneme.load_models()   # load Wav2Vec2 once (and warm_up() to remove first-call latency)
 
-result = acoustic.analyze(
+result = phoneme.analyze(
     user_audio=user_waveform,        # np.ndarray, 16 kHz mono
     expected_text="hello world",
     reference_audio=reference_wav,   # np.ndarray (e.g. Kokoro output)
@@ -241,17 +258,17 @@ python tests/test_speech.py path/to/user.wav [path/to/reference.wav]
 
 ## GPU / CPU notes
 
-Three torch models (Wav2Vec2, Kokoro) plus `llama_cpp` can compete for VRAM on a single GPU. Mimora mitigates this two ways:
+Several torch models (the active engine's Wav2Vec2 — the `phoneme` recognizer by default, Kokoro, and the NLLB translator) plus `llama_cpp` can compete for VRAM on a single GPU. Mimora mitigates this two ways:
 
-- The LLM runs in a **separate process** (`llm_server/`), and the practice loop runs its phases (LLM → Kokoro → Wav2Vec2) **sequentially**, so they don't synthesize/infer at the same time.
+- The LLM runs in a **separate process** (`llm_server/`), and the practice loop runs its phases (LLM → Kokoro → Wav2Vec2) **sequentially**, so they don't synthesize/infer at the same time. The NLLB translator defaults to CPU (`TRANSLATOR_DEVICE`).
 - If VRAM is still tight, set `WAV2VEC2_DEVICE = "cpu"` in `mimora/config.py` — short phrases analyze acceptably on CPU.
 
 ---
 
 ## Known limitations
 
-- **English only** (phonemizer `en-us`).
-- The transcription-based word errors only surface mistakes the ASR actually "hears"; subtle distortions where the word is still recognized may not appear in the word list (the acoustic DTW + prosody partially compensate).
+- **Practice language is English for now.** The `acoustic` engine is English-only (English ASR model + phonemizer `en-us`). The default `phoneme` engine uses a multilingual IPA recognizer and is planned to be calibrated for other languages in future releases. (The translation panel already targets many languages — that is the practice phrase's translation, not the practice language itself.)
+- The transcription-based word errors only surface mistakes the ASR actually "hears"; subtle distortions where the word is still recognized may not appear in the word list (the default phoneme engine's IPA edit distance, or the acoustic engine's DTW, plus prosody partially compensate).
 - Scoring is **heuristic** and depends on your voice and microphone. After a practice session, re-anchor the active engine to your data: `python pronunciation/phoneme/calibrate.py` (default engine) or `python pronunciation/acoustic/calibrate.py` (acoustic engine); `--dry-run` previews the change. Every attempt's raw components are logged to `logs/phoneme_samples.jsonl` (or `logs/pronounce_samples.jsonl`) and `logs/main.log` for inspection.
 
 ---
@@ -260,7 +277,11 @@ Three torch models (Wav2Vec2, Kokoro) plus `llama_cpp` can compete for VRAM on a
 
 - **[OpenPronounce](https://github.com/Halleck45/OpenPronounce)** (MIT) — the pronunciation-scoring core reused in `pronunciation/acoustic/`.
 - **[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)** — text-to-speech.
-- **[Wav2Vec2](https://huggingface.co/facebook/wav2vec2-large-960h)** (Hugging Face Transformers) — acoustic embeddings and transcription.
+- **[wav2vec2-xlsr-53-espeak-cv-ft](https://huggingface.co/facebook/wav2vec2-xlsr-53-espeak-cv-ft)** (Hugging Face Transformers) — espeak-style IPA phoneme recognizer for the default `phoneme` engine.
+- **[Wav2Vec2](https://huggingface.co/facebook/wav2vec2-large-960h)** (Hugging Face Transformers) — acoustic embeddings and transcription (`acoustic` engine).
+- **[NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-600M)** (Hugging Face Transformers) — offline translation for the translation panel.
+- **[espeak-ng](https://github.com/espeak-ng/espeak-ng)** / **[phonemizer-fork](https://github.com/bootphon/phonemizer)** — reference phonemization (espeak IPA).
+- **[panphon](https://github.com/dmort27/panphon)** — articulatory feature distance used by the phoneme edit-distance scoring.
 - **[llama.cpp](https://github.com/ggerganov/llama.cpp)** / **[llama-cpp-python](https://github.com/abetlen/llama-cpp-python)** — local LLM inference.
 
 ## License
