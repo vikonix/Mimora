@@ -854,9 +854,10 @@ class TrainerView:
         """Wipe the previous take's result before a new recording starts.
 
         Clears the Phrase/Work-on feedback panel, resets the Score read-out in
-        the status bar to its placeholder and erases both prosody charts, so a
-        stale result can never be mistaken for the take in progress. The status
-        *line* is set separately by the caller (enter_recording -> "Recording...").
+        the status bar to its placeholder, erases both prosody charts and resets
+        the face to its neutral waiting smile, so a stale result can never be
+        mistaken for the take in progress. The status *line* is set separately
+        by the caller (enter_recording -> "Recording...").
         """
         self.feedback_display.configure(state=tk.NORMAL)
         self.feedback_display.delete("1.0", tk.END)
@@ -865,6 +866,10 @@ class TrainerView:
         self._last_prosody = None
         self.f0_canvas.delete("all")
         self.en_canvas.delete("all")
+        # Reset the face to the neutral waiting smile so it no longer reflects
+        # the previous take's score. rest() drops any leftover talking mouth.
+        self.face.rest()
+        self.face.set_expression(":)")
 
     # Qualitative rating bands for the status line, replacing the old
     # Passed/Keep-practicing copy. Bands run on the raw 0-100 score and the
