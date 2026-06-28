@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Valery Kovalev
 
-"""Prosody extraction (pitch & energy contours) — the engine-agnostic audio layer.
+"""Prosody extraction (pitch & energy contours) - the engine-agnostic audio layer.
 
 Pitch (F0) and energy contours describe *how* something was said (intonation,
 stress, rhythm), independent of *which* pronunciation engine scores the words.
 So they live here, in a light module computed from the raw user and reference
-waveforms in ``main.py`` regardless of the active engine — not inside any single
+waveforms in ``main.py`` regardless of the active engine - not inside any single
 engine. Both the phoneme (``pronunciation/phoneme/``, the default) and the acoustic
 (``pronunciation/acoustic/``) engine show the exact same two charts because neither
 computes prosody anymore.
@@ -36,7 +36,7 @@ from sklearn.preprocessing import MinMaxScaler
 # reference waveforms are resampled to this before any contour is taken.
 TARGET_SAMPLE_RATE = 16_000
 # Silence-trim threshold relative to the peak, in dB. Matches pronunciation/acoustic/speech.py
-# so the trimmed signal — and therefore the contours — line up with the engine's.
+# so the trimmed signal - and therefore the contours - line up with the engine's.
 TRIM_TOP_DB = 30
 
 
@@ -80,7 +80,7 @@ def extract_f0(audio_waveform: np.ndarray, sr: int = TARGET_SAMPLE_RATE) -> np.n
     """Extract the fundamental frequency (F0) contour; NaNs -> 0.
 
     fmax must cover the intonation peaks of female reference voices (Kokoro
-    af_*/bf_*: median ~200-220 Hz, expressive peaks 300-400 Hz) — anything above
+    af_*/bf_*: median ~200-220 Hz, expressive peaks 300-400 Hz) - anything above
     fmax is marked unvoiced and would be flattened by interpolation.
     """
     f0, _voiced_flag, _voiced_probs = librosa.pyin(audio_waveform, fmin=50, fmax=450, sr=sr)
@@ -112,7 +112,7 @@ def interpolate_f0(f0: np.ndarray) -> np.ndarray:
 # Reference prosody cache
 # =====================================================================
 # A phrase is practised many times against the same Kokoro reference, but the
-# reference waveform — and therefore its F0/energy — never changes between
+# reference waveform - and therefore its F0/energy - never changes between
 # attempts. Cache the most recent reference (one phrase is practised at a time)
 # so repeats skip the pyin pitch tracking on the reference. This mirrors the
 # embedding cache in pronunciation/acoustic/speech.py. The lock makes concurrent compute

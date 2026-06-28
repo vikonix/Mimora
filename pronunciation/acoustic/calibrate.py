@@ -14,7 +14,7 @@ The floor is per practising user: only attempts logged under the current
 
 How it works:
   * keeps only the current user's attempts (matched on the logged user_name);
-  * keeps attempts whose *text* matched well — low word/phoneme error rates mean
+  * keeps attempts whose *text* matched well - low word/phoneme error rates mean
     the user really said the expected phrase, so its acoustic distance is a
     sample of "good pronunciation, different speaker";
   * drops reference self-tests (the Test button compares the reference with
@@ -97,7 +97,7 @@ def main() -> int:
     samples = load_samples()
     samples = [s for s in samples if s.get("user_name", "") == config.USER_NAME]
 
-    # Filter by voice *before* truncating to the most recent samples — the
+    # Filter by voice *before* truncating to the most recent samples - the
     # reverse order spent the sample budget on other voices and silently
     # dropped older samples of the requested one.
     if args.voice:
@@ -125,7 +125,7 @@ def main() -> int:
 
     if len(good) < MIN_SAMPLES:
         print(f"\nNot enough good attempts (need {MIN_SAMPLES}). Practice a few "
-              "phrases in the app — speak clearly so the text matches — then rerun.")
+              "phrases in the app - speak clearly so the text matches - then rerun.")
         return 1
 
     distances = np.array([s["acoustic_per_step"] for s in good])

@@ -18,7 +18,7 @@ Data-derived scoring constants (the GOOD anchor, recall threshold, axis weights,
 insertion cap/gate, buckets) are NOT here: they live in the per-language model
 calibration next to the engine (``<lang>_model_calibration.json``, committed),
 with a machine-local ``calibration.json`` (gitignored) overriding only the GOOD
-anchor per user — so they stay shared with the eval/calibration tooling and out
+anchor per user - so they stay shared with the eval/calibration tooling and out
 of source.
 """
 

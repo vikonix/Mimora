@@ -14,7 +14,7 @@ installer, but in ``--dry-run`` mode: pip resolves and reports what it *would*
 install without installing or compiling anything. When a package has no
 compatible wheel, pip fails with "No matching distribution found for <pkg>".
 The script catches that name, adds it to the ``--no-binary`` exemption set, and
-retries — repeating until the resolve succeeds. The accumulated set is the list
+retries - repeating until the resolve succeeds. The accumulated set is the list
 you need to paste into SOURCE_ONLY_PACKAGES.
 
 Run it with the SAME interpreter you install Mimora with (3.11 or 3.12):
@@ -32,14 +32,14 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Mirrors SOURCE_ONLY_PACKAGES in install.py — the known sdist-only exemptions
+# Mirrors SOURCE_ONLY_PACKAGES in install.py - the known sdist-only exemptions
 # we start from. The script extends this set with whatever else turns out to
 # lack a wheel on this interpreter.
 SEED_EXEMPTIONS = ["fastdtw", "docopt", "unicodecsv"]
 
 # Packages the installer installs SEPARATELY (Step 3, from abetlen's prebuilt
 # wheel index) before the requirements step. They have no wheel on PyPI, so a
-# plain requirements resolve flags them — but that's expected, not a bug, and
+# plain requirements resolve flags them - but that's expected, not a bug, and
 # they must NOT go into SOURCE_ONLY_PACKAGES (that would force a source build).
 # We let resolution continue past them but exclude them from the final advice.
 EXTERNAL_PREINSTALLED = {"llama-cpp-python"}
@@ -89,7 +89,7 @@ def main() -> int:
             advice = [p for p in exemptions
                       if p not in seed and p not in EXTERNAL_PREINSTALLED]
             external = [p for p in exemptions if p in EXTERNAL_PREINSTALLED]
-            print("Resolve succeeded — every requirement has a compatible wheel "
+            print("Resolve succeeded - every requirement has a compatible wheel "
                   "(given the exemptions below).\n")
             if external:
                 print("Installed separately by the installer (ignore here): "
@@ -109,7 +109,7 @@ def main() -> int:
         missing = _NO_DIST.findall(output)
         new = [p for p in missing if p not in exemptions]
         if not new:
-            # Failed for a reason other than a missing wheel — show pip's output
+            # Failed for a reason other than a missing wheel - show pip's output
             # so the real cause (version conflict, offline, etc.) is visible.
             print("Resolve failed, but not due to a missing wheel. pip said:\n")
             print(output.strip())
@@ -119,7 +119,7 @@ def main() -> int:
             print(f"No wheel for '{p}' -> adding --no-binary exemption, retrying.")
             exemptions.append(p)
 
-    print("Gave up after too many iterations — check the requirements manually.")
+    print("Gave up after too many iterations - check the requirements manually.")
     return 1
 
 

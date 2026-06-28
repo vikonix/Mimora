@@ -156,7 +156,7 @@ class TestPureLogic(unittest.TestCase):
 # Note: the prosody-visualisation helpers (to_semitones, resample_series) live in
 # mimora/prosody_utils.py (tests: tests/test_prosody_utils.py). The prosody
 # *extraction* (extract_f0/energy, interpolate_f0) moved to mimora/prosody.py
-# (tests: tests/test_prosody.py) — this engine no longer owns prosody.
+# (tests: tests/test_prosody.py) - this engine no longer owns prosody.
 
 
 def _run_end_to_end(user_path: str, reference_path: Optional[str]) -> None:
@@ -168,7 +168,7 @@ def _run_end_to_end(user_path: str, reference_path: Optional[str]) -> None:
         reference_audio, reference_sr = sf.read(reference_path, dtype="float32")
     else:
         # No reference supplied: reuse the user's own audio. A faithful repetition
-        # of itself should score high — a quick sanity check of the pipeline.
+        # of itself should score high - a quick sanity check of the pipeline.
         print("No reference WAV given; using the user audio as its own reference.")
         reference_audio, reference_sr = user_audio, user_sr
 

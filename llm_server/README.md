@@ -1,6 +1,6 @@
 # LLM Server
 
-A standalone HTTP server for running local GGUF models. Runs as a separate process so that llama_cpp and Kokoro TTS operate in independent CUDA contexts — no GPU contention.
+A standalone HTTP server for running local GGUF models. Runs as a separate process so that llama_cpp and Kokoro TTS operate in independent CUDA contexts - no GPU contention.
 
 Fully compatible with the OpenAI Chat Completions API, so the main application communicates with it through the standard `openai` client.
 
@@ -17,7 +17,7 @@ The default `pip install llama-cpp-python` gives a CPU-only build: recent versio
 prebuilt wheels on PyPI, so pip silently compiles from source without CUDA, and
 `--n-gpu-layers` is then ignored. For GPU support you need a CUDA build.
 
-**Option A — prebuilt CUDA wheel (no compiler or CUDA Toolkit needed):**
+**Option A - prebuilt CUDA wheel (no compiler or CUDA Toolkit needed):**
 
 ```powershell
 python -m pip install llama-cpp-python==0.3.4 --force-reinstall --no-cache-dir --only-binary=:all: --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu121
@@ -34,7 +34,7 @@ Notes:
   system CUDA Toolkit and no manual DLL copying is required.
 - The only system requirement is an NVIDIA driver with CUDA 12.1 support.
 
-**Option B — build from source** (for a version newer than the prebuilt wheels):
+**Option B - build from source** (for a version newer than the prebuilt wheels):
 
 Prerequisites (Windows): Visual Studio Community with the **"Desktop development with C++"**
 workload and a CUDA Toolkit compatible with your GPU (12.x or 11.x).
@@ -64,7 +64,7 @@ All parameters:
 
 | Parameter | Default | Description |
 |---|---|---|
-| `--model` | — | Path to the GGUF file (can be omitted at startup) |
+| `--model` | - | Path to the GGUF file (can be omitted at startup) |
 | `--host` | `127.0.0.1` | Bind address |
 | `--port` | `8765` | Port |
 | `--n-gpu-layers` | `20` | Number of layers to offload to GPU |
@@ -110,5 +110,5 @@ If VRAM runs out, the remaining layers fall back to CPU automatically.
 
 ## Recommended Models
 
-- `Llama-3.2-3B-Instruct-Q4_K_M.gguf` — good balance of quality and speed
-- `Qwen2.5-3B-Instruct-Q4_K_M.gguf` — strong multilingual alternative
+- `Llama-3.2-3B-Instruct-Q4_K_M.gguf` - good balance of quality and speed
+- `Qwen2.5-3B-Instruct-Q4_K_M.gguf` - strong multilingual alternative

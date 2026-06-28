@@ -12,10 +12,10 @@ Usage:
     python server.py --model path/to/model.gguf --port 8765 --n-gpu-layers 20 --n-ctx 2048
 
 Endpoints:
-    GET  /health                  — model status
-    GET  /v1/models               — OpenAI-compatible model list
-    POST /v1/chat/completions     — streaming or non-streaming chat
-    POST /v1/model/load           — hot-reload model without restarting server
+    GET  /health                  - model status
+    GET  /v1/models               - OpenAI-compatible model list
+    POST /v1/chat/completions     - streaming or non-streaming chat
+    POST /v1/model/load           - hot-reload model without restarting server
 """
 
 import argparse
@@ -44,12 +44,12 @@ def _register_nvidia_dll_dirs() -> None:
     but only searches its own lib/ dir and CUDA_PATH. With no system CUDA
     Toolkit those DLLs come from the nvidia-cuda-runtime-cu12 /
     nvidia-cublas-cu12 pip packages, which place them under
-    site-packages/nvidia/*/bin — register those dirs before importing
+    site-packages/nvidia/*/bin - register those dirs before importing
     llama_cpp. No-op on non-Windows or when the packages are absent.
 
     llama_cpp loads llama.dll with winmode=RTLD_GLOBAL (0), which selects the
     legacy Windows DLL search: PATH is consulted, os.add_dll_directory() dirs
-    are not — so the dirs must go on PATH (add_dll_directory is kept in case
+    are not - so the dirs must go on PATH (add_dll_directory is kept in case
     a future llama_cpp switches to the default winmode).
     """
     if sys.platform != "win32":
@@ -82,7 +82,7 @@ logging.basicConfig(
 app = FastAPI(title="Mimora LLM Server", version="1.0.0")
 
 # Global model state.
-# _inference_lock serialises all inference calls — llama_cpp is not thread-safe.
+# _inference_lock serialises all inference calls - llama_cpp is not thread-safe.
 # It is held for the entire streaming duration, so model reload blocks until
 # the current generation finishes. This is intentional for a single-user app.
 _model: Optional[Llama] = None
@@ -145,7 +145,7 @@ def _load_model(model_path: str, n_gpu_layers: int, n_ctx: int, verbose: bool = 
 def _make_sse_chunk(chunk_id: str, delta: dict, finish_reason: Optional[str] = None) -> str:
     """Format a single SSE data line in OpenAI streaming format.
 
-    ``chunk_id`` is generated once per stream — OpenAI clients expect every
+    ``chunk_id`` is generated once per stream - OpenAI clients expect every
     chunk of one completion to share the same id. ``delta`` is passed through
     as-is so non-content deltas (the leading ``{"role": "assistant"}`` chunk)
     are not lost; rebuilding it from the content alone used to drop them.
@@ -266,7 +266,7 @@ def chat_completions(request: ChatCompletionRequest):
             max_tokens=request.max_tokens,
             top_p=request.top_p,
             stream=False,
-            # Fresh seed per request — see the comment in _stream_chat().
+            # Fresh seed per request - see the comment in _stream_chat().
             seed=random.randint(0, 2**31 - 1),
         )
     return result
@@ -290,7 +290,7 @@ def reload_model(req: ModelLoadRequest):
     except Exception as exc:
         # _load_model unloads the old model before loading the new one (two
         # models may not fit in VRAM simultaneously), so a failed reload leaves
-        # the server with no model at all — say so explicitly.
+        # the server with no model at all - say so explicitly.
         raise HTTPException(
             status_code=500,
             detail=f"Reload failed and the server now has NO model loaded "

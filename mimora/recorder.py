@@ -111,16 +111,16 @@ class AudioRecorder:
 
     All callbacks are invoked on the capture thread, so GUI callers must
     marshal any widget work onto the Tk main thread themselves (root.after):
-        on_max_duration  — the take hit config.MAX_RECORD_SECONDS; the caller
+        on_max_duration  - the take hit config.MAX_RECORD_SECONDS; the caller
                            is expected to route this through its normal stop
                            path so the take is finalized like a manual stop.
-        on_stream_error  — the input stream failed; recording is already
+        on_stream_error  - the input stream failed; recording is already
                            flagged off, the caller only restores its UI.
-        on_silence_stop  — the speaker fell silent for config.SILENCE_TIMEOUT
+        on_silence_stop  - the speaker fell silent for config.SILENCE_TIMEOUT
                            after having started speaking; like on_max_duration,
                            the caller routes this through its normal stop path
                            so the take is finalized exactly like a manual stop.
-        on_level         — periodic live input level (RMS, 0..1) while a take
+        on_level         - periodic live input level (RMS, 0..1) while a take
                            is in progress, throttled to ~20 Hz. Lets the UI show
                            that the mic is hearing, so the auto-stop does not
                            feel like a black box. Best-effort: never blocks the
@@ -189,7 +189,7 @@ class AudioRecorder:
         """Wait for the capture thread to finish.
 
         Returns True once the thread has exited (or never ran). Returns False
-        if it is still alive after the timeout — its callback may then still
+        if it is still alive after the timeout - its callback may then still
         be appending chunks, so the buffer must not be read.
         """
         if self.record_thread is None:
@@ -289,15 +289,15 @@ class AudioRecorder:
             # Voice-activity state for the silence auto-stop. We measure the
             # level of newly arrived chunks here on the poll thread (never in the
             # realtime callback, which must not do this much work):
-            #   processed       — how many chunks we have already measured, so we
+            #   processed       - how many chunks we have already measured, so we
             #                     only look at the ones appended since last poll.
-            #   speech_started  — lead-in grace: silence is ignored until the
+            #   speech_started  - lead-in grace: silence is ignored until the
             #                     speaker first crosses the speech threshold, so a
             #                     slow start never clips the take before it begins.
-            #   last_voice_time — wall-clock of the most recent above-threshold
+            #   last_voice_time - wall-clock of the most recent above-threshold
             #                     chunk; the take auto-stops once the gap since it
             #                     exceeds config.SILENCE_TIMEOUT.
-            #   last_level_emit — throttles on_level to LEVEL_EMIT_INTERVAL_SEC.
+            #   last_level_emit - throttles on_level to LEVEL_EMIT_INTERVAL_SEC.
             processed = 0
             speech_started = False
             last_voice_time = start_time

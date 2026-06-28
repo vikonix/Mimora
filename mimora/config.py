@@ -9,7 +9,7 @@ from pathlib import Path
 
 from . import loader
 
-# Project root — always absolute, regardless of working directory at launch.
+# Project root - always absolute, regardless of working directory at launch.
 # This file lives in mimora/, so the root is one level up.
 BASE_DIR = Path(__file__).resolve().parent.parent
 # Hand-edited configuration data (settings.json, themes/) lives here.
@@ -19,10 +19,10 @@ CONFIG_DIR = BASE_DIR / "config"
 # Settings files (optional overrides)
 # =====================================================================
 # Values in this module are layered, lowest priority first:
-#   1. built-in defaults — the literals in this file;
-#   2. hwconfig/hardware_config.json, "config" section — machine-derived
+#   1. built-in defaults - the literals in this file;
+#   2. hwconfig/hardware_config.json, "config" section - machine-derived
 #      values written by `python hwconfig/detect_hardware.py`;
-#   3. settings.json — hand-edited user preferences.
+#   3. settings.json - hand-edited user preferences.
 # A missing or broken file simply leaves the lower layers in effect: problems
 # are reported to stderr instead of crashing startup, because both files are
 # optional and settings.json is edited by hand.
@@ -67,8 +67,8 @@ for _key in _USER:
 
 
 # Validated accessors for settings.json values. The loader functions are pure
-# (they take the parsed dict as their first argument); binding _USER — and
-# BASE_DIR for path resolution — here keeps every call site below short.
+# (they take the parsed dict as their first argument); binding _USER - and
+# BASE_DIR for path resolution - here keeps every call site below short.
 _num = partial(loader.user_number, _USER)
 _path = partial(loader.user_path, _USER, BASE_DIR)
 _bool = partial(loader.user_bool, _USER)
@@ -93,13 +93,13 @@ if not isinstance(USER_NAME, str):
     USER_NAME = ""
 
 # =====================================================================
-# Local model cache (HuggingFace) — download once, then load offline
+# Local model cache (HuggingFace) - download once, then load offline
 # =====================================================================
 # Kokoro and Wav2Vec2 are pulled from the HuggingFace Hub. We pin
 # their cache to a project-local folder so the weights live next to the code and
 # survive a cleared home-directory cache. Once every model the run actually needs
 # is present we flip the Hub into offline mode, which skips the per-start network
-# round-trip HF normally makes to re-validate file revisions — that check is what
+# round-trip HF normally makes to re-validate file revisions - that check is what
 # makes startup feel like it "re-downloads" on every launch.
 #
 # IMPORTANT: huggingface_hub / transformers read these env vars at *import* time,
@@ -128,18 +128,18 @@ MAX_RECORD_SECONDS = _num("max_record_seconds", 20, minimum=1)
 # falls silent (recorder.py runs the VAD on the capture thread). These two tune
 # that auto-stop; both are read from settings.json so they can be adjusted to a
 # room/mic without code changes.
-#   silence_timeout   — seconds of continuous silence (after speech has begun)
+#   silence_timeout   - seconds of continuous silence (after speech has begun)
 #                       before the take is finalized automatically.
-#   silence_threshold — RMS level (0..1) at or above which a chunk counts as
+#   silence_threshold - RMS level (0..1) at or above which a chunk counts as
 #                       speech rather than silence. Kept low: silence is near-zero
 #                       RMS, while quiet speech may only reach ~0.04, and the level
 #                       is averaged over a whole capture chunk (which dilutes brief
-#                       bursts) — too high a value never arms the silence timer.
+#                       bursts) - too high a value never arms the silence timer.
 #                       Raise it only if a noisy room keeps the take from stopping.
 SILENCE_TIMEOUT = _num("silence_timeout", 3.0, minimum=0.5)
 SILENCE_THRESHOLD = _num("silence_threshold", 0.01, minimum=0.0)
 
-# Hardware Acceleration setup — the value detected by hwconfig wins; otherwise
+# Hardware Acceleration setup - the value detected by hwconfig wins; otherwise
 # loader.detect_device probes torch directly (and does not import torch at all
 # when hwconfig already supplied a valid device, so this stays cheap).
 DEVICE = loader.detect_device(_HW.get("DEVICE"))
@@ -148,8 +148,8 @@ DEVICE = loader.detect_device(_HW.get("DEVICE"))
 # LLM Backend Settings
 # =====================================================================
 # Backend selection, read from settings.json ("llm_backend"):
-#   "lm-studio"    — external LM Studio app (must be running separately)
-#   "local_server" — llm_server.py started automatically as a subprocess
+#   "lm-studio"    - external LM Studio app (must be running separately)
+#   "local_server" - llm_server.py started automatically as a subprocess
 LLM_BACKEND = _USER.get("llm_backend", "local_server")
 if LLM_BACKEND not in ("local_server", "lm-studio"):
     print(f"[config] settings.json: unknown llm_backend {LLM_BACKEND!r} "
@@ -204,8 +204,8 @@ EXTERNAL_N_CTX = int(_num("external_n_ctx",
 # default/selectable voices, and the espeak language used to build the
 # reference phonemes are all wired from this profile at load time (there is no
 # runtime switch).
-#   "american" — General American
-#   "british"  — British (Received Pronunciation)
+#   "american" - General American
+#   "british"  - British (Received Pronunciation)
 ENGLISH_ACCENT = _USER.get("english_accent", "american")
 
 # Per-accent settings. Voice prefixes: 'af_'/'bf_' = female, 'am_'/'bm_' = male
@@ -233,7 +233,7 @@ _ACCENT_PROFILES = {
     },
 }
 
-# A typo in the hand-edited settings.json must not crash startup — warn and
+# A typo in the hand-edited settings.json must not crash startup - warn and
 # fall back to the default accent instead.
 # (isinstance guards the dict lookup: an unhashable value such as a list
 # would otherwise raise TypeError instead of falling back.)
@@ -256,7 +256,7 @@ KOKORO_LANG_CODE = _ACCENT["kokoro_lang_code"]
 
 # Default voice: the accent's default, unless settings.json names another voice
 # of the same accent ("voice": null keeps the accent default). A voice from the
-# other accent is rejected — it would not match KOKORO_LANG_CODE.
+# other accent is rejected - it would not match KOKORO_LANG_CODE.
 KOKORO_VOICE = _ACCENT["default_voice"]
 _user_voice = _USER.get("voice")
 if _user_voice is not None:
@@ -308,7 +308,7 @@ PRONUNCIATION_SCORE_THRESHOLD = float(
 )
 # Acoustic floor: typical per-step cosine DTW distance of a *good* attempt
 # (the user's voice never matches the TTS voice exactly, so this is > 0). This
-# is only the pre-calibration default — after a practice session run
+# is only the pre-calibration default - after a practice session run
 # ``python pronunciation/acoustic/calibrate.py`` and the value it writes to
 # pronunciation/acoustic/calibration.json takes precedence (tuned to your voice and mic).
 PRONUNCIATION_ACOUSTIC_GOOD = 0.20
@@ -329,7 +329,7 @@ PHRASE_GEN_MAX_TOKENS = 40
 PHRASE_GEN_SYSTEM_PROMPT = (
     "You generate short English sentences for pronunciation practice. "
     "Reply with exactly ONE natural spoken sentence of 4 to 8 words, easy to read aloud. "
-    "Use only plain words and a single final period — no quotation marks, no numbering, "
+    "Use only plain words and a single final period - no quotation marks, no numbering, "
     "no extra commentary. Base the sentence on the topic and vocabulary of the text the user provides."
 )
 # Sliding window over the source text: instead of sending the whole text with
@@ -350,9 +350,9 @@ PHRASE_GEN_WINDOW_REPEATS = int(_num("phrase_gen_window_repeats", 5,
 PHRASE_GEN_FRAGMENT_SYSTEM_PROMPT = (
     "You generate very short English fragments for pronunciation practice. "
     "Reply with exactly ONE natural fragment of 2 to 4 words that is NOT a complete "
-    "sentence — such as a sentence opening, a prepositional phrase, or the start of a "
+    "sentence - such as a sentence opening, a prepositional phrase, or the start of a "
     "question. Examples: give me; on the table; where are you from. "
-    "Use only plain lowercase words — no final period, no quotation marks, no numbering, "
+    "Use only plain lowercase words - no final period, no quotation marks, no numbering, "
     "no extra commentary. Base the fragment on the topic and vocabulary of the text the user provides."
 )
 PHRASE_GEN_FRAGMENT_MAX_TOKENS = 16
@@ -367,7 +367,7 @@ if PHRASE_LENGTH not in ("full", "fragment"):
     PHRASE_LENGTH = "full"
 
 # Offline translation engine: a dedicated NLLB-200 model (mimora/translator.py),
-# NOT the chat LLM — the local 3B LLM produced unusable translations (empty CJK,
+# NOT the chat LLM - the local 3B LLM produced unusable translations (empty CJK,
 # leaked English). NLLB is a 200-language MT model that is small and CPU-friendly.
 # The repo is also part of _CACHED_REPOS (see the offline-mode gating below) so
 # offline-mode gating waits for it; the installer pre-fetches it into model_cache/
@@ -376,7 +376,7 @@ NLLB_TRANSLATOR_MODEL_NAME = "facebook/nllb-200-distilled-600M"
 # Device for the translator. Defaults to CPU on purpose: translation is
 # latency-tolerant (it runs in the background after the phrase is shown and the
 # reference has played), and keeping NLLB off the GPU avoids VRAM contention
-# with Kokoro / Wav2Vec2 / llama_cpp — matching the translator's RAM (not VRAM) budget.
+# with Kokoro / Wav2Vec2 / llama_cpp - matching the translator's RAM (not VRAM) budget.
 # hwconfig may pin it to "cuda" on a machine with VRAM to spare.
 TRANSLATOR_DEVICE = _HW.get("TRANSLATOR_DEVICE") or "cpu"
 
@@ -408,7 +408,7 @@ if loader.models_cached(Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 # Translation panel: language the practice phrase is translated into and shown
-# under the phrase card. The first ("") choice means "translation off" — it is
+# under the phrase card. The first ("") choice means "translation off" - it is
 # the default, so the panel and the extra translation work stay opt-in. The
 # label is mapped to a FLORES-200 code for NLLB (see mimora/translator.py) and
 # persisted via save_user_setting("translation_language", …).
@@ -494,7 +494,7 @@ THEME = dict(_DARK_THEME)
 _THEME_FILE = CONFIG_DIR / "themes" / f"{COLOR_THEME}_schema.json"
 _SCHEMA = loader.read_json(_THEME_FILE)
 if not _SCHEMA:
-    # For "dark" a missing file is fine — the built-in palette IS dark.
+    # For "dark" a missing file is fine - the built-in palette IS dark.
     if COLOR_THEME != "dark":
         print(f"[config] theme file {_THEME_FILE.name} is missing or invalid; "
               f"using the built-in dark palette", file=sys.stderr)
@@ -519,7 +519,7 @@ else:
 # Shared Audio Device Settings
 # =====================================================================
 # Single lock coordinates PortAudio access between the mic (main.py) and
-# speaker (tts.py) streams. Both modules import this object — do not create
+# speaker (tts.py) streams. Both modules import this object - do not create
 # separate Lock instances or they will not mutually exclude each other.
 AUDIO_LOCK = threading.Lock()
 

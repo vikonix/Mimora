@@ -69,12 +69,12 @@ KOKORO_SAMPLE_RATE = 24_000
 #
 # The acoustic component compares per-step cosine DTW distance between the two
 # Wav2Vec2 embedding sequences. Two anchors map it to 0-100:
-#   * floor (the acoustic "good" distance) — typical per-step distance of a
+#   * floor (the acoustic "good" distance) - typical per-step distance of a
 #     *good* attempt by a different speaker (the user vs the TTS voice never
 #     reach 0). Configurable default in AnalyzerConfig.acoustic_good; calibrated
 #     per voice/microphone by ``python acoustic/calibrate.py``, which writes it
 #     to calibration.json. current_acoustic_floor() returns the value in effect.
-#   * ceiling — per-step distance when content does not match. Derived
+#   * ceiling - per-step distance when content does not match. Derived
 #     automatically per utterance from the random-pair baseline (the mean
 #     distance between unaligned frames of the two recordings), so it adapts to
 #     each phrase without manual tuning.
@@ -373,7 +373,7 @@ def compare_transcriptions(transcription: str, text_reference: str) -> Dict[str,
     """
     # Normalize both sides identically (lower-case, punctuation stripped).
     # The transcription usually arrives pre-cleaned, but the reference keeps
-    # its punctuation — without cleaning it too, every comma/period counted as
+    # its punctuation - without cleaning it too, every comma/period counted as
     # a guaranteed edit and inflated word_error_rate (noticeable on short phrases).
     transcription_clean = clean_transcription(transcription)
     reference_clean = clean_transcription(text_reference)
@@ -715,11 +715,11 @@ def analyze(user_audio: np.ndarray,
         user_sr: sample rate of ``user_audio`` (recording path is 16 kHz).
         reference_sr: sample rate of ``reference_audio`` (Kokoro is 24 kHz).
         voice: Kokoro voice the reference was synthesized with. Only recorded in
-            the calibration sample log — the acoustic floor is voice-specific,
+            the calibration sample log - the acoustic floor is voice-specific,
             so calibrate.py needs to know which voice produced each sample.
         is_reference: marks the reference self-test (reference compared with
             itself). Accepted so the dispatcher can call every engine with the
-            same signature; this engine ignores it — its calibrate.py already
+            same signature; this engine ignores it - its calibrate.py already
             excludes self-tests by their near-zero acoustic distance
             (SELF_TEST_ACOUSTIC), so no flag is needed here.
 

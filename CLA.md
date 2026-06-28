@@ -1,4 +1,4 @@
-# Mimora — Individual Contributor License Agreement (CLA)
+# Mimora - Individual Contributor License Agreement (CLA)
 
 Thank you for your interest in contributing to Mimora, maintained by Valeriy
 Kovalev (the "Project Owner"). As used in this Agreement, the **"Project"**
@@ -7,9 +7,9 @@ related materials maintained by the Project Owner.
 
 This Contributor License Agreement ("Agreement") clarifies the intellectual
 property rights granted with Contributions from any person or entity. By
-signing this Agreement — whether electronically, through a CLA bot, by
+signing this Agreement - whether electronically, through a CLA bot, by
 commenting on a pull request with the phrase indicated by the Project, or by
-any other method accepted by the Project — You accept and agree to the
+any other method accepted by the Project - You accept and agree to the
 following terms for Your present and future Contributions submitted to the
 Project.
 

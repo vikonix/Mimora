@@ -160,7 +160,7 @@ class PronunciationTrainerGUI:
 
         # Recording is press-to-start / auto-stop (see the recording controls
         # section). space_down only tracks whether the spacebar is physically
-        # held, so key-autorepeat does not fire repeated toggles — it is no
+        # held, so key-autorepeat does not fire repeated toggles - it is no
         # longer a "hold to record" flag. The actual capture lives in
         # AudioRecorder; all four callbacks fire on the capture thread, so they
         # marshal every UI touch onto the Tk main thread via root.after.
@@ -172,7 +172,7 @@ class PronunciationTrainerGUI:
             on_level=self._on_record_level,
         )
 
-        # Audio processing guard — prevents concurrent analysis runs
+        # Audio processing guard - prevents concurrent analysis runs
         self.is_processing_audio = False
         self.processing_lock = threading.Lock()
 
@@ -186,7 +186,7 @@ class PronunciationTrainerGUI:
         # beside current_phrase so the two are always shown together.
         self.current_translation: str = ""
         # Kokoro voice the current reference was synthesized with (logged with
-        # every analysis sample — the acoustic calibration is voice-specific).
+        # every analysis sample - the acoustic calibration is voice-specific).
         self.current_voice: str = config.KOKORO_VOICE
         self.reference_audio: Optional[np.ndarray] = None   # 24 kHz Kokoro output
         self.last_user_audio: Optional[np.ndarray] = None   # 16 kHz recorded attempt
@@ -371,7 +371,7 @@ class PronunciationTrainerGUI:
             self.view.append_error_msg(f"Could not read {os.path.basename(path)}: {e}")
             return
         if not text:
-            self.view.append_error_msg(f"{os.path.basename(path)} is empty — nothing to load.")
+            self.view.append_error_msg(f"{os.path.basename(path)} is empty - nothing to load.")
             return
 
         self.view.set_practice_text(text)
@@ -379,12 +379,12 @@ class PronunciationTrainerGUI:
         logging.info(f"Practice text loaded from {path!r}.")
 
         # Persist for the next launch. Files inside the project are stored
-        # relative to the root (the settings.json convention — see _user_path);
+        # relative to the root (the settings.json convention - see _user_path);
         # as_posix() keeps the JSON free of escaped backslashes on Windows.
         try:
             saved = Path(path).relative_to(config.BASE_DIR).as_posix()
         except ValueError:
-            saved = path  # outside the project — keep the absolute path
+            saved = path  # outside the project - keep the absolute path
         self._persist_setting("practice_text_file", saved)
 
     def make_app_ready(self):
@@ -400,7 +400,7 @@ class PronunciationTrainerGUI:
         """Speak a greeting, then start the first phrase. (Background thread.)
 
         The greeting uses the same Kokoro voice as the reference phrases. Any
-        failure here is non-fatal — the first phrase is generated regardless,
+        failure here is non-fatal - the first phrase is generated regardless,
         so a TTS hiccup cannot leave the app stuck without a phrase.
         """
         try:
@@ -414,7 +414,7 @@ class PronunciationTrainerGUI:
         finally:
             # Auto-generate the first phrase so the user isn't met with an
             # empty phrase card; afterwards generation is driven by the New
-            # phrase button. Scheduled via after() — on_generate_phrase
+            # phrase button. Scheduled via after() - on_generate_phrase
             # touches widgets, so it must run on the Tk main thread.
             self.root.after(0, self.on_generate_phrase)
 
@@ -476,7 +476,7 @@ class PronunciationTrainerGUI:
         """Persist the user name to settings.json once editing finishes (FocusOut)."""
         name = self.view.get_user_name()
         if name == self._saved_user_name:
-            return  # unchanged — don't rewrite the file
+            return  # unchanged - don't rewrite the file
         if config.save_user_setting("user_name", name):
             self._saved_user_name = name
             logging.info(f"User name saved: {name!r}.")
@@ -500,14 +500,14 @@ class PronunciationTrainerGUI:
 
         The new language is applied to the *next* generated phrase (matching how
         voice/length changes behave); the current phrase is not re-translated, so
-        the panel shows '—' until then. Only the panel visibility and the saved
+        the panel shows '-' until then. Only the panel visibility and the saved
         setting change here.
         """
         language = self.view.get_translation_language()
         logging.info(f"Translation language changed to {language!r}.")
         self._persist_setting("translation_language", language)
         # The cached translation belonged to the previous language, so drop it and
-        # blank the panel to "—"; the next generated phrase fills it for the new
+        # blank the panel to "-"; the next generated phrase fills it for the new
         # language (translations are applied to the next phrase, like voice/length).
         self.current_translation = ""
         self.view.set_translation("")
@@ -576,7 +576,7 @@ class PronunciationTrainerGUI:
 
             self.current_phrase = phrase
             # Translation is filled later by _translate_into_panel (after the
-            # reference plays); until then the panel shows its "—" placeholder
+            # reference plays); until then the panel shows its "-" placeholder
             # whenever a language is selected.
             self.current_translation = ""
             self.current_voice = voice
@@ -595,7 +595,7 @@ class PronunciationTrainerGUI:
 
             # Re-enable the controls now, before translating: NLLB translation is
             # latency-tolerant and (on its first call) pays a one-time model load,
-            # so it must not gate the app's readiness. The panel stays at its "—"
+            # so it must not gate the app's readiness. The panel stays at its "-"
             # placeholder until the translation arrives.
             self.root.after(0, self._phrase_ready)
             self._translate_into_panel(phrase, language)
@@ -618,7 +618,7 @@ class PronunciationTrainerGUI:
             return
         translated = self.translator_mgr.translate(phrase, language)
         # current_phrase is replaced by a fresh generation; if it no longer
-        # matches, this translation is for a superseded phrase — drop it.
+        # matches, this translation is for a superseded phrase - drop it.
         if not translated or self.current_phrase != phrase:
             return
         self.current_translation = translated
@@ -663,7 +663,7 @@ class PronunciationTrainerGUI:
         pass
 
     def _typing_in_text_field(self) -> bool:
-        """True when a text-input widget owns focus — spacebar should type, not record."""
+        """True when a text-input widget owns focus - spacebar should type, not record."""
         return isinstance(self.root.focus_get(), (tk.Entry, tk.Text))
 
     def on_keyboard_press(self, event):
@@ -720,7 +720,7 @@ class PronunciationTrainerGUI:
         threading.Thread(target=self._finalize_recording, daemon=True).start()
 
     def _finalize_recording(self):
-        """Join the record thread, then run analysis — off the main thread.
+        """Join the record thread, then run analysis - off the main thread.
 
         The is_processing_audio slot was claimed by trigger_recording_stop and
         is always released here, whatever happens.
@@ -729,9 +729,9 @@ class PronunciationTrainerGUI:
             if not self.recorder.join():
                 # The capture thread is stuck (e.g. the device hangs on close)
                 # and its callback may still be appending chunks. Reading them
-                # now would race the writer — drop the take.
+                # now would race the writer - drop the take.
                 self.root.after(0, self.view.append_error_msg,
-                                "Audio device did not stop in time — take discarded, please try again.")
+                                "Audio device did not stop in time - take discarded, please try again.")
                 self.root.after(0, self._reset_to_retry)
                 return
             self.analyze_recording()
@@ -745,7 +745,7 @@ class PronunciationTrainerGUI:
         Route through the normal stop path on the main thread so the take is
         finalized and analyzed exactly like a manual stop.
         """
-        self.root.after(0, self.view.append_error_msg, "Reached maximum record limit — take cut off.")
+        self.root.after(0, self.view.append_error_msg, "Reached maximum record limit - take cut off.")
         self.root.after(0, self.trigger_recording_stop)
 
     def _on_record_silence_stop(self):
@@ -782,7 +782,7 @@ class PronunciationTrainerGUI:
     def on_test_reference(self):
         """Diagnostic: feed the reference audio through analysis instead of a
         recording. Since the reference is compared against itself it should score
-        near 100 — a quick way to sanity-check the pipeline without speaking.
+        near 100 - a quick way to sanity-check the pipeline without speaking.
         """
         if not self.app_ready or self.is_generating:
             return
@@ -922,7 +922,7 @@ class PronunciationTrainerGUI:
             return
         # Slowing is done by lowering the effective sample rate: playing 24 kHz
         # audio at, say, 12 kHz (0.5×) makes it twice as long. This is the simple
-        # resampling approach — it also shifts the pitch down, no extra deps.
+        # resampling approach - it also shifts the pitch down, no extra deps.
         speed = self._selected_speed()
         effective_sr = int(KOKORO_SAMPLE_RATE * speed)
         status = "Playing reference..." if speed == 1.0 else f"Playing reference ({speed:g}×)..."
@@ -940,7 +940,7 @@ class PronunciationTrainerGUI:
         set()-then-clear() dance: an old playback blocked inside a chunk write
         could miss the brief set() entirely and keep playing alongside the new
         one. With per-playback events, stop_playback() sets the current
-        playback's event and it stays set — nothing is ever cleared from under
+        playback's event and it stays set - nothing is ever cleared from under
         a still-running playback.
         """
         event = threading.Event()
@@ -1048,11 +1048,11 @@ class PronunciationTrainerGUI:
         # (STATUS_STACK_BUFFER_OVERRUN) with no Python traceback.
         #
         # os._exit is NOT enough on Windows: it maps to ExitProcess, which still
-        # runs DLL_PROCESS_DETACH for every loaded DLL — and the CUDA runtime's
+        # runs DLL_PROCESS_DETACH for every loaded DLL - and the CUDA runtime's
         # detach is exactly what crashes. TerminateProcess ends the process at
         # the OS level without running any DLL detach handlers, so that crash
-        # never runs. The external resources that actually need releasing — the
-        # mic stream and the LLM subprocess — were handled just above; logs are
+        # never runs. The external resources that actually need releasing - the
+        # mic stream and the LLM subprocess - were handled just above; logs are
         # flushed here first. os._exit is the fallback for non-Windows.
         logging.info("quit_app: cleanup done, hard-exiting now.")
         logging.shutdown()
@@ -1064,7 +1064,7 @@ class PronunciationTrainerGUI:
             # 64-bit pointer). Without this, ctypes defaults the result to a
             # 32-bit c_int and TRUNCATES the pseudo-handle, so TerminateProcess
             # gets a bad handle, silently fails (returns FALSE without killing
-            # anything), and we fall through to os._exit — which crashes in the
+            # anything), and we fall through to os._exit - which crashes in the
             # CUDA DLL detach. With the correct types the pseudo-handle (-1) is
             # passed intact and the process ends at once with exit code 0.
             kernel32.GetCurrentProcess.restype = wintypes.HANDLE

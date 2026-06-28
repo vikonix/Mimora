@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Valery Kovalev
 
-"""Configuration loading machinery — pure, stateless helpers.
+"""Configuration loading machinery - pure, stateless helpers.
 
 This module holds the *mechanics* of building Mimora's configuration: reading
 JSON files, validating individual settings, creating directories, probing the
 cache and the compute device. None of it runs at import time and none of it
-keeps global state — every function takes what it needs as arguments and returns
+keeps global state - every function takes what it needs as arguments and returns
 a value. That keeps the rules (range checks, type checks, fallbacks) unit-testable
 in isolation, without a filesystem or the heavy ML stack.
 
@@ -48,10 +48,10 @@ def user_number(user_data: dict, key: str, default, minimum=None, maximum=None):
 
     Returns *default* on a non-numeric or out-of-range value: e.g.
     max_record_seconds=0 would cut off every take instantly, and a threshold
-    above 100 would make passing impossible — a typo must not break the app.
+    above 100 would make passing impossible - a typo must not break the app.
     """
     value = user_data.get(key, default)
-    # bool is a subclass of int — exclude it so `true` is not accepted silently.
+    # bool is a subclass of int - exclude it so `true` is not accepted silently.
     if not (isinstance(value, (int, float)) and not isinstance(value, bool)):
         print(f"[config] settings.json: {key} must be a number, got {value!r}; "
               f"using {default}", file=sys.stderr)
@@ -99,7 +99,7 @@ def save_setting(path: Path, key: str, value, memory_dict: dict) -> bool:
     The file is re-read first so hand-edited values and the "_" comment keys
     are preserved. On success the in-memory *memory_dict* is updated too, so the
     running app sees the new value without a reload. Failures are reported, never
-    raised — saving a preference must not crash the app. Returns True on success.
+    raised - saving a preference must not crash the app. Returns True on success.
     """
     data = read_json(path)
     data[key] = value
@@ -124,7 +124,7 @@ def models_cached(hub_dir: Path, repos) -> bool:
     """True only when every repo in *repos* is fully present under *hub_dir*.
 
     Besides a non-empty snapshots dir, the blobs dir must hold no *.incomplete
-    files — those are partial downloads left by an interrupted first run, and
+    files - those are partial downloads left by an interrupted first run, and
     flipping to offline mode with one present would crash model loading.
     """
     for repo in repos:
@@ -140,7 +140,7 @@ def models_cached(hub_dir: Path, repos) -> bool:
 def detect_device(hw_value) -> str:
     """Resolve the compute device: 'cuda' or 'cpu'.
 
-    A valid *hw_value* (written by hwconfig) wins and short-circuits — torch is
+    A valid *hw_value* (written by hwconfig) wins and short-circuits - torch is
     not imported in that case, so callers that already know the device (and unit
     tests) never pay the ~1s torch import. Otherwise probe torch directly,
     falling back to 'cpu' when torch is absent.

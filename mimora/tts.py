@@ -157,7 +157,7 @@ class TTSManager:
         try:
             # Windows-only robust winsound implementation (bypasses PortAudio MME
             # error 6). winsound can only target the default output device, so an
-            # explicit AUDIO_OUTPUT_DEVICE forces the sounddevice path below —
+            # explicit AUDIO_OUTPUT_DEVICE forces the sounddevice path below -
             # otherwise that config option would be silently ignored on Windows.
             if uses_winsound():
                 # Normalise peak to avoid clipping.

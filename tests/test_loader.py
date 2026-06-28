@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Valery Kovalev
 
-"""Unit tests for mimora.loader — the pure configuration machinery.
+"""Unit tests for mimora.loader - the pure configuration machinery.
 
 These exercise the validation rules and fallbacks in isolation: loader imports
 only the standard library, so nothing here touches torch, the HuggingFace stack,
@@ -77,7 +77,7 @@ class UserNumberTests(unittest.TestCase):
         self.assertEqual(self._silent({"k": "x"}, "k", 20), 20)
 
     def test_bool_is_rejected(self):
-        # bool is a subclass of int — must not be silently accepted as a number.
+        # bool is a subclass of int - must not be silently accepted as a number.
         self.assertEqual(self._silent({"k": True}, "k", 20), 20)
 
     def test_below_minimum_returns_default(self):

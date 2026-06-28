@@ -20,7 +20,7 @@ LLM_TIMEOUT = 30.0
 # A small model tends to copy the literal examples from the hint rather than
 # treat them as a category (e.g. fixed "'Sometimes' or 'Usually'" made many
 # phrases start with "Usually"). So hints with examples are built from a pool
-# via _format_hint(): two examples are drawn at random per request — even when
+# via _format_hint(): two examples are drawn at random per request - even when
 # the model copies one, the openings still vary.
 _EXAMPLE_POOLS = {
     "pronoun": ("I", "We", "They", "She", "He", "You"),
@@ -94,7 +94,7 @@ class LLMManager:
         Pass silent=True during startup polling to suppress per-attempt error logs
         and avoid flooding the log with dozens of identical connection errors.
         """
-        # A missing client is a programming error, not a connectivity problem —
+        # A missing client is a programming error, not a connectivity problem -
         # raise it out instead of logging it as "server not available".
         if self.client is None:
             raise RuntimeError("LLM client not initialized. Call init_client() first.")
@@ -106,7 +106,7 @@ class LLMManager:
             if silent:
                 logging.debug(f"LLM server not yet available: {error}")
             else:
-                # Connection failures are expected (e.g. LM Studio offline) —
+                # Connection failures are expected (e.g. LM Studio offline) -
                 # log the message only, not the full traceback.
                 logging.error(f"LLM server not available: {error}")
             return False
@@ -117,7 +117,7 @@ class LLMManager:
         This is a single, non-streaming completion. To keep output varied, the
         prompt changes from call to call: only a sliding window of the source
         text is sent (see _current_window), plus a randomly picked focus word
-        and — for full sentences — a random opening-style hint. Listing
+        and - for full sentences - a random opening-style hint. Listing
         previously used phrases in the prompt is deliberately avoided: small
         models tend to copy such "do not reuse" lists instead of avoiding them.
 
@@ -198,7 +198,7 @@ class LLMManager:
         if end <= len(sentences):
             window = sentences[start:end]
         else:
-            # Window sticks out past the last sentence — wrap to the start.
+            # Window sticks out past the last sentence - wrap to the start.
             window = sentences[start:] + sentences[:end - len(sentences)]
 
         self._window_uses += 1

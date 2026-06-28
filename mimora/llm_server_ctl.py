@@ -34,13 +34,13 @@ class LLMServerController:
         """Launch the server subprocess and block until it responds.
 
         Readiness is probed through ``llm_mgr``, whose client is (re)pointed
-        at the local server here — the same client the app then uses for
+        at the local server here - the same client the app then uses for
         generation. Returns False on a missing model path, an early subprocess
         exit, or a startup timeout.
         """
         model_path = config.EXTERNAL_MODEL_PATH
         if not model_path:
-            logging.error("EXTERNAL_MODEL_PATH is empty — cannot start local server.")
+            logging.error("EXTERNAL_MODEL_PATH is empty - cannot start local server.")
             return False
 
         cmd = [
@@ -71,7 +71,7 @@ class LLMServerController:
             time.sleep(1.0)
 
         logging.error("LLM server did not become ready within the timeout.")
-        # The subprocess may still be loading the model — terminate it now
+        # The subprocess may still be loading the model - terminate it now
         # instead of leaving it holding VRAM until the app exits.
         self.shutdown()
         return False
@@ -79,7 +79,7 @@ class LLMServerController:
     def shutdown(self):
         """Terminate the subprocess (kill on timeout) and close its log file.
 
-        Safe to call repeatedly and when the server was never started — every
+        Safe to call repeatedly and when the server was never started - every
         step is a no-op then. Also called by start() on its failure paths.
         """
         if self._process is not None:
@@ -89,7 +89,7 @@ class LLMServerController:
                 try:
                     self._process.wait(timeout=SERVER_TERMINATE_TIMEOUT_SEC)
                 except subprocess.TimeoutExpired:
-                    logging.warning("LLM server did not exit cleanly — killing it.")
+                    logging.warning("LLM server did not exit cleanly - killing it.")
                     self._process.kill()
                     self._process.wait()  # reap the killed process (avoids a zombie on POSIX)
             self._process = None

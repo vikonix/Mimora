@@ -6,7 +6,7 @@
 This module holds the UI as a standalone, passive :class:`TrainerView`, composed
 into the controller (``self.view``) in ``main.py`` rather than inherited. The
 view owns every widget and renders state; the controller owns the application
-logic. Both directions across the boundary are explicit, typed contracts — the
+logic. Both directions across the boundary are explicit, typed contracts - the
 view shares no implicit namespace with the controller:
 
 * view → controller: widget callbacks call only ``self._cb.<handler>`` on a
@@ -16,7 +16,7 @@ view shares no implicit namespace with the controller:
 * controller → view: the controller drives the UI through named *intent*
   methods (``enter_recording``, ``enter_phrase_ready``, ``show_feedback`` …) and
   small read accessors (``get_practice_text`` …). It never touches a widget or a
-  status/colour string directly — every UI state and its copy live here.
+  status/colour string directly - every UI state and its copy live here.
 """
 import logging
 import platform
@@ -148,7 +148,7 @@ class TrainerView:
         self.root.configure(bg=THEME["bg_main"])
 
         # 0. Menu bar (cross-platform tk.Menu). On Windows it is drawn by the
-        # OS, so it does not follow the app's dark theme — that is expected.
+        # OS, so it does not follow the app's dark theme - that is expected.
         # The handler (on_open_practice_text) lives in the controller (main.py).
         menubar = tk.Menu(self.root)
         file_menu = tk.Menu(menubar, tearoff=0)
@@ -237,7 +237,7 @@ class TrainerView:
         selectors_frame = tk.Frame(source_frame, bg=THEME["bg_main"])
         selectors_frame.pack(anchor=tk.E, pady=(2, 0))
 
-        # Translation-language selector (leftmost). No caption — the value itself
+        # Translation-language selector (leftmost). No caption - the value itself
         # ("Russian", "Spanish", …) names the language; the empty first choice
         # means "translation off". Selecting a language shows the translation
         # panel under the phrase card (see refresh_translation_ui); the panel and
@@ -293,7 +293,7 @@ class TrainerView:
         self.phrase_frame = tk.Frame(self.root, bg=THEME["bg_panel"])
         self.phrase_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=5)
 
-        self.phrase_label = tk.Label(self.phrase_frame, text="—", font=(FONT_FAMILY, 15, "bold"),
+        self.phrase_label = tk.Label(self.phrase_frame, text="-", font=(FONT_FAMILY, 15, "bold"),
                                      fg=THEME["info"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
         # Match the translation card's vertical padding so the two panels are the
         # same height (the phrase still reads larger via its bigger, bold font).
@@ -301,16 +301,16 @@ class TrainerView:
         # Right-click the phrase to copy it (independently of the translation).
         self._bind_copy_menu(self.phrase_label)
 
-        # 5a. Translation card — a SEPARATE panel below the phrase card (its own
+        # 5a. Translation card - a SEPARATE panel below the phrase card (its own
         # frame, not a sub-section of it), shown only when a translation language
         # is selected. Same panel background as the phrase card; the
         # small gap between the two (their pack pady) reads as two independent
         # cards. Dimmer and smaller text so the phrase stays the focus. The frame
         # is packed/unpacked right after the phrase card by refresh_translation_ui();
-        # "—" stands in until a translation arrives with the next phrase.
+        # "-" stands in until a translation arrives with the next phrase.
         self.translation_frame = tk.Frame(self.root, bg=THEME["bg_panel"])
         self.translation_label = tk.Label(
-            self.translation_frame, text="—", font=(FONT_FAMILY, 11),
+            self.translation_frame, text="-", font=(FONT_FAMILY, 11),
             fg=THEME["text_dim"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
         self.translation_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
         # Right-click the translation to copy it (independently of the phrase).
@@ -320,11 +320,11 @@ class TrainerView:
         # the user opens the list, which made a loaded language look unselected
         # while its panel was already shown. Then reconcile panel visibility.
         self.translation_selector.set(config.TRANSLATION_LANGUAGE)
-        # The translation frame is not packed yet — refresh_translation_ui()
+        # The translation frame is not packed yet - refresh_translation_ui()
         # decides based on the selected language and phrase-length mode.
         self.refresh_translation_ui()
 
-        # 5b. Prosody panel — pitch (F0) and energy sparklines, you vs reference.
+        # 5b. Prosody panel - pitch (F0) and energy sparklines, you vs reference.
         prosody_frame = tk.Frame(self.root, bg=THEME["bg_main"])
         prosody_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 5))
 
@@ -353,7 +353,7 @@ class TrainerView:
         # lines up with the chart areas, not the labels.
         self.show_f0 = tk.BooleanVar(value=config.SHOW_PITCH_CHART)
         self.f0_check = self._make_chart_checkbox(
-            prosody_frame, "Pitch — intonation (semitones vs your median)", self.show_f0)
+            prosody_frame, "Pitch - intonation (semitones vs your median)", self.show_f0)
         self.f0_check.pack(anchor=tk.W)
 
         # Body row: charts on the left (flexible width), face panel on the right.
@@ -369,7 +369,7 @@ class TrainerView:
 
         self.show_energy = tk.BooleanVar(value=config.SHOW_ENERGY_CHART)
         self.en_check = self._make_chart_checkbox(
-            charts_frame, "Energy — stress pattern", self.show_energy)
+            charts_frame, "Energy - stress pattern", self.show_energy)
         self.en_check.pack(anchor=tk.W)
         self.en_canvas = tk.Canvas(charts_frame, height=46, bg=THEME["bg_panel"],
                                    highlightthickness=1, highlightbackground=THEME["border"])
@@ -418,7 +418,7 @@ class TrainerView:
         self.toggle_face()
 
         # 6. Action row directly under the result window: groups every action
-        # button on one line — Test diagnostic, replay of the user's recording,
+        # button on one line - Test diagnostic, replay of the user's recording,
         # reference replay and new-phrase generation.
         #
         # Packed BEFORE the feedback panel below and at side=BOTTOM on purpose:
@@ -530,14 +530,14 @@ class TrainerView:
         r_level = self._MIC_LEVEL_MIN_R + frac * (r_inner - self._MIC_LEVEL_MIN_R)
 
         self.btn_canvas.delete("all")
-        # Outer ring: identical to draw_mic_button("recording") — fixed, red.
+        # Outer ring: identical to draw_mic_button("recording") - fixed, red.
         self.btn_canvas.create_oval(cx - r_outer, cy - r_outer, cx + r_outer, cy + r_outer,
                                     fill="", outline=THEME["bad"], width=3)
         # Dark inner track, so the red fill is visible shrinking against it.
         self.btn_canvas.create_oval(cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner,
                                     fill=THEME["mic_recording_bg"], outline="")
         # The pulsing level indicator: a solid red disc, min radius -> inner
-        # radius. No glyph on top — the disc itself is the indicator, and an
+        # radius. No glyph on top - the disc itself is the indicator, and an
         # overlaid emoji's text bounding box does not share the disc's center.
         self.btn_canvas.create_oval(cx - r_level, cy - r_level, cx + r_level, cy + r_level,
                                     fill=THEME["bad"], outline="")
@@ -568,12 +568,12 @@ class TrainerView:
         return self.translation_var.get()
 
     def set_translation(self, text: str):
-        """Set the translation panel text, falling back to '—' when empty.
+        """Set the translation panel text, falling back to '-' when empty.
 
-        '—' marks "language is on, but no translation yet" (e.g. right after the
-        language was switched — the translation arrives with the next phrase).
+        '-' marks "language is on, but no translation yet" (e.g. right after the
+        language was switched - the translation arrives with the next phrase).
         """
-        self.translation_label.config(text=text.strip() if text and text.strip() else "—")
+        self.translation_label.config(text=text.strip() if text and text.strip() else "-")
 
     # ------------------------------------------------------------------
     # Copy-to-clipboard (right-click menu on the phrase / translation)
@@ -589,8 +589,8 @@ class TrainerView:
     def _show_copy_menu(self, event, label: tk.Label):
         """Pop up a one-item 'Copy' menu for the clicked label, if it has text."""
         text = label.cget("text").strip()
-        # Nothing useful to copy from an empty card or the "—" placeholder.
-        if not text or text == "—":
+        # Nothing useful to copy from an empty card or the "-" placeholder.
+        if not text or text == "-":
             return
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Copy", command=lambda: self._copy_text(text))
@@ -607,9 +607,9 @@ class TrainerView:
     def refresh_translation_ui(self):
         """Sync the translation panel and selector to the current UI state.
 
-        Shows the panel whenever a language is selected — in both "Full phrase"
+        Shows the panel whenever a language is selected - in both "Full phrase"
         and "Few words" modes (fragments are translated too). Safe to call
-        repeatedly — it reconciles to the current vars without side effects.
+        repeatedly - it reconciles to the current vars without side effects.
         """
         # The language selector is always usable; translation applies to whatever
         # the next phrase is, fragment or full sentence.
@@ -721,7 +721,7 @@ class TrainerView:
         self._set_actions(generate=False, reference=False, user=False, test=False)
         self.draw_mic_button("recording")
         self.update_status("Recording...", THEME["bad"])
-        self.update_instruction("Speak now — recording stops automatically (press again to stop).")
+        self.update_instruction("Speak now - recording stops automatically (press again to stop).")
 
     def enter_analyzing(self, status: str = "Analyzing pronunciation..."):
         """Analysis is running (also used for the reference self-test)."""
@@ -815,7 +815,7 @@ class TrainerView:
 
         Intentionally *not* shown in the feedback panel: routine progress
         ("Loading models...", "New phrase: ...") would drown out the
-        pronunciation feedback. Only errors appear on screen — see
+        pronunciation feedback. Only errors appear on screen - see
         append_error_msg.
         """
         logging.info(f"[System] {text}")
@@ -1004,7 +1004,7 @@ class TrainerView:
                     tag = "good" if entry.get("correct") else "bad"
                 self.feedback_display.insert(tk.END, entry["word"] + " ", tag)
         else:
-            for token in (current_phrase or "—").split():
+            for token in (current_phrase or "-").split():
                 self.feedback_display.insert(tk.END, token + " ", "text")
         self.feedback_display.insert(tk.END, "\n")
 
@@ -1021,7 +1021,7 @@ class TrainerView:
         elif getattr(result, "bucket", -1) >= 0:
             # Phoneme engine with no weak phones -> a clean read.
             self.feedback_display.insert(tk.END, "Work on: ", "label")
-            self.feedback_display.insert(tk.END, "nothing major — nice work ✓\n", "good")
+            self.feedback_display.insert(tk.END, "nothing major - nice work ✓\n", "good")
         else:
             # Acoustic engine fallback: the original recognised-units "Heard" line.
             self.feedback_display.insert(tk.END, "Heard: ", "label")
@@ -1035,7 +1035,7 @@ class TrainerView:
                     self.feedback_display.insert(tk.END, entry["unit"] + " ", tag)
                 self.feedback_display.insert(tk.END, "\n")
             else:
-                self.feedback_display.insert(tk.END, f"{result.transcription or '—'}\n", "text")
+                self.feedback_display.insert(tk.END, f"{result.transcription or '-'}\n", "text")
 
         self.feedback_display.insert(tk.END, "\n")
         self.feedback_display.configure(state=tk.DISABLED)

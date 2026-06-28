@@ -46,7 +46,7 @@ def reset_portaudio():
     on Windows. sd._terminate/_initialize are *not* public sounddevice API
     (present in 0.4.x/0.5.x); if an upgrade removes them this degrades to a
     logged no-op and the reset can simply be dropped. Call only while holding
-    config.AUDIO_LOCK and with no other stream open — the reset invalidates
+    config.AUDIO_LOCK and with no other stream open - the reset invalidates
     every existing PortAudio stream in the process.
     """
     try:
