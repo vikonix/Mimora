@@ -43,6 +43,7 @@ _KNOWN_USER_KEYS = {
     "voice",
     "color_theme",
     "pronunciation_score_threshold",
+    "phoneme_good_mode",
     "max_record_seconds",
     "llm_backend",
     "external_model_path",
@@ -291,6 +292,21 @@ if REFERENCE_SPEED not in REFERENCE_SPEED_CHOICES:
 # The dispatcher (mimora/engine.py) binds one backend at startup; only that engine's
 # models are loaded.
 ENGINE = "phoneme"
+
+# GOOD-anchor mode for the phoneme engine (see pronunciation/phoneme/config.py),
+# read from settings.json ("phoneme_good_mode"); only affects ENGINE == "phoneme":
+#   "global"  - one calibrated PHONEME_GOOD anchor for every phrase (the default;
+#               the 0-5 bucket cutpoints were fit under this anchor, so scores and
+#               buckets stay consistent).
+#   "ceiling" - per-phrase anchor = the TTS reference's own recognized per-phone
+#               distance, so a flawless read maps to 100 for each phrase. Costs an
+#               extra recognizer pass over the reference per phrase and shifts
+#               scores away from the global anchor the buckets were calibrated for.
+PHONEME_GOOD_MODE = _USER.get("phoneme_good_mode", "global")
+if PHONEME_GOOD_MODE not in ("global", "ceiling"):
+    print(f"[config] settings.json: phoneme_good_mode must be 'global' or "
+          f"'ceiling', got {PHONEME_GOOD_MODE!r}; using 'global'", file=sys.stderr)
+    PHONEME_GOOD_MODE = "global"
 
 # =====================================================================
 # Acoustic + transcription model used by the pronunciation/acoustic/ module.

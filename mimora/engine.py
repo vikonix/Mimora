@@ -75,6 +75,7 @@ def configure(engine_name: str | None = None) -> None:
             device=config.WAV2VEC2_DEVICE,
             espeak_language=config.ESPEAK_LANGUAGE,
             score_threshold=config.PRONUNCIATION_SCORE_THRESHOLD,
+            good_mode=config.PHONEME_GOOD_MODE,
             log_dir=Path(config.LOG_DIR),
             user_name=config.USER_NAME,
         )

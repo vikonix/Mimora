@@ -8,6 +8,8 @@
   "voice": null,
   "_pronunciation_score_threshold": "Score (0-100) at or above which an attempt is accepted; lower = more forgiving.",
   "pronunciation_score_threshold": 70.0,
+  "_phoneme_good_mode": "Phoneme-engine GOOD anchor: 'global' (one calibrated anchor for all phrases; the default the 0-5 buckets were calibrated under) or 'ceiling' (per-phrase anchor from the reference audio, so a flawless read maps to 100 per phrase; costs an extra recognizer pass and shifts scores off the bucket calibration). Only used when the phoneme engine is active.",
+  "phoneme_good_mode": "global",
   "_max_record_seconds": "Hard limit on a single recording, in seconds (safety stop for a stuck key).",
   "max_record_seconds": 20,
   "_silence_timeout": "Seconds of continuous silence (after speech has begun) before the take auto-stops. Minimum 0.5.",
