@@ -51,10 +51,14 @@ SMOKE_TEST = PROJECT_ROOT / "tools" / "smoke_test_llama.py"
 INDEX_URL = "https://abetlen.github.io/llama-cpp-python/whl/cpu"
 LISTING_URL = INDEX_URL + "/llama-cpp-python/"
 
-# Mirrors smoke_test_llama.EXIT_INCONCLUSIVE: a child exit of 3 means the test
-# could not run (no model, etc.), which is not version-specific, so we stop
-# rather than blame every version.
+# Mirror the smoke test's exit codes. 3 (INCONCLUSIVE) means the test could not
+# run at all (no model, not installed); that is not version-specific, so we stop
+# rather than blame every version. 4 (LOAD_FAILED) means the build imported but
+# would not load the model on this CPU, which IS a reason to reject the version
+# and keep searching. Any other nonzero code is a hard crash (illegal
+# instruction), also a rejection.
 SMOKE_INCONCLUSIVE = 3
+SMOKE_LOAD_FAILED = 4
 
 # Wheel filenames look like llama_cpp_python-0.3.30-py3-none-win_amd64.whl; we
 # only need the version segment.
@@ -173,7 +177,7 @@ def main() -> int:
     _say(f"Found {len(versions)} versions; trying the newest {len(candidates)}: "
          f"{', '.join(candidates)}")
 
-    crashed: list[str] = []
+    rejected: list[str] = []
     skipped: list[str] = []
     for version in candidates:
         _say(f"\n=== llama-cpp-python {version} ===")
@@ -190,17 +194,22 @@ def main() -> int:
             _say(f'    "llama-cpp-python=={version}"')
             return 0
         if code == SMOKE_INCONCLUSIVE:
-            # Not version-specific (e.g. no model): trying more versions is
-            # pointless until the setup problem is fixed.
+            # Not version-specific (no model / not installed): trying more
+            # versions is pointless until the setup problem is fixed.
             _say("  smoke test INCONCLUSIVE (setup problem, not a CPU verdict); "
                  "fix that and re-run. Stopping.")
             return 2
-        _say(f"  CRASHED (exit {code}) -> {version} is incompatible with this CPU.")
-        crashed.append(version)
+        if code == SMOKE_LOAD_FAILED:
+            _say(f"  model would not load -> {version} rejected (build likely "
+                 "needs CPU features this machine lacks).")
+        else:
+            _say(f"  CRASHED (exit {code}) -> {version} rejected "
+                 "(illegal instruction).")
+        rejected.append(version)
 
     _say("\nNo working version found in the range tried.")
-    if crashed:
-        _say(f"  crashed:  {', '.join(crashed)}")
+    if rejected:
+        _say(f"  rejected: {', '.join(rejected)}")
     if skipped:
         _say(f"  skipped:  {', '.join(skipped)}")
     _say("Try a larger --max-tries, or build from source with AVX512 disabled.")

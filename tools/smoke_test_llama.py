@@ -50,11 +50,17 @@ import site
 import sys
 from pathlib import Path
 
-# Our own clean exit codes. The "incompatible" verdict is never one we set
-# ourselves: it is whatever the OS reports when the process is killed by an
-# illegal instruction, which is always nonzero and never 3.
+# Our own clean exit codes. The hard-crash "incompatible" verdict is never one we
+# set ourselves: it is whatever the OS reports when the process is killed by an
+# illegal instruction, which is always nonzero and never 3 or 4.
 EXIT_OK = 0
+# 3 = genuinely cannot test (llama-cpp-python not installed, or no model
+#     available). Says nothing about this version; the sweeper should stop.
 EXIT_INCONCLUSIVE = 3
+# 4 = llama_cpp imported, but loading/decoding the model raised a catchable
+#     error. For the version sweep this counts as "this version does not work
+#     here", so the sweeper should reject it and try the next one.
+EXIT_LOAD_FAILED = 4
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
@@ -191,11 +197,20 @@ def main() -> int:
             verbose=False,
         )
         llm.create_completion("Hi", max_tokens=1)
-    except Exception as exc:  # noqa: BLE001 - a clean error is NOT the CPU verdict
-        # A catchable exception here (corrupt file, OOM, etc.) is a setup
-        # problem, not an illegal instruction, so it stays INCONCLUSIVE.
-        _say(f"Model load/decode raised (not a crash): {exc} -> INCONCLUSIVE.")
-        return EXIT_INCONCLUSIVE
+    except Exception as exc:  # noqa: BLE001 - any load error means this version failed here
+        # In llama-cpp-python 0.3.x an illegal instruction during the CPU-backend
+        # probe surfaces as a catchable WinError 0xC000001D instead of killing
+        # the process. Detect that exact code and label it plainly; either way
+        # the build does not work on this machine, so report LOAD_FAILED and let
+        # the sweeper move on to an older version. 0xC000001D is shown by Python
+        # as the signed value -1073741795.
+        winerror = getattr(exc, "winerror", None)
+        if winerror in (-1073741795, 0xC000001D):
+            _say("Illegal instruction (0xC000001D) on model load: this build "
+                 "needs CPU features this machine lacks -> LOAD FAILED.")
+        else:
+            _say(f"Model load/decode raised (not a crash): {exc} -> LOAD FAILED.")
+        return EXIT_LOAD_FAILED
 
     _say("OK: model loaded and decoded a token. This build runs on this CPU.")
     return EXIT_OK
