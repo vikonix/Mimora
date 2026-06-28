@@ -463,8 +463,10 @@ _DARK_THEME = {
     # Surfaces
     "bg_main": "#121214",           # window background
     "bg_panel": "#1a1a1e",          # panels, text inputs, status bar
-    "bg_accent": "#1f1430",         # accent-tinted controls (buttons, combobox)
+    "bg_accent": "#1f1430",         # accent-tinted controls (combobox, small buttons)
     "bg_accent_active": "#2a1a45",  # hovered/active accent controls
+    "bg_button": "#4d2f87",         # primary action buttons (muted brand purple)
+    "bg_button_active": "#5e3aa6",  # hovered/active primary buttons
     "border": "#25252a",
     "accent": "#8a2be2",            # brand purple: titles, focus highlights
     # Text
@@ -474,6 +476,8 @@ _DARK_THEME = {
     "text_dim": "#a0a0a5",          # secondary labels
     "text_muted": "#6272a4",        # tertiary/system text
     "text_accent": "#d6c2ff",       # text on accent-tinted controls
+    "phrase": "#d8c4ff",            # hero practice phrase: brand-family lavender,
+                                    # kept distinct from the cyan "you" curve
     "text_disabled": "#555560",
     "text_disabled_dim": "#3a3a40",
     # Articulation face (intentionally identical in every theme; the disc is
@@ -483,9 +487,9 @@ _DARK_THEME = {
     "mouth": "#8a3a2c",
     # Status / feedback ("reference" marks everything tied to the reference
     # audio: status texts and the reference prosody curve)
-    "good": "#50fa7b",
+    "good": "#5cd98a",
     "ready": "#00e676",
-    "bad": "#ff5555",
+    "bad": "#ef6b6b",
     "warn": "#ffb86c",
     "info": "#8be9fd",
     "reference": "#ff79c6",

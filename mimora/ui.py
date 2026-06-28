@@ -137,8 +137,8 @@ class TrainerView:
         """Create a consistently styled themed button."""
         return tk.Button(parent, text=text, command=command,
                          font=(FONT_FAMILY, 10, "bold"),
-                         bg=THEME["bg_accent"], fg=THEME["text_accent"],
-                         activebackground=THEME["bg_accent_active"], activeforeground=THEME["text_bright"],
+                         bg=THEME["bg_button"], fg=THEME["text_bright"],
+                         activebackground=THEME["bg_button_active"], activeforeground=THEME["text_bright"],
                          bd=0, padx=12, pady=6, cursor="hand2",
                          disabledforeground=THEME["text_disabled"])
 
@@ -164,7 +164,7 @@ class TrainerView:
         header_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=10)
 
         tk.Label(header_frame, text="MIMORA • Pronunciation Trainer",
-                 font=(FONT_FAMILY, 16, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
+                 font=(FONT_FAMILY, 14, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
 
         tk.Label(header_frame, text=config.TARGET_LANGUAGE,
                  font=(FONT_FAMILY, 9, "bold"), fg=THEME["text_dim"], bg=THEME["bg_panel"],
@@ -310,11 +310,12 @@ class TrainerView:
         self.speed_selector.bind("<<ComboboxSelected>>", self._cb.on_speed_changed)
 
         # 5. Current phrase card
-        self.phrase_frame = tk.Frame(self.root, bg=THEME["bg_panel"])
+        self.phrase_frame = tk.Frame(self.root, bg=THEME["bg_panel"],
+                                     highlightthickness=1, highlightbackground=THEME["border"])
         self.phrase_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=5)
 
         self.phrase_label = tk.Label(self.phrase_frame, text="-", font=(FONT_FAMILY, 15, "bold"),
-                                     fg=THEME["info"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
+                                     fg=THEME["phrase"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
         # Match the translation card's vertical padding so the two panels are the
         # same height (the phrase still reads larger via its bigger, bold font).
         self.phrase_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
@@ -328,7 +329,8 @@ class TrainerView:
         # cards. Dimmer and smaller text so the phrase stays the focus. The frame
         # is packed/unpacked right after the phrase card by refresh_translation_ui();
         # "-" stands in until a translation arrives with the next phrase.
-        self.translation_frame = tk.Frame(self.root, bg=THEME["bg_panel"])
+        self.translation_frame = tk.Frame(self.root, bg=THEME["bg_panel"],
+                                          highlightthickness=1, highlightbackground=THEME["border"])
         self.translation_label = tk.Label(
             self.translation_frame, text="-", font=(FONT_FAMILY, 11),
             fg=THEME["text_dim"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
@@ -451,7 +453,7 @@ class TrainerView:
 
         # Small diagnostic button: run the reference through analysis instead
         # of a recording (it should score near 100 against itself).
-        self.test_btn = tk.Button(action_frame, text="Test", command=self._cb.on_test_reference,
+        self.test_btn = tk.Button(action_frame, text="▶ Test", command=self._cb.on_test_reference,
                                   font=(FONT_FAMILY, 8), bg=THEME["bg_panel"], fg=THEME["text_muted"],
                                   activebackground=THEME["border"], activeforeground=THEME["info"],
                                   bd=0, padx=8, pady=3, cursor="hand2",
