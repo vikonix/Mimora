@@ -1,7 +1,7 @@
-Hello! Welcome to your personal pronunciation trainer.
-How to practice:
-Listen to the phrase.
-Repeat it out loud.
-Get instant feedback to improve.
-Want to practice something specific? Just paste your own text, song lyrics, or sentences you want to master right here.
-Take your time, speak clearly, and have fun learning English!
+This is your practice text. Edit it however you like.
+
+Type or paste your own text, song lyrics, or sentences here,
+or load a file from File → Open Practice Text…
+
+Listen to each phrase, repeat it aloud, and get instant pronunciation feedback.
+Speak clearly, take your time, and enjoy learning English!

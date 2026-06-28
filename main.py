@@ -346,7 +346,7 @@ class PronunciationTrainerGUI:
         self.view.set_practice_text(text.strip())
 
     def on_open_practice_text(self):
-        """Pick a practice text file via File → Open practice text… (main thread).
+        """Pick a practice text file via File → Open Practice Text… (main thread).
 
         The chosen file is loaded into the source panel right away and the path
         is persisted to settings.json ("practice_text_file"), so the same file
@@ -354,7 +354,7 @@ class PronunciationTrainerGUI:
         """
         path = filedialog.askopenfilename(
             parent=self.root,
-            title="Open practice text",
+            title="Open Practice Text",
             initialdir=os.path.dirname(config.PRACTICE_TEXT_FILE),
             filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
         )

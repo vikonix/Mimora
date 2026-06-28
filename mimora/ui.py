@@ -152,7 +152,7 @@ class TrainerView:
         # The handler (on_open_practice_text) lives in the controller (main.py).
         menubar = tk.Menu(self.root)
         file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="Open practice text…",
+        file_menu.add_command(label="Open Practice Text…",
                               command=self._cb.on_open_practice_text)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self._cb.quit_app)
@@ -163,7 +163,7 @@ class TrainerView:
         header_frame = tk.Frame(self.root, bg=THEME["bg_main"], height=60)
         header_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=10)
 
-        tk.Label(header_frame, text="MIMORA • Pronunciation",
+        tk.Label(header_frame, text="MIMORA • Pronunciation Trainer",
                  font=(FONT_FAMILY, 16, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
 
         tk.Label(header_frame, text=config.TARGET_LANGUAGE,
@@ -207,8 +207,28 @@ class TrainerView:
         # editing finishes (see on_user_name_changed).
         text_header = tk.Frame(source_frame, bg=THEME["bg_main"])
         text_header.pack(fill=tk.X)
-        tk.Label(text_header, text="Practice text (edit freely):",
+        tk.Label(text_header, text="Practice text (editable)",
                  font=(FONT_FAMILY, 9, "bold"), fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
+
+        # Quick-edit affordances next to the caption. Their real job is
+        # discoverability: a control visible even while the field still shows the
+        # pre-filled welcome text is the clearest signal that the box is editable
+        # (reviewers kept reading the box as static help text). Both act on
+        # self.source_text directly - clipboard paste and clearing are view-local
+        # widget operations with no application logic, so they belong in the view
+        # (which owns the widget); the controller still reads via get_practice_text.
+        self._paste_btn = tk.Button(
+            text_header, text="Paste", command=self._paste_practice_text,
+            font=(FONT_FAMILY, 9), bg=THEME["bg_accent"], fg=THEME["text_accent"],
+            activebackground=THEME["bg_accent_active"], activeforeground=THEME["text_bright"],
+            bd=0, padx=8, pady=1, cursor="hand2")
+        self._paste_btn.pack(side=tk.LEFT, padx=(10, 0))
+        self._clear_btn = tk.Button(
+            text_header, text="Clear text", command=self._clear_practice_text,
+            font=(FONT_FAMILY, 9), bg=THEME["bg_accent"], fg=THEME["text_accent"],
+            activebackground=THEME["bg_accent_active"], activeforeground=THEME["text_bright"],
+            bd=0, padx=8, pady=1, cursor="hand2")
+        self._clear_btn.pack(side=tk.LEFT, padx=(6, 0))
 
         self.user_name_var = tk.StringVar(value=config.USER_NAME)
         self.user_name_entry = tk.Entry(
@@ -553,6 +573,29 @@ class TrainerView:
         """Replace the practice-text panel contents."""
         self.source_text.delete("1.0", tk.END)
         self.source_text.insert("1.0", text)
+
+    def _paste_practice_text(self):
+        """Insert clipboard text into the practice field (the 'Paste' button).
+
+        Standard paste semantics: any current selection is replaced, then the
+        clipboard text is inserted at the caret. The field is focused afterwards
+        so the user can keep editing. A missing or non-text clipboard is a no-op.
+        """
+        try:
+            text = self.root.clipboard_get()
+        except tk.TclError:
+            return  # clipboard empty or holds non-text data
+        if not text:
+            return
+        if self.source_text.tag_ranges(tk.SEL):
+            self.source_text.delete(tk.SEL_FIRST, tk.SEL_LAST)
+        self.source_text.insert(tk.INSERT, text)
+        self.source_text.focus_set()
+
+    def _clear_practice_text(self):
+        """Empty the practice field and focus it, ready for the user's own text."""
+        self.source_text.delete("1.0", tk.END)
+        self.source_text.focus_set()
 
     def get_user_name(self) -> str:
         return self.user_name_var.get().strip()
