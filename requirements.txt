@@ -1,5 +1,8 @@
 # Core dependencies
-numpy>=1.24.0
+# Upper bound: numba (pulled in by librosa) supports NumPy <= 2.4. Without the
+# cap pip installs NumPy 2.5 and librosa.resample fails at runtime with
+# "Numba needs NumPy 2.4 or less". Drop the cap once numba supports NumPy 2.5.
+numpy>=1.24.0,<2.5
 soundfile>=0.12.0
 sounddevice>=0.4.6
 kokoro>=0.3.0

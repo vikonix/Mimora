@@ -23,4 +23,7 @@ fastdtw>=0.3.4
 phonemizer-fork>=3.3.0
 python-Levenshtein>=0.21.0
 soundfile>=0.12.0
-numpy>=1.24.0
+# Cap kept in sync with the root requirements.txt: numba (via librosa) supports
+# NumPy <= 2.4, so 2.5 breaks librosa.resample at runtime. Drop when numba
+# supports NumPy 2.5.
+numpy>=1.24.0,<2.5
