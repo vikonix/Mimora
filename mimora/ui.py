@@ -720,7 +720,12 @@ class TrainerView:
         # running history of all attempts and must not be wiped on each take.
         self.clear_previous_result()
         self._set_actions(generate=False, reference=False, user=False, test=False)
-        self.draw_mic_button("recording")
+        # Paint the level indicator straight away (at zero) instead of the
+        # "recording" glyph: the first live level frame overwrites the whole
+        # button anyway, so drawing the emoji first only flashes a redundant
+        # symbol. set_record_level(0.0) draws the same red ring + dark track with
+        # a minimal level disc, so the look is identical from the first frame.
+        self.set_record_level(0.0)
         self.update_status("Recording...", THEME["bad"])
         self.update_instruction("Speak now - recording stops automatically (press again to stop).")
 
@@ -982,7 +987,8 @@ class TrainerView:
     # ------------------------------------------------------------------
     # Feedback rendering
     # ------------------------------------------------------------------
-    def show_feedback(self, result: "PronunciationResult", current_phrase):
+    def show_feedback(self, result: "PronunciationResult", current_phrase,
+                      has_recording: bool = True):
         # Reflect the score on the face: above 50 smiles, below frowns, 50 flat.
         self.face.set_score(result.score)
         self.feedback_display.configure(state=tk.NORMAL)
@@ -1048,9 +1054,11 @@ class TrainerView:
 
         self.update_score_stats(result.score, getattr(result, "bucket", -1))
 
-        # Re-enable everything disabled while recording: replay buttons (both
-        # signals exist now), the self-test and new-phrase generation.
-        self._set_actions(generate=True, reference=True, user=True, test=True)
+        # Re-enable everything disabled while recording: the reference replay,
+        # the self-test and new-phrase generation. "My recording" is enabled only
+        # when a user take actually exists - the reference self-test reaches here
+        # without recording, so enabling it there would offer a dead button.
+        self._set_actions(generate=True, reference=True, user=has_recording, test=True)
         self.draw_mic_button("idle")
 
         quality, quality_color = self._quality_label(result.score)

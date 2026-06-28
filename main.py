@@ -764,7 +764,19 @@ class PronunciationTrainerGUI:
         Forwarded to the recording indicator on the Tk main thread so the user
         can see the mic is hearing them while the silence auto-stop runs.
         """
-        self.root.after(0, self.view.set_record_level, level)
+        self.root.after(0, self._apply_record_level, level)
+
+    def _apply_record_level(self, level: float):
+        """Repaint the mic level indicator, but only while still recording. (Tk thread.)
+
+        A level frame can be queued just before the take stops; applying it after
+        the stop (enter_analyzing / idle already repainted the mic) would draw the
+        red "recording" level disc back on top of the processing/idle glyph. The
+        capture thread's stop path clears is_recording before enter_analyzing runs,
+        so gating on recorder.is_active() drops these stale late frames.
+        """
+        if self.recorder.is_active():
+            self.view.set_record_level(level)
 
     def _on_record_stream_error(self):
         """The input stream failed (called on the capture thread).
@@ -826,7 +838,8 @@ class PronunciationTrainerGUI:
                 reference_audio=self.reference_audio,
                 reference_sr=KOKORO_SAMPLE_RATE,
             )
-            self.root.after(0, self.view.show_feedback, result, self.current_phrase)
+            self.root.after(0, self.view.show_feedback, result, self.current_phrase,
+                            self._has_user_recording())
         except Exception:
             logging.exception("Reference self-test error:")
             self.root.after(0, self.view.append_error_msg, "Reference test failed.")
@@ -887,12 +900,21 @@ class PronunciationTrainerGUI:
                 reference_sr=KOKORO_SAMPLE_RATE,
             )
 
-            self.root.after(0, self.view.show_feedback, result, self.current_phrase)
+            self.root.after(0, self.view.show_feedback, result, self.current_phrase,
+                            self._has_user_recording())
 
         except Exception:
             logging.exception("Error in analyze_recording:")
             self.root.after(0, self.view.append_error_msg, "Analysis error. Please try again.")
             self.root.after(0, self._reset_to_retry)
+
+    def _has_user_recording(self) -> bool:
+        """True when a user take exists to replay or feed back against.
+
+        The reference self-test reaches show_feedback without recording, so the
+        "My recording" button must follow this rather than always being enabled.
+        """
+        return self.last_user_audio is not None and self.last_user_audio.size > 0
 
     def _reset_to_retry(self):
         """Return to a state where the user can record the current phrase again.
@@ -900,9 +922,8 @@ class PronunciationTrainerGUI:
         Also re-enables the buttons disabled while recording, according to what
         is actually available (phrase / last recording).
         """
-        has_recording = self.last_user_audio is not None and self.last_user_audio.size > 0
         self.view.enter_retry(has_phrase=bool(self.current_phrase),
-                              has_recording=has_recording)
+                              has_recording=self._has_user_recording())
 
     # ------------------------------------------------------------------
     # Playback (reference / own recording)
