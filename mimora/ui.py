@@ -137,8 +137,8 @@ class TrainerView:
         """Create a consistently styled themed button."""
         return tk.Button(parent, text=text, command=command,
                          font=(FONT_FAMILY, 10, "bold"),
-                         bg=THEME["bg_button"], fg=THEME["text_bright"],
-                         activebackground=THEME["bg_button_active"], activeforeground=THEME["text_bright"],
+                         bg=THEME["bg_button"], fg=THEME["text_button"],
+                         activebackground=THEME["bg_button_active"], activeforeground=THEME["text_button"],
                          bd=0, padx=12, pady=6, cursor="hand2",
                          disabledforeground=THEME["text_disabled"])
 

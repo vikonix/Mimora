@@ -6,8 +6,9 @@
   "bg_panel": "#ffffff",
   "bg_accent": "#e7defa",
   "bg_accent_active": "#d4c5f4",
-  "bg_button": "#6a1fb8",
-  "bg_button_active": "#571596",
+  "bg_button": "#7c34cf",
+  "bg_button_active": "#6a1fb8",
+  "text_button": "#f3f0fb",
   "border": "#c8c8d2",
   "accent": "#6a1fb8",
 

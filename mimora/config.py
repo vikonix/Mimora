@@ -467,6 +467,7 @@ _DARK_THEME = {
     "bg_accent_active": "#2a1a45",  # hovered/active accent controls
     "bg_button": "#4d2f87",         # primary action buttons (muted brand purple)
     "bg_button_active": "#5e3aa6",  # hovered/active primary buttons
+    "text_button": "#ffffff",       # label on primary action buttons
     "border": "#25252a",
     "accent": "#8a2be2",            # brand purple: titles, focus highlights
     # Text
