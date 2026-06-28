@@ -255,7 +255,7 @@ class TrainerView:
         # reference-playback speed share a single line. Labels are kept terse and
         # padding tight so all four fit the fixed 600px window width.
         selectors_frame = tk.Frame(source_frame, bg=THEME["bg_main"])
-        selectors_frame.pack(anchor=tk.E, pady=(2, 0))
+        selectors_frame.pack(anchor=tk.W, pady=(2, 0))
 
         # Translation-language selector (leftmost). No caption - the value itself
         # ("Russian", "Spanish", …) names the language; the empty first choice
@@ -666,7 +666,7 @@ class TrainerView:
             # the phrase and its translation touch and read as one pair; their
             # 1px borders meet to form a single divider line between them.
             self.translation_frame.pack(side=tk.TOP, fill=tk.X, padx=20,
-                                        pady=(0, 5), after=self.phrase_frame)
+                                        pady=(0, 10), after=self.phrase_frame)
         elif not show and packed:
             self.translation_frame.pack_forget()
 
