@@ -24,7 +24,7 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter import scrolledtext
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Optional
 
 from mimora import config, prosody_utils
 from mimora.face_widget import FaceWidget
@@ -844,16 +844,19 @@ class TrainerView:
     def update_instruction(self, text: str):
         self.instruction_label.configure(text=text)
 
-    def update_score_stats(self, score: float, bucket: int = -1):
-        """Show the raw score and its 0-5 bucket: ``Score: 85 (4)``.
+    def update_score_stats(self, score: float, bucket: int = -1,
+                           color: Optional[str] = None):
+        """Show the user-facing score and its 0-5 bucket: ``Score: 92 (4)``.
 
-        The phoneme engine supplies a bucket (0-5); the acoustic engine leaves
-        ``bucket == -1``, shown as ``Score: 55 (-)`` (a dash instead of ``-1``).
+        ``score`` is the engine's user-facing number (the phoneme engine's
+        calibrated percent, the acoustic engine's raw 0-100). ``bucket`` is the
+        0-5 grade, shown as a dash when absent (``bucket == -1``). ``color`` is
+        the already-resolved quality colour so this read-out matches the status
+        line and face exactly; when omitted it falls back to the raw-score band.
         """
         bucket_text = str(bucket) if bucket >= 0 else "-"
-        # Colour the score by the same quality band as the status line, so
-        # the two score read-outs always agree visually.
-        _, color = self._quality_label(score)
+        if color is None:
+            _, color = self._quality_label(score)
         self.stats_label.configure(text=f"Score: {score:.0f} ({bucket_text})", fg=color)
 
     def clear_previous_result(self):
@@ -876,10 +879,10 @@ class TrainerView:
         self.face.rest()
         self.face.set_expression(":)")
 
-    # Qualitative rating bands for the status line, replacing the old
-    # Passed/Keep-practicing copy. Bands run on the raw 0-100 score and the
-    # colour escalates with quality, so the status line, the face (neutral at
-    # 50) and the Score bar all tell a consistent story.
+    # Qualitative rating bands on the raw 0-100 score, used by the acoustic engine
+    # (no calibrated bucket) and as the fallback colour for the score read-out. The
+    # phoneme engine uses _bucket_quality instead; show_feedback picks one basis so
+    # the status line, the face and the Score bar always agree (see show_feedback).
     def _quality_label(self, score: float) -> tuple[str, str]:
         if score < 40:
             return "Weak", THEME["bad"]
@@ -890,6 +893,31 @@ class TrainerView:
         if score < 85:
             return "Good", THEME["good"]
         return "Excellent", THEME["good"]
+
+    def _bucket_quality(self, bucket: int) -> tuple[str, str]:
+        """Qualitative label + colour for a calibrated 0-5 bucket (phoneme engine).
+
+        Keyed to the engine's pass bucket (4): bucket >= 4 is a pass and reads
+        green, so the label, the score colour and the face can never contradict
+        result.passed. Bucket 3 is the amber near-miss; buckets 0-2 are red.
+        """
+        if bucket >= 5:
+            return "Excellent", THEME["good"]
+        if bucket >= 4:
+            return "Good", THEME["good"]
+        if bucket >= 3:
+            return "Almost", THEME["warn"]
+        if bucket >= 2:
+            return "Poor", THEME["bad"]
+        return "Weak", THEME["bad"]
+
+    def _quality_expression(self, color: str) -> str:
+        """Map a resolved quality colour to a face expression so the two agree."""
+        if color == THEME["good"]:
+            return "happy"
+        if color == THEME["warn"]:
+            return "neutral"
+        return "sad"
 
     # ------------------------------------------------------------------
     # Prosody drawing
@@ -989,8 +1017,21 @@ class TrainerView:
     # ------------------------------------------------------------------
     def show_feedback(self, result: "PronunciationResult", current_phrase,
                       has_recording: bool = True):
-        # Reflect the score on the face: above 50 smiles, below frowns, 50 flat.
-        self.face.set_score(result.score)
+        # One consistent presentation for the whole result, so the score read-out,
+        # quality label, face and the passed/try-again line never contradict each
+        # other. The phoneme engine grades into a calibrated 0-5 bucket that also
+        # decides result.passed, so the bucket drives the user-facing percent, the
+        # label and the colour; the acoustic engine has no bucket and uses its raw
+        # 0-100 score (consistent with its passed = score >= threshold).
+        bucket = getattr(result, "bucket", -1)
+        if bucket >= 0:
+            display_score = result.user_percent
+            quality, quality_color = self._bucket_quality(bucket)
+        else:
+            display_score = result.score
+            quality, quality_color = self._quality_label(result.score)
+        # The face follows the same quality band, so a passed take always smiles.
+        self.face.set_expression(self._quality_expression(quality_color))
         self.feedback_display.configure(state=tk.NORMAL)
         # The numeric score moved out of this panel: the raw score/bucket now lives
         # in the status bar and the qualitative label. This panel keeps only the
@@ -1052,7 +1093,7 @@ class TrainerView:
         self.root.update_idletasks()  # ensure the canvases have a real width/height
         self._redraw_prosody()
 
-        self.update_score_stats(result.score, getattr(result, "bucket", -1))
+        self.update_score_stats(display_score, bucket, quality_color)
 
         # Re-enable everything disabled while recording: the reference replay,
         # the self-test and new-phrase generation. "My recording" is enabled only
@@ -1061,7 +1102,6 @@ class TrainerView:
         self._set_actions(generate=True, reference=True, user=has_recording, test=True)
         self.draw_mic_button("idle")
 
-        quality, quality_color = self._quality_label(result.score)
         self.update_status(quality, quality_color)
         if result.passed:
             self.update_instruction("Nice! Click 'New phrase' to continue, or repeat to refine.")
