@@ -2,29 +2,34 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Valery Kovalev
 
-"""Find the newest llama-cpp-python CPU wheel that actually runs on this machine.
+"""Find and install the newest llama-cpp-python CPU wheel that runs on this CPU.
 
 Why this exists
 ---------------
 abetlen's prebuilt CPU index ships exactly ONE wheel per version (no AVX2 vs
 AVX512 variants to choose from), and recent wheels are built for an instruction
-set some CPUs lack, so they crash with 0xC000001D on first model load. There is
-nothing to "select" at install time; the only reliable fix without a source build
-is to install an older version whose wheel uses a lower CPU baseline.
+set some CPUs lack, so they crash with 0xC000001D on first model load. install.py
+installs the latest wheel (right for modern CPUs); this tool is the repair path
+when that latest wheel crashes on an older CPU. It installs an older version whose
+wheel uses a lower CPU baseline, with no source build required.
 
-This tool automates that search so nobody has to try versions by hand:
+The search is CPU-aware so it does not waste time on wheels that cannot work:
 
-    for each version, newest first:
+    read this CPU's AVX512 support (from numpy)
+    if no AVX512: skip every wheel newer than AVX2_SAFE_CEILING (they need AVX512)
+    for each remaining version, newest first:
         pip install --force-reinstall llama-cpp-python==<version>  (CPU index)
         run tools/smoke_test_llama.py in a separate process
-        if it exits 0 -> this version works on this CPU; stop and report it
+        if it exits 0 -> this version works and is now installed; stop
 
-The smoke test is a SEPARATE process on purpose: an illegal-instruction crash is
-a hard abort that cannot be caught in-process, so its verdict is the child's exit
-code (see smoke_test_llama.py for the code meanings).
+So on a CPU without AVX512 the very first version tried is AVX2_SAFE_CEILING.
+The smoke test is a SEPARATE process on purpose: even when 0.3.x surfaces the
+illegal instruction as a catchable WinError, older builds may instead hard-abort,
+and a hard abort cannot be caught in-process. The verdict is therefore the
+child's exit code (see smoke_test_llama.py for the code meanings).
 
-Once a working version is found, pin it in install.py (step_cpu_llama) as
-``llama-cpp-python==<version>`` so fresh installs on similar CPUs skip the search.
+The working version is left installed in the venv, so a successful run also fixes
+the machine; nothing needs to be pinned in install.py.
 
 Run it inside the project's activated virtualenv, on the target machine:
 
@@ -60,6 +65,13 @@ LISTING_URL = INDEX_URL + "/llama-cpp-python/"
 SMOKE_INCONCLUSIVE = 3
 SMOKE_LOAD_FAILED = 4
 
+# Newest CPU wheel known to use only an AVX2 baseline (no AVX512). Wheels above
+# this (0.3.29+) are built with AVX512 and crash with 0xC000001D on CPUs that
+# lack it, so on such a CPU the sweep starts here instead of wasting time on
+# newer ones. Determined empirically with this tool; bump it if a newer wheel is
+# confirmed AVX2-safe.
+AVX2_SAFE_CEILING = "0.3.28"
+
 # Wheel filenames look like llama_cpp_python-0.3.30-py3-none-win_amd64.whl; we
 # only need the version segment.
 _VERSION_RE = re.compile(r"llama_cpp_python-([0-9]+\.[0-9]+\.[0-9]+)-")
@@ -86,6 +98,11 @@ def _say(message: str) -> None:
     logger.info(message)
 
 
+def _version_tuple(version: str) -> tuple[int, ...]:
+    """Parse "0.3.28" into (0, 3, 28) for numeric comparison and sorting."""
+    return tuple(int(part) for part in version.split("."))
+
+
 def discover_versions() -> list[str]:
     """Return all published versions, newest first.
 
@@ -96,8 +113,29 @@ def discover_versions() -> list[str]:
     with urllib.request.urlopen(LISTING_URL, timeout=30) as response:
         html = response.read().decode("utf-8", errors="replace")
     versions = set(_VERSION_RE.findall(html))
-    return sorted(versions, key=lambda v: tuple(int(p) for p in v.split(".")),
-                  reverse=True)
+    return sorted(versions, key=_version_tuple, reverse=True)
+
+
+def cpu_has_avx512() -> bool | None:
+    """Whether this CPU supports AVX512F, read from numpy (already a dependency).
+
+    numpy exposes a CPUID-based feature map, which is the cleanest cross-platform
+    way to read this without a new dependency or fragile Windows API calls.
+    Returns None when it cannot be determined, so the caller makes no assumption.
+    """
+    try:
+        import numpy as np
+    except ImportError:
+        return None
+    try:
+        # numpy >= 2 moved the internal module to np._core.
+        try:
+            umath = np._core._multiarray_umath
+        except AttributeError:
+            umath = np.core._multiarray_umath
+        return bool(umath.__cpu_features__.get("AVX512F", False))
+    except Exception:  # noqa: BLE001 - any probe failure means "unknown"
+        return None
 
 
 def install_version(version: str, extra_index_url: str) -> bool:
@@ -129,8 +167,8 @@ def install_version(version: str, extra_index_url: str) -> bool:
 def run_smoke_test(model: str | None) -> int:
     """Run the smoke test in a child process; return its exit code.
 
-    The child's exit code IS the verdict: 0 works, 3 inconclusive, anything else
-    means it crashed (incompatible build) and was killed by the OS.
+    The child's exit code IS the verdict: 0 works, 3 inconclusive (cannot test),
+    4 the build would not load on this CPU, any other nonzero a hard crash.
     """
     cmd = [sys.executable, str(SMOKE_TEST)]
     if model:
@@ -173,6 +211,20 @@ def main() -> int:
         _say("No versions found in the wheel index.")
         return 2
 
+    # CPU-aware ordering: a machine without AVX512 cannot run wheels built with
+    # it, so drop everything newer than the AVX2-safe ceiling and start there.
+    avx512 = cpu_has_avx512()
+    if avx512 is False:
+        ceiling = _version_tuple(AVX2_SAFE_CEILING)
+        kept = [v for v in versions if _version_tuple(v) <= ceiling]
+        _say(f"CPU has no AVX512: skipping {len(versions) - len(kept)} newer "
+             f"AVX512 build(s); starting from {AVX2_SAFE_CEILING}.")
+        versions = kept
+    elif avx512 is True:
+        _say("CPU has AVX512: trying the newest versions first.")
+    else:
+        _say("AVX512 support unknown (numpy unavailable); trying newest first.")
+
     candidates = versions[:args.max_tries]
     _say(f"Found {len(versions)} versions; trying the newest {len(candidates)}: "
          f"{', '.join(candidates)}")
@@ -188,10 +240,10 @@ def main() -> int:
 
         code = run_smoke_test(args.model)
         if code == 0:
-            _say(f"\nWORKING: llama-cpp-python {version} runs on this CPU.")
-            _say("Pin it in install.py (step_cpu_llama), replacing the bare "
-                 'package name with:')
-            _say(f'    "llama-cpp-python=={version}"')
+            _say(f"\nWORKING: llama-cpp-python {version} runs on this CPU and is "
+                 "now installed in this venv.")
+            _say("Done: this is the version left installed, so the machine is "
+                 "fixed. No change to install.py is needed.")
             return 0
         if code == SMOKE_INCONCLUSIVE:
             # Not version-specific (no model / not installed): trying more

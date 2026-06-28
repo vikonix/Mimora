@@ -6,8 +6,8 @@
 Standalone tool: probes the machine (RAM, CPU, GPU/VRAM, audio devices) and
 writes hwconfig/hardware_config.json with two sections:
 
-  "hardware" — raw facts about the machine, for diagnostics;
-  "config"   — ready-to-use parameter values (EXTERNAL_N_GPU_LAYERS etc.)
+  "hardware" - raw facts about the machine, for diagnostics;
+  "config"   - ready-to-use parameter values (EXTERNAL_N_GPU_LAYERS etc.)
                picked from the detected hardware. The main app will read
                these instead of the hard-coded defaults in config.py.
 
@@ -36,7 +36,7 @@ OUTPUT_FILE = Path(__file__).parent / "hardware_config.json"
 # A timestamped record of each run is kept in the project-wide logs/ directory
 # (the same one config.py uses for main.log), alongside the human-friendly
 # console print()s. The log file is the place to look when diagnosing why a
-# given machine was detected the way it was — it captures the warnings too.
+# given machine was detected the way it was - it captures the warnings too.
 LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 LOG_FILE = LOG_DIR / "hwdetect.log"
 
@@ -95,6 +95,36 @@ def detect_ram_gb(warnings: list) -> float | None:
         return None
 
 
+def detect_cpu_features(warnings: list) -> dict:
+    """SIMD CPU features relevant to llama.cpp, read from numpy (already a dep).
+
+    AVX512 is the one that bites: prebuilt llama-cpp-python wheels from 0.3.29 on
+    are built with it and crash with 0xC000001D on CPUs without it. The repair
+    tool tools/sweep_llama_versions.py reads the same flag to install an
+    AVX2-safe version on such machines. Recorded here purely for diagnostics.
+    numpy exposes a CPUID-based feature map, the cleanest cross-platform source
+    without a new dependency or fragile Windows API calls.
+    """
+    features: dict = {}
+    try:
+        import numpy as np
+    except ImportError:
+        warnings.append("numpy is not installed; CPU features unknown")
+        return features
+    try:
+        # numpy >= 2 moved the internal module to np._core.
+        try:
+            umath = np._core._multiarray_umath
+        except AttributeError:
+            umath = np.core._multiarray_umath
+        raw = umath.__cpu_features__
+        for key in ("AVX", "AVX2", "AVX512F", "FMA3", "F16C"):
+            features[key] = bool(raw.get(key, False))
+    except Exception as exc:  # noqa: BLE001 - any probe failure is non-fatal
+        warnings.append(f"CPU feature probe failed: {exc}")
+    return features
+
+
 # =====================================================================
 # GPU
 # =====================================================================
@@ -106,7 +136,7 @@ def detect_gpu(warnings: list) -> dict:
 
     - llama-cpp-python ships its own CUDA runtime, fully independent of torch.
       ``llama_gpu_offload`` reflects its own capability probe (None when the
-      probe is unavailable — physical GPU presence is the fallback signal).
+      probe is unavailable - physical GPU presence is the fallback signal).
     - torch (used only by Wav2Vec2 in pronunciation/acoustic/) reports CUDA via
       ``torch_cuda``. A CPU-only torch build is normal here and only means
       pronunciation analysis runs on CPU; it says nothing about the LLM.
@@ -144,12 +174,12 @@ def detect_gpu(warnings: list) -> dict:
         elif gpu["present"]:
             warnings.append(
                 f"'{gpu['name']}' is present but torch has no CUDA (CPU-only "
-                "build) — pronunciation analysis (Wav2Vec2) will run on CPU; "
+                "build) - pronunciation analysis (Wav2Vec2) will run on CPU; "
                 "the LLM is unaffected, it uses llama-cpp's own CUDA"
             )
     except ImportError:
         warnings.append("torch is not installed; Wav2Vec2 device defaults to CPU")
-    except Exception as exc:  # noqa: BLE001 — a broken CUDA runtime must not kill detection
+    except Exception as exc:  # noqa: BLE001 - a broken CUDA runtime must not kill detection
         warnings.append(f"torch CUDA probe failed: {exc}")
 
     return gpu
@@ -162,13 +192,13 @@ def _register_nvidia_dll_dirs() -> None:
     but only searches its own lib/ dir and CUDA_PATH. With no system CUDA
     Toolkit those DLLs come from the nvidia-cuda-runtime-cu12 /
     nvidia-cublas-cu12 pip packages, which place them under
-    site-packages/nvidia/*/bin — register those dirs before importing
+    site-packages/nvidia/*/bin - register those dirs before importing
     llama_cpp. No-op on non-Windows or when the packages are absent.
     (llm_server/server.py carries the same helper.)
 
     llama_cpp loads llama.dll with winmode=RTLD_GLOBAL (0), which selects the
     legacy Windows DLL search: PATH is consulted, os.add_dll_directory() dirs
-    are not — so the dirs must go on PATH (add_dll_directory is kept in case
+    are not - so the dirs must go on PATH (add_dll_directory is kept in case
     a future llama_cpp switches to the default winmode).
     """
     if sys.platform != "win32":
@@ -183,7 +213,7 @@ def _probe_llama_offload(warnings: list) -> bool | None:
     """Whether the installed llama-cpp-python build can offload to GPU.
 
     Returns None when it cannot be determined (package missing or too old to
-    expose the probe) — callers should then fall back to physical GPU presence.
+    expose the probe) - callers should then fall back to physical GPU presence.
     """
     _register_nvidia_dll_dirs()
     try:
@@ -192,7 +222,7 @@ def _probe_llama_offload(warnings: list) -> bool | None:
         warnings.append("llama-cpp-python is not installed; "
                         "GPU offload capability unknown")
         return None
-    except Exception as exc:  # noqa: BLE001 — native DLL load errors
+    except Exception as exc:  # noqa: BLE001 - native DLL load errors
         warnings.append(f"llama_cpp import failed: {exc}")
         return None
 
@@ -206,7 +236,7 @@ def _probe_llama_offload(warnings: list) -> bool | None:
         return None
     if not supported:
         warnings.append(
-            "llama-cpp-python is a CPU-only build — the LLM cannot use the "
+            "llama-cpp-python is a CPU-only build - the LLM cannot use the "
             "GPU; reinstall it with CUDA support to enable offload"
         )
     return supported
@@ -279,7 +309,7 @@ def detect_audio(warnings: list) -> dict:
                     {**entry, "channels": dev["max_output_channels"],
                      "default": index == default_out}
                 )
-    except Exception as exc:  # noqa: BLE001 — PortAudio errors must not kill detection
+    except Exception as exc:  # noqa: BLE001 - PortAudio errors must not kill detection
         warnings.append(f"Audio device query failed: {exc}")
 
     if not audio["input_devices"]:
@@ -298,7 +328,7 @@ def build_config(hardware: dict) -> dict:
 
     The names match the constants in config.py so the app can apply them
     directly. LLM parameters (N_GPU_LAYERS, N_CTX) follow the physical GPU and
-    llama-cpp's own offload capability — NOT torch, which is a separate stack
+    llama-cpp's own offload capability - NOT torch, which is a separate stack
     used only by Wav2Vec2. Threshold rationale: the GGUF model weighs ~2 GB at
     Q4_K_M and Kokoro/Wav2Vec2 also claim VRAM when they run on the GPU, so
     full offload plus GPU-side Wav2Vec2 needs a comfortable margin.
@@ -352,6 +382,7 @@ def main() -> int:
         "platform": f"{platform.system()} {platform.release()}",
         "ram_total_gb": detect_ram_gb(warnings),
         "cpu_cores": os.cpu_count(),
+        "cpu_features": detect_cpu_features(warnings),
         "gpu": detect_gpu(warnings),
         "audio": detect_audio(warnings),
     }
@@ -371,6 +402,13 @@ def main() -> int:
     ram_line = f"RAM: {hardware['ram_total_gb']} GB, CPU cores: {hardware['cpu_cores']}"
     print(f"  {ram_line}")
     logger.info(ram_line)
+
+    feats = hardware["cpu_features"]
+    if feats:
+        enabled = [name for name, present in feats.items() if present]
+        cpu_feat_line = "CPU features: " + (", ".join(enabled) if enabled else "none")
+        print(f"  {cpu_feat_line}")
+        logger.info(cpu_feat_line)
 
     if gpu["present"]:
         llama_state = {True: "yes", False: "NO", None: "unknown"}[gpu["llama_gpu_offload"]]

@@ -25,12 +25,12 @@ Design notes
   silently redo it: it says so and asks reinstall vs. skip (defaulting to
   skip). Under --yes such steps are skipped unless --reinstall is also given.
 * GPU detection deliberately relies only on `nvidia-smi`, because
-  detect_hardware.py imports torch/llama-cpp (which may not be installed yet) —
+  detect_hardware.py imports torch/llama-cpp (which may not be installed yet) -
   a classic bootstrap chicken-and-egg. detect_hardware.py is run at the very
   end, once those packages exist.
 * The GPU CUDA wheels are installed before the requirements file so that the
   `llama-cpp-python` / `torch` constraints in requirements.txt are already
-  satisfied — otherwise pip would try to source-build a CPU llama-cpp-python
+  satisfied - otherwise pip would try to source-build a CPU llama-cpp-python
   (no PyPI wheels on recent versions) only for it to be replaced afterwards.
 * Packages install into the interpreter that runs this script (sys.executable);
   the script does not create a venv. It checks up front whether it is inside a
@@ -72,7 +72,7 @@ DETECT_HW_SCRIPT = PROJECT_ROOT / "hwconfig" / "detect_hardware.py"
 
 MIN_PYTHON = (3, 11)  # matches requires-python in pyproject.toml
 # Highest Python minor we have verified has prebuilt wheels for every
-# dependency. Newer interpreters are NOT blocked (no upper version gate) — they
+# dependency. Newer interpreters are NOT blocked (no upper version gate) - they
 # only get a warning (see step_check_python). Because the requirements install
 # is binary-only, a missing wheel on such an interpreter fails loudly with a
 # "no matching distribution" error instead of silently source-building.
@@ -84,7 +84,7 @@ WHEEL_TESTED_MAX = (3, 12)
 # exempted or the install would fail on them on every Python version.
 # unicodecsv: pulled by panphon (phoneme engine); every panphon release depends
 # on it and it ships sdist-only, so --only-binary makes the resolve impossible
-# without this exemption. Pure-Python — builds from sdist with no compiler.
+# without this exemption. Pure-Python - builds from sdist with no compiler.
 SOURCE_ONLY_PACKAGES = ("fastdtw", "docopt", "unicodecsv")
 
 # The GGUF chat model. Default filename matches EXTERNAL_MODEL_PATH in
@@ -129,7 +129,7 @@ REQUIRED_DISTS = [
 
 
 # ---------------------------------------------------------------------------
-# "Already installed?" detection (no heavy imports — metadata only)
+# "Already installed?" detection (no heavy imports - metadata only)
 # ---------------------------------------------------------------------------
 
 def dist_version(name: str) -> str | None:
@@ -164,7 +164,7 @@ def hf_repo_fully_cached(repo_id: str) -> bool:
     A folder existing under model_cache/hub/ is not enough: an interrupted run
     can leave a partial snapshot (missing files). snapshot_download in offline
     mode returns the path only when every file of the recorded revision is
-    present, and raises otherwise — so partial downloads are correctly reported
+    present, and raises otherwise - so partial downloads are correctly reported
     as not-installed and will be re-offered. Requires HF_HOME to be set first.
     """
     try:
@@ -175,7 +175,7 @@ def hf_repo_fully_cached(repo_id: str) -> bool:
     try:
         snapshot_download(repo_id=repo_id, local_files_only=True)
         return True
-    except Exception:  # noqa: BLE001 — any miss/partial means "not fully cached"
+    except Exception:  # noqa: BLE001 - any miss/partial means "not fully cached"
         return False
 
 
@@ -236,7 +236,7 @@ class StepReport:
         width = max((len(name) for name, _, _ in self._rows), default=0)
         lines = []
         for name, status, note in self._rows:
-            suffix = f" — {note}" if note else ""
+            suffix = f" - {note}" if note else ""
             lines.append(f"  {name.ljust(width)}  {status}{suffix}")
         return "\n".join(lines)
 
@@ -374,7 +374,7 @@ def run_command(cmd: list[str], log: Logger) -> bool:
 
     Output is read line-by-line as it is produced (so a long pip install shows
     progress in real time) and mirrored into logs/install.log. Returns True on exit
-    code 0, False otherwise. Never raises on a non-zero exit — the caller
+    code 0, False otherwise. Never raises on a non-zero exit - the caller
     decides how a failure affects the rest of the run.
     """
     log.log(f"    $ {' '.join(cmd)}")
@@ -432,7 +432,7 @@ def detect_gpu(log: Logger) -> tuple[str | None, tuple[int, int] | None]:
     """
     smi = shutil.which("nvidia-smi")
     if not smi:
-        log.log("    nvidia-smi not found — treating this machine as CPU-only.")
+        log.log("    nvidia-smi not found - treating this machine as CPU-only.")
         return None, None
 
     try:
@@ -440,7 +440,7 @@ def detect_gpu(log: Logger) -> tuple[str | None, tuple[int, int] | None]:
             [smi], capture_output=True, text=True, timeout=15
         ).stdout
     except (OSError, subprocess.TimeoutExpired) as exc:
-        log.log(f"    nvidia-smi failed ({exc}) — treating as CPU-only.")
+        log.log(f"    nvidia-smi failed ({exc}) - treating as CPU-only.")
         return None, None
 
     # Driver's max supported CUDA appears in the header: "CUDA Version: 12.8".
@@ -521,13 +521,13 @@ def check_virtualenv(log: Logger, args: argparse.Namespace) -> None:
     global site-packages, so we detect a venv/virtualenv/conda env and, when
     absent, make the user confirm before continuing.
     """
-    log.banner("Step 0/8 — Environment check")
+    log.banner("Step 0/8 - Environment check")
     in_venv = (sys.prefix != sys.base_prefix
                or bool(os.environ.get("CONDA_PREFIX")))
     log.log(f"    Interpreter: {sys.executable}")
 
     if in_venv:
-        log.log("    Running inside a virtual environment — packages stay local.")
+        log.log("    Running inside a virtual environment - packages stay local.")
         return
 
     log.log("    WARNING: NOT running inside a virtual environment.")
@@ -552,17 +552,63 @@ def check_virtualenv(log: Logger, args: argparse.Namespace) -> None:
     answer = input("\n    Install into this GLOBAL interpreter anyway? "
                    "[N]o-abort / [y]es: ").strip().lower()
     if answer not in ("y", "yes"):
-        log.log("    Aborted — activate a virtual environment and re-run.")
+        log.log("    Aborted - activate a virtual environment and re-run.")
         raise SystemExit(1)
     log.log("    Proceeding with the global interpreter at the user's request.")
+
+
+def step_check_vcredist(
+    log: Logger, confirmer: Confirmer, report: StepReport
+) -> None:
+    """On Windows, verify the MSVC runtime DLLs that torch / llama-cpp need.
+
+    torch's torch_python.dll and llama-cpp-python's llama.dll link against the
+    Microsoft Visual C++ runtime (vcruntime140.dll, vcruntime140_1.dll,
+    msvcp140.dll). A clean Windows install often lacks it, and the failure only
+    surfaces at RUNTIME (import torch / model load), long after pip reports
+    success. Loading the DLLs here turns that into an up-front, actionable
+    message. We do NOT auto-install the redistributable: it needs an elevated GUI
+    installer, which is out of scope for this pip-only setup.
+    """
+    log.banner("Step 0/8 - Visual C++ runtime (Windows)")
+    if sys.platform != "win32":
+        log.log("    Not Windows; the MSVC runtime check does not apply.")
+        report.add("VC++ runtime", SKIPPED, "not Windows")
+        return
+
+    import ctypes
+    missing = []
+    for dll in ("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll"):
+        try:
+            ctypes.WinDLL(dll)
+        except OSError:
+            missing.append(dll)
+
+    if not missing:
+        log.log("    MSVC runtime present (vcruntime140 / msvcp140).")
+        report.add("VC++ runtime", DONE, "present")
+        return
+
+    log.log(f"    MISSING: {', '.join(missing)}")
+    report.add("VC++ runtime", MANUAL, "install vc_redist.x64")
+    # warn_continue lets the user abort to install it now, or proceed (e.g. under
+    # --yes); the report already records the manual action either way.
+    confirmer.warn_continue([
+        f"Microsoft Visual C++ runtime DLL(s) not found: {', '.join(missing)}.",
+        "Without the Visual C++ Redistributable (x64), torch and "
+        "llama-cpp-python fail to load at runtime (the hardware-detection step "
+        "below would fail too).",
+        "Install it, then re-run install.py:",
+        "  https://aka.ms/vs/17/release/vc_redist.x64.exe",
+    ])
 
 
 def step_check_python(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Gate the interpreter: hard-fail below the minimum, warn above the tested
-    maximum (no upper version block — newer Pythons may just lack wheels)."""
-    log.banner("Step 1/8 — Python version")
+    maximum (no upper version block - newer Pythons may just lack wheels)."""
+    log.banner("Step 1/8 - Python version")
     current = sys.version_info[:2]
     log.log(f"    Running Python {platform.python_version()} ({sys.executable})")
     if current < MIN_PYTHON:
@@ -586,7 +632,7 @@ def step_install_requirements(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Install the project requirements; the root file chains the subprojects."""
-    log.banner("Step 4/8 — Project dependencies")
+    log.banner("Step 4/8 - Project dependencies")
     if not REQUIREMENTS.exists():
         log.log(f"    ERROR: {REQUIREMENTS} not found. Aborting.")
         report.add("pip requirements", FAILED, "requirements.txt missing")
@@ -648,7 +694,7 @@ def step_cpu_llama(
     Recent llama-cpp-python releases publish no CPU wheel on PyPI (only an
     sdist), and Step 4 installs requirements with --only-binary, which forbids
     a source build. abetlen's wheel index ships a CPU-only build, so we pull it
-    here — BEFORE Step 4 — and the requirements.txt constraint is then already
+    here - BEFORE Step 4 - and the requirements.txt constraint is then already
     satisfied, so pip never reaches for the missing PyPI wheel.
     """
     index = LLAMA_INDEX_URL.format(series="cpu")
@@ -727,7 +773,7 @@ def step_gpu_llama(
 
 def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
     """Ensure the native espeak-ng binary exists; offer to install it."""
-    log.banner("Step 5/8 — espeak-ng (native binary for phonemizer)")
+    log.banner("Step 5/8 - espeak-ng (native binary for phonemizer)")
     if shutil.which("espeak-ng") or shutil.which("espeak"):
         log.log("    espeak-ng found on PATH.")
         report.add("espeak-ng", DONE, "already present")
@@ -785,7 +831,7 @@ def configure_hf_symlink_fallback(log: Logger) -> None:
     symlink on Windows needs Developer Mode or admin rights.
 
     The native hf-xet downloader links files into the cache itself and fails hard
-    with WinError 1314 when that privilege is missing — and, unlike the pure-
+    with WinError 1314 when that privilege is missing - and, unlike the pure-
     Python HTTP path, it does NOT fall back to copying. Crucially it can hit this
     even when a plain symlink probe passes (the privilege can be present at probe
     time yet unavailable to xet's linker), so a probe is not a reliable gate.
@@ -830,7 +876,7 @@ def step_prefetch_models(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the Hugging Face models into model_cache/ (HF_HOME)."""
-    log.banner("Step 6/8 — Pre-download Hugging Face models")
+    log.banner("Step 6/8 - Pre-download Hugging Face models")
 
     # Match mimora/config.py: HF_HOME points at the project's model_cache/.
     MODEL_CACHE_DIR.mkdir(exist_ok=True)
@@ -863,7 +909,7 @@ def step_prefetch_models(
         try:
             snapshot_download(repo_id=repo_id)
             log.log(f"    -> done: {repo_id}")
-        except Exception as exc:  # noqa: BLE001 — record which repo failed
+        except Exception as exc:  # noqa: BLE001 - record which repo failed
             all_ok = False
             log.log(f"    -> FAILED: {repo_id}: {exc}")
     report.add("HF model cache", DONE if all_ok else FAILED)
@@ -875,7 +921,7 @@ def step_download_gguf(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the GGUF chat model into models/ if not already present."""
-    log.banner("Step 7/8 — GGUF chat model")
+    log.banner("Step 7/8 - GGUF chat model")
     MODELS_DIR.mkdir(exist_ok=True)
     target = MODELS_DIR / GGUF_FILENAME
 
@@ -915,7 +961,7 @@ def step_detect_hardware(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Run detect_hardware.py last, when torch/llama-cpp are installed."""
-    log.banner("Step 8/8 — Hardware detection (writes hardware_config.json)")
+    log.banner("Step 8/8 - Hardware detection (writes hardware_config.json)")
     if not DETECT_HW_SCRIPT.exists():
         log.log(f"    {DETECT_HW_SCRIPT} not found; skipping.")
         report.add("hardware detection", SKIPPED, "script missing")
@@ -946,7 +992,7 @@ def finish(log: Logger, report: StepReport, *, success: bool) -> None:
     log.log("")
     log.log(f"    finished: {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
     if not success:
-        log.log("    Installation INCOMPLETE — fix the error above and re-run")
+        log.log("    Installation INCOMPLETE - fix the error above and re-run")
         log.log("    install.py. Do NOT run main.py until it finishes cleanly.")
         return
     if MANUAL in report.statuses():
@@ -957,7 +1003,7 @@ def finish(log: Logger, report: StepReport, *, success: bool) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Mimora installer — installs dependencies and downloads "
+        description="Mimora installer - installs dependencies and downloads "
                     "the model cache and the LLM model.",
     )
     parser.add_argument("-y", "--yes", action="store_true",
@@ -995,14 +1041,16 @@ def main() -> int:
     # InstallError, so the run stops immediately instead of pressing on with a
     # half-built environment and printing a misleading "ready to launch" line.
     try:
-        # Step 0: refuse to silently install into the global interpreter.
+        # Step 0: refuse to silently install into the global interpreter, then
+        # (on Windows) verify the MSVC runtime torch/llama need at runtime.
         check_virtualenv(log, args)
+        step_check_vcredist(log, confirmer, report)
 
         # Step 1: Python version (hard min gate; warn above the tested max).
         step_check_python(log, confirmer, report)
 
         # Step 2: GPU detection (informs steps 4a/4b; no packages needed).
-        log.banner("Step 2/8 — GPU / CUDA detection")
+        log.banner("Step 2/8 - GPU / CUDA detection")
         gpu_name, driver_cuda = detect_gpu(log)
         use_gpu = (gpu_name is not None or args.gpu) and not args.cpu
         if args.cpu:
@@ -1020,11 +1068,11 @@ def main() -> int:
         # satisfied (avoids a doomed CPU source-build of llama-cpp-python).
         # torch ships CPU wheels on PyPI, so the CPU path only needs llama here.
         if use_gpu:
-            log.banner("Step 3/8 — GPU (CUDA) builds")
+            log.banner("Step 3/8 - GPU (CUDA) builds")
             step_gpu_torch(log, confirmer, report, driver_cuda)
             step_gpu_llama(log, confirmer, report, driver_cuda)
         else:
-            log.banner("Step 3/8 — CPU builds")
+            log.banner("Step 3/8 - CPU builds")
             report.add("torch (CUDA)", SKIPPED, "CPU-only")
             step_cpu_llama(log, confirmer, report)
 
@@ -1050,7 +1098,7 @@ def main() -> int:
         step_detect_hardware(log, confirmer, report)
     except InstallError as exc:
         log.log("")
-        log.log(f"    ABORTED: step '{exc}' failed — stopping the installer "
+        log.log(f"    ABORTED: step '{exc}' failed - stopping the installer "
                 f"so the error is not masked.")
         finish(log, report, success=False)
         return 1
