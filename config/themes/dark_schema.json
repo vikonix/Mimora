@@ -3,7 +3,7 @@
 
   "_surfaces": "Backgrounds and borders. bg_main = window, bg_panel = panels/inputs/status bar, bg_accent = accent-tinted controls (buttons, combobox).",
   "bg_main": "#0d1220",
-  "bg_panel": "#161d2c",
+  "bg_panel": "#1b1f2a",
   "bg_accent": "#1d1d3a",
   "bg_accent_active": "#272653",
   "bg_button": "#4d2f87",
@@ -11,14 +11,14 @@
   "border": "#2a3346",
   "accent": "#8a2be2",
 
-  "_text": "text = body, text_emph = emphasized feedback, text_bright = selection fg / text cursor, text_dim = secondary labels, text_muted = tertiary/system, text_accent = text on accent-tinted controls, phrase = hero practice phrase (kept distinct from the cyan 'you' curve).",
+  "_text": "text = body, text_emph = emphasized feedback, text_bright = selection fg / text cursor, text_dim = secondary labels, text_muted = tertiary/system, text_accent = text on accent-tinted controls, phrase = hero practice phrase (matched to the cyan 'you' prosody curve).",
   "text": "#f8f8f2",
   "text_emph": "#f1f1f6",
   "text_bright": "#ffffff",
   "text_dim": "#a0a0a5",
   "text_muted": "#6272a4",
   "text_accent": "#d6c2ff",
-  "phrase": "#6f9fe0",
+  "phrase": "#8be9fd",
   "text_disabled": "#555560",
   "text_disabled_dim": "#3a3a40",
 

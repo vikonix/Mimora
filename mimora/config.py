@@ -476,8 +476,8 @@ _DARK_THEME = {
     "text_dim": "#a0a0a5",          # secondary labels
     "text_muted": "#6272a4",        # tertiary/system text
     "text_accent": "#d6c2ff",       # text on accent-tinted controls
-    "phrase": "#d8c4ff",            # hero practice phrase: brand-family lavender,
-                                    # kept distinct from the cyan "you" curve
+    "phrase": "#d8c4ff",            # hero practice phrase (overridden per theme to
+                                    # match the cyan "you" prosody curve)
     "text_disabled": "#555560",
     "text_disabled_dim": "#3a3a40",
     # Articulation face (intentionally identical in every theme; the disc is

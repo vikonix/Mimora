@@ -11,14 +11,14 @@
   "border": "#c8c8d2",
   "accent": "#6a1fb8",
 
-  "_text": "text = body, text_emph = emphasized feedback, text_bright = selection fg / text cursor, text_dim = secondary labels, text_muted = tertiary/system, text_accent = text on accent-tinted controls, phrase = hero practice phrase (kept distinct from the blue 'you' curve).",
+  "_text": "text = body, text_emph = emphasized feedback, text_bright = selection fg / text cursor, text_dim = secondary labels, text_muted = tertiary/system, text_accent = text on accent-tinted controls, phrase = hero practice phrase (matched to the 'you' prosody curve).",
   "text": "#23232a",
   "text_emph": "#15151a",
   "text_bright": "#000000",
   "text_dim": "#5c5c66",
   "text_muted": "#5a6796",
   "text_accent": "#4a2a8a",
-  "phrase": "#5b21b6",
+  "phrase": "#0277bd",
   "text_disabled": "#a6a6b0",
   "text_disabled_dim": "#c2c2ca",
 

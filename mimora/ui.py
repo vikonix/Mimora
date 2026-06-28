@@ -185,7 +185,7 @@ class TrainerView:
 
         # 3. Bottom control panel (mic + instruction + replay buttons)
         control_frame = tk.Frame(self.root, bg=THEME["bg_main"])
-        control_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=10)
+        control_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(0, 10))
 
         self.btn_canvas = tk.Canvas(control_frame, width=100, height=100, bg=THEME["bg_main"],
                                     highlightthickness=0, cursor="hand2")
@@ -200,14 +200,14 @@ class TrainerView:
 
         # 4. Source text panel (editable)
         source_frame = tk.Frame(self.root, bg=THEME["bg_main"])
-        source_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 5))
+        source_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 8))
 
         # Header row above the practice text: caption on the left, the user-name
         # field on the right edge. The name is persisted to settings.json when
         # editing finishes (see on_user_name_changed).
         text_header = tk.Frame(source_frame, bg=THEME["bg_main"])
         text_header.pack(fill=tk.X)
-        tk.Label(text_header, text="Practice text (editable)",
+        tk.Label(text_header, text="Practice text:",
                  font=(FONT_FAMILY, 9, "bold"), fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
 
         # Quick-edit affordances next to the caption. Their real job is
@@ -237,7 +237,7 @@ class TrainerView:
             insertbackground=THEME["text_bright"], bd=0, highlightthickness=1,
             highlightbackground=THEME["border"], highlightcolor=THEME["accent"])
         self.user_name_entry.pack(side=tk.RIGHT)
-        tk.Label(text_header, text="Name:", font=(FONT_FAMILY, 9),
+        tk.Label(text_header, text="User name:", font=(FONT_FAMILY, 9),
                  fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.RIGHT, padx=(0, 6))
         # Save on focus loss; Enter just drops focus (which triggers the save
         # and returns the spacebar to record-toggle duty).
@@ -312,7 +312,7 @@ class TrainerView:
         # 5. Current phrase card
         self.phrase_frame = tk.Frame(self.root, bg=THEME["bg_panel"],
                                      highlightthickness=1, highlightbackground=THEME["border"])
-        self.phrase_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=5)
+        self.phrase_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(8, 0))
 
         self.phrase_label = tk.Label(self.phrase_frame, text="-", font=(FONT_FAMILY, 15, "bold"),
                                      fg=THEME["phrase"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
@@ -348,7 +348,7 @@ class TrainerView:
 
         # 5b. Prosody panel - pitch (F0) and energy sparklines, you vs reference.
         prosody_frame = tk.Frame(self.root, bg=THEME["bg_main"])
-        prosody_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 5))
+        prosody_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 8))
 
         prosody_header = tk.Frame(prosody_frame, bg=THEME["bg_main"])
         prosody_header.pack(fill=tk.X)
@@ -359,7 +359,7 @@ class TrainerView:
         self.show_face = tk.BooleanVar(value=config.SHOW_FACE)
         tk.Checkbutton(prosody_header, text="Face", variable=self.show_face,
                        command=self._cb.on_show_face_toggled,
-                       font=(FONT_FAMILY, 8), fg=THEME["text_muted"], bg=THEME["bg_main"],
+                       font=(FONT_FAMILY, 8), fg=THEME["text_dim"], bg=THEME["bg_main"],
                        activebackground=THEME["bg_main"], activeforeground=THEME["text_dim"],
                        selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
                        cursor="hand2").pack(side=tk.RIGHT, padx=(12, 0))
@@ -427,7 +427,7 @@ class TrainerView:
         # so the goal is matching the *shape* of the reference, not exact overlap.
         tk.Label(prosody_frame,
                  text="Time runs left→right (stretched to equal width). Aim to match the reference shape.",
-                 font=(FONT_FAMILY, 8), fg=THEME["text_muted"], bg=THEME["bg_main"],
+                 font=(FONT_FAMILY, 8), fg=THEME["text_dim"], bg=THEME["bg_main"],
                  wraplength=540, justify=tk.LEFT).pack(anchor=tk.W, pady=(3, 0))
 
         # fill=X canvases change width on resize, so redraw from the cached prosody.
@@ -449,7 +449,7 @@ class TrainerView:
         # zero height. Reserving this row first keeps it visible just above the
         # mic control_frame, so it sits right under the result window.
         action_frame = tk.Frame(self.root, bg=THEME["bg_main"])
-        action_frame.pack(side=tk.BOTTOM, padx=20, pady=(0, 5))
+        action_frame.pack(side=tk.BOTTOM, padx=20, pady=(0, 8))
 
         # Small diagnostic button: run the reference through analysis instead
         # of a recording (it should score near 100 against itself).
@@ -476,7 +476,7 @@ class TrainerView:
         # 7. Feedback log (fills remaining space). Packed AFTER action_frame so
         # its expand=True only consumes space left over above the button row.
         feedback_frame = tk.Frame(self.root, bg=THEME["bg_main"])
-        feedback_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=20, pady=5)
+        feedback_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=20, pady=(8, 16))
 
         self.feedback_display = scrolledtext.ScrolledText(
             feedback_frame, bg=THEME["bg_panel"], fg=THEME["text"], insertbackground=THEME["text_bright"],
@@ -662,10 +662,11 @@ class TrainerView:
         show = bool(self.translation_var.get())
         packed = self.translation_frame.winfo_manager() == "pack"
         if show and not packed:
-            # Insert directly under the phrase card. Top gap of 3 plus the phrase
-            # card's own 5px bottom gap make an ~8px interval between the panels.
+            # Insert directly under the phrase card with no gap (both pads 0) so
+            # the phrase and its translation touch and read as one pair; their
+            # 1px borders meet to form a single divider line between them.
             self.translation_frame.pack(side=tk.TOP, fill=tk.X, padx=20,
-                                        pady=(3, 5), after=self.phrase_frame)
+                                        pady=(0, 5), after=self.phrase_frame)
         elif not show and packed:
             self.translation_frame.pack_forget()
 
@@ -934,7 +935,7 @@ class TrainerView:
         if score < 55:
             return "Poor", THEME["bad"]
         if score < 70:
-            return "OK", THEME["warn"]
+            return "Needs work", THEME["warn"]
         if score < 85:
             return "Good", THEME["good"]
         return "Excellent", THEME["good"]
@@ -951,7 +952,7 @@ class TrainerView:
         if bucket >= 4:
             return "Good", THEME["good"]
         if bucket >= 3:
-            return "Almost", THEME["warn"]
+            return "Needs work", THEME["warn"]
         if bucket >= 2:
             return "Poor", THEME["bad"]
         return "Weak", THEME["bad"]
@@ -1006,7 +1007,7 @@ class TrainerView:
         """
         return tk.Checkbutton(parent, text=text, variable=variable,
                               command=self._cb.on_prosody_charts_toggled,
-                              font=(FONT_FAMILY, 8), fg=THEME["text_muted"], bg=THEME["bg_main"],
+                              font=(FONT_FAMILY, 8), fg=THEME["text_dim"], bg=THEME["bg_main"],
                               activebackground=THEME["bg_main"], activeforeground=THEME["text_dim"],
                               selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
                               cursor="hand2")
