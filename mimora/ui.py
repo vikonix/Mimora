@@ -715,8 +715,9 @@ class TrainerView:
 
     def enter_recording(self):
         """Microphone is open: lock out playback so it cannot bleed into the take."""
-        # Drop the previous take's charts and result the moment the mic opens,
-        # so the user starts each recording from a clean slate.
+        # Reset only the single-value indicators (charts, score read-out, face)
+        # the moment the mic opens. The feedback panel is left intact: it is a
+        # running history of all attempts and must not be wiped on each take.
         self.clear_previous_result()
         self._set_actions(generate=False, reference=False, user=False, test=False)
         self.draw_mic_button("recording")
@@ -851,17 +852,16 @@ class TrainerView:
         self.stats_label.configure(text=f"Score: {score:.0f} ({bucket_text})", fg=color)
 
     def clear_previous_result(self):
-        """Wipe the previous take's result before a new recording starts.
+        """Reset the per-take indicators before a new recording starts.
 
-        Clears the Phrase/Work-on feedback panel, resets the Score read-out in
-        the status bar to its placeholder, erases both prosody charts and resets
-        the face to its neutral waiting smile, so a stale result can never be
-        mistaken for the take in progress. The status *line* is set separately
-        by the caller (enter_recording -> "Recording...").
+        Resets the Score read-out in the status bar to its placeholder, erases
+        both prosody charts and resets the face to its neutral waiting smile, so
+        a stale single-value indicator can never be mistaken for the take in
+        progress. The feedback panel is deliberately NOT cleared here: it is a
+        running history of every attempt, appended to by show_feedback /
+        append_error_msg and kept across takes. The status *line* is set
+        separately by the caller (enter_recording -> "Recording...").
         """
-        self.feedback_display.configure(state=tk.NORMAL)
-        self.feedback_display.delete("1.0", tk.END)
-        self.feedback_display.configure(state=tk.DISABLED)
         self.stats_label.configure(text="Score: - (-)", fg=THEME["text_dim"])
         self._last_prosody = None
         self.f0_canvas.delete("all")
