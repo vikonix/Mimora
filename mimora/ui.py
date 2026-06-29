@@ -133,14 +133,21 @@ class TrainerView:
         self.root.option_add("*TCombobox*Listbox.selectBackground", THEME["bg_accent_active"])
         self.root.option_add("*TCombobox*Listbox.selectForeground", THEME["text_bright"])
 
-    def _make_button(self, parent, text, command):
-        """Create a consistently styled themed button."""
-        return tk.Button(parent, text=text, command=command,
-                         font=(FONT_FAMILY, 10, "bold"),
-                         bg=THEME["bg_button"], fg=THEME["text_button"],
-                         activebackground=THEME["bg_button_active"], activeforeground=THEME["text_button"],
-                         bd=0, padx=12, pady=6, cursor="hand2",
-                         disabledforeground=THEME["text_disabled"])
+    def _make_button(self, parent, text, command, width=None):
+        """Create a consistently styled themed button.
+
+        ``width`` (in text characters) is optional; pass it to give a group of
+        buttons a uniform width so they line up regardless of label length.
+        """
+        button = tk.Button(parent, text=text, command=command,
+                           font=(FONT_FAMILY, 10, "bold"),
+                           bg=THEME["bg_button"], fg=THEME["text_button"],
+                           activebackground=THEME["bg_button_active"], activeforeground=THEME["text_button"],
+                           bd=0, padx=12, pady=6, cursor="hand2",
+                           disabledforeground=THEME["text_disabled"])
+        if width is not None:
+            button.config(width=width)
+        return button
 
     def build_ui(self):
         # Window background (shows through wherever no widget covers it). The
@@ -266,7 +273,7 @@ class TrainerView:
         self.translation_var = tk.StringVar(value=config.TRANSLATION_LANGUAGE)
         self.translation_selector = ttk.Combobox(
             selectors_frame, textvariable=self.translation_var, state="readonly",
-            width=10, values=config.TRANSLATION_LANGUAGES)
+            width=12, values=config.TRANSLATION_LANGUAGES)
         self.translation_selector.pack(side=tk.LEFT, padx=(0, 10))
         self.translation_selector.bind(
             "<<ComboboxSelected>>", self._cb.on_translation_language_changed)
@@ -332,7 +339,7 @@ class TrainerView:
         self.translation_frame = tk.Frame(self.root, bg=THEME["bg_panel"],
                                           highlightthickness=1, highlightbackground=THEME["border"])
         self.translation_label = tk.Label(
-            self.translation_frame, text="-", font=(FONT_FAMILY, 11),
+            self.translation_frame, text="-", font=(FONT_FAMILY, 13),
             fg=THEME["text_dim"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
         self.translation_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
         # Right-click the translation to copy it (independently of the phrase).
@@ -453,7 +460,7 @@ class TrainerView:
 
         # Small diagnostic button: run the reference through analysis instead
         # of a recording (it should score near 100 against itself).
-        self.test_btn = tk.Button(action_frame, text="▶ Test", command=self._cb.on_test_reference,
+        self.test_btn = tk.Button(action_frame, text="Self test", command=self._cb.on_test_reference,
                                   font=(FONT_FAMILY, 8), bg=THEME["bg_panel"], fg=THEME["text_muted"],
                                   activebackground=THEME["border"], activeforeground=THEME["info"],
                                   bd=0, padx=8, pady=3, cursor="hand2",
@@ -461,15 +468,21 @@ class TrainerView:
         self.test_btn.pack(side=tk.LEFT, padx=(0, 10))
         self.test_btn.config(state=tk.DISABLED)
 
-        self.user_btn = self._make_button(action_frame, "▶ My recording", self._cb.play_user_recording)
+        # Uniform width so the three main action buttons line up regardless of
+        # label length (the widest label, "▶ My recording", sets the size).
+        ACTION_BTN_WIDTH = 14
+        self.user_btn = self._make_button(
+            action_frame, "▶ My recording", self._cb.play_user_recording, width=ACTION_BTN_WIDTH)
         self.user_btn.pack(side=tk.LEFT, padx=(0, 6))
         self.user_btn.config(state=tk.DISABLED)
 
-        self.ref_btn = self._make_button(action_frame, "▶ Reference", self._cb.play_reference)
+        self.ref_btn = self._make_button(
+            action_frame, "▶ Reference", self._cb.play_reference, width=ACTION_BTN_WIDTH)
         self.ref_btn.pack(side=tk.LEFT, padx=(0, 6))
         self.ref_btn.config(state=tk.DISABLED)
 
-        self.generate_btn = self._make_button(action_frame, "🎲 New phrase", self._cb.on_generate_phrase)
+        self.generate_btn = self._make_button(
+            action_frame, "🎲 New phrase", self._cb.on_generate_phrase, width=ACTION_BTN_WIDTH)
         self.generate_btn.pack(side=tk.LEFT)
         self.generate_btn.config(state=tk.DISABLED)
 
