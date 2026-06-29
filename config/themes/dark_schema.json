@@ -10,7 +10,7 @@
   "bg_button_active": "#5e3aa6",
   "text_button": "#ffffff",
   "border": "#2a3346",
-  "accent": "#8a2be2",
+  "accent": "#ab8ce4",
 
   "_text": "text = body, text_emph = emphasized feedback, text_bright = selection fg / text cursor, text_dim = secondary labels, text_muted = tertiary/system, text_accent = text on accent-tinted controls, phrase = hero practice phrase (matched to the cyan 'you' prosody curve).",
   "text": "#f8f8f2",

@@ -403,7 +403,7 @@ class TrainerView:
         # reads as a white face on dark themes and a dark face on light ones.
         self.face_frame = tk.Frame(prosody_body, width=105, height=100,
                                    bg=THEME["bg_panel"],
-                                   highlightthickness=1, highlightbackground=THEME["border"])
+                                   highlightthickness=0)
         # Fix the panel width at 105px: turn off geometry propagation so the
         # FaceWidget inside cannot stretch the frame to its own requested width.
         # The 100px height is a *minimum*: with fill=Y the panel still grows to
