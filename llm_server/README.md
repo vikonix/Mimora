@@ -51,7 +51,7 @@ set CMAKE_ARGS=-DGGML_CUDA=on
 python -m pip install llama-cpp-python --force-reinstall --upgrade --no-cache-dir
 ```
 
-**Verify:** `python hwconfig/detect_hardware.py` (from the project root) must report
+**Verify:** `python tools/detect_hardware.py` (from the project root) must report
 `llama offload: yes`; with a CPU-only build it reports `llama offload: NO`.
 
 ## Starting the Server Manually

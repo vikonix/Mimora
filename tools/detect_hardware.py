@@ -4,7 +4,7 @@
 """Hardware detection for Mimora.
 
 Standalone tool: probes the machine (RAM, CPU, GPU/VRAM, audio devices) and
-writes hwconfig/hardware_config.json with two sections:
+writes config/hardware_config.json with two sections:
 
   "hardware" - raw facts about the machine, for diagnostics;
   "config"   - ready-to-use parameter values (EXTERNAL_N_GPU_LAYERS etc.)
@@ -13,7 +13,7 @@ writes hwconfig/hardware_config.json with two sections:
 
 Run it manually whenever the hardware changes:
 
-    python hwconfig/detect_hardware.py
+    python tools/detect_hardware.py
 
 It only relies on packages the project already uses (torch, sounddevice);
 each probe degrades gracefully if its package is missing or broken, and any
@@ -31,7 +31,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-OUTPUT_FILE = Path(__file__).parent / "hardware_config.json"
+# The tool lives in tools/ but its output is a config artifact, so it is written
+# to the project's config/ directory (read by mimora/config.py), not next to the
+# script.
+OUTPUT_FILE = Path(__file__).resolve().parent.parent / "config" / "hardware_config.json"
 
 # A timestamped record of each run is kept in the project-wide logs/ directory
 # (the same one config.py uses for main.log), alongside the human-friendly

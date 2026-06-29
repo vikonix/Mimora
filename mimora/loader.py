@@ -140,7 +140,7 @@ def models_cached(hub_dir: Path, repos) -> bool:
 def detect_device(hw_value) -> str:
     """Resolve the compute device: 'cuda' or 'cpu'.
 
-    A valid *hw_value* (written by hwconfig) wins and short-circuits - torch is
+    A valid *hw_value* (written by detect_hardware) wins and short-circuits - torch is
     not imported in that case, so callers that already know the device (and unit
     tests) never pay the ~1s torch import. Otherwise probe torch directly,
     falling back to 'cpu' when torch is absent.

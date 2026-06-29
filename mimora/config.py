@@ -20,8 +20,8 @@ CONFIG_DIR = BASE_DIR / "config"
 # =====================================================================
 # Values in this module are layered, lowest priority first:
 #   1. built-in defaults - the literals in this file;
-#   2. hwconfig/hardware_config.json, "config" section - machine-derived
-#      values written by `python hwconfig/detect_hardware.py`;
+#   2. config/hardware_config.json, "config" section - machine-derived
+#      values written by `python tools/detect_hardware.py`;
 #   3. settings.json - hand-edited user preferences.
 # A missing or broken file simply leaves the lower layers in effect: problems
 # are reported to stderr instead of crashing startup, because both files are
@@ -30,7 +30,7 @@ CONFIG_DIR = BASE_DIR / "config"
 
 # Machine-derived overrides. Only the "config" section is consumed here;
 # the "hardware" section is diagnostics for humans.
-_HW = loader.read_json(BASE_DIR / "hwconfig" / "hardware_config.json").get("config")
+_HW = loader.read_json(CONFIG_DIR / "hardware_config.json").get("config")
 if not isinstance(_HW, dict):
     _HW = {}
 
@@ -140,9 +140,10 @@ MAX_RECORD_SECONDS = _num("max_record_seconds", 20, minimum=1)
 SILENCE_TIMEOUT = _num("silence_timeout", 3.0, minimum=0.5)
 SILENCE_THRESHOLD = _num("silence_threshold", 0.01, minimum=0.0)
 
-# Hardware Acceleration setup - the value detected by hwconfig wins; otherwise
-# loader.detect_device probes torch directly (and does not import torch at all
-# when hwconfig already supplied a valid device, so this stays cheap).
+# Hardware Acceleration setup - the value detected by hardware detection wins;
+# otherwise loader.detect_device probes torch directly (and does not import torch
+# at all when hardware detection already supplied a valid device, so this stays
+# cheap).
 DEVICE = loader.detect_device(_HW.get("DEVICE"))
 
 # =====================================================================
@@ -186,11 +187,12 @@ EXTERNAL_MODEL_PATH = _path(
     "external_model_path",
     BASE_DIR / "models" / "llama-3.2-3b-instruct-q4_k_m.gguf",
 )
-# GPU offload and context size: hwconfig picks values matched to the detected
-# VRAM/RAM; the literals here are conservative fallbacks for unknown hardware.
+# GPU offload and context size: hardware detection picks values matched to the
+# detected VRAM/RAM; the literals here are conservative fallbacks for unknown
+# hardware.
 EXTERNAL_N_GPU_LAYERS = _HW.get("EXTERNAL_N_GPU_LAYERS", 20)  # layers on GPU (-1 = all)
 # Context window size (n_ctx). settings.json ("external_n_ctx") wins over the
-# hwconfig-detected value, per the usual layering. int() because the value is
+# detected value, per the usual layering. int() because the value is
 # passed to the server as a command-line argument (a float would break it).
 # minimum=256: anything below breaks generation outright (the system prompt
 # alone would not fit), so treat it as a typo rather than passing it through.
@@ -314,8 +316,8 @@ WAV2VEC2_MODEL_NAME = "facebook/wav2vec2-large-960h"
 # Phoneme-ASR model used by the pronunciation/phoneme/ module: a wav2vec2 CTC model that
 # emits espeak-style IPA, so its phone inventory matches the espeak reference.
 WAV2VEC2_PHONEME_MODEL_NAME = "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
-# Device for Wav2Vec2. Defaults to the shared DEVICE; hwconfig may pin it to
-# "cpu" to avoid VRAM contention with llama_cpp / Kokoro on a single GPU.
+# Device for Wav2Vec2. Defaults to the shared DEVICE; hardware detection may pin
+# it to "cpu" to avoid VRAM contention with llama_cpp / Kokoro on a single GPU.
 WAV2VEC2_DEVICE = _HW.get("WAV2VEC2_DEVICE") or DEVICE
 # Score (0-100) at or above which a repetition is accepted; below it the learner
 # is asked to repeat the same phrase.
@@ -393,7 +395,7 @@ NLLB_TRANSLATOR_MODEL_NAME = "facebook/nllb-200-distilled-600M"
 # latency-tolerant (it runs in the background after the phrase is shown and the
 # reference has played), and keeping NLLB off the GPU avoids VRAM contention
 # with Kokoro / Wav2Vec2 / llama_cpp - matching the translator's RAM (not VRAM) budget.
-# hwconfig may pin it to "cuda" on a machine with VRAM to spare.
+# hardware detection may pin it to "cuda" on a machine with VRAM to spare.
 TRANSLATOR_DEVICE = _HW.get("TRANSLATOR_DEVICE") or "cpu"
 
 # =====================================================================
@@ -550,7 +552,7 @@ AUDIO_SAMPLE_RATE = 16_000
 
 AUDIO_CHANNELS = 1           # Mono for both recording and playback
 AUDIO_LATENCY = None         # None → OS default shared-mode latency
-# Device indices come from hwconfig; None → OS default microphone/speaker.
+# Device indices come from hardware detection; None → OS default microphone/speaker.
 AUDIO_INPUT_DEVICE = _HW.get("AUDIO_INPUT_DEVICE")
 AUDIO_OUTPUT_DEVICE = _HW.get("AUDIO_OUTPUT_DEVICE")
 

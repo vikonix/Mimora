@@ -20,7 +20,7 @@
   "llm_backend": "local_server",
   "_external_model_path": "GGUF model file for the local_server backend. Relative paths resolve against the project root.",
   "external_model_path": "models/llama-3.2-3b-instruct-q4_k_m.gguf",
-  "_external_n_ctx": "Context window size (n_ctx) for the local GGUF model. Overrides the hwconfig-detected value; delete the key to fall back to it.",
+  "_external_n_ctx": "Context window size (n_ctx) for the local GGUF model. Overrides the hardware-detected value; delete the key to fall back to it.",
   "external_n_ctx": 4096,
   "_practice_text_file": "Source text shown in the input panel at startup. Relative paths resolve against the project root.",
   "practice_text_file": "texts/practice_text.txt",

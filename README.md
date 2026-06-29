@@ -56,9 +56,9 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 | `pronunciation/phoneme/calibrate.py` | On-request scoring calibration for the **default** phoneme engine: reads the per-attempt samples from `logs/phoneme_samples.jsonl` and writes `pronunciation/phoneme/calibration.json`. |
 | `pronunciation/acoustic/speech.py` | Alternative pronunciation engine (adapted from OpenPronounce). Single entry point `analyze(...)`; Wav2Vec2 embeddings + DTW, phoneme comparison, scoring. No GUI dependency. |
 | `pronunciation/acoustic/calibrate.py` | On-request scoring calibration for the acoustic engine: reads the per-attempt samples from `logs/acoustic_samples.jsonl` and writes the acoustic floor to `pronunciation/acoustic/calibration.json`. |
-| `config/` | User configuration data: `settings.json` (hand-edited preferences) and `themes/` (UI color schemes). |
+| `config/` | User configuration data: `settings.json` (hand-edited preferences), `hardware_config.json` (machine-derived overrides written by `tools/detect_hardware.py`), and `themes/` (UI color schemes). |
 | `texts/practice_text.txt` | Default source text shown in the input panel at startup; put your own practice texts in `texts/`. |
-| `hwconfig/detect_hardware.py` | Standalone hardware probe (RAM/CPU/GPU/VRAM/audio). Writes `hwconfig/hardware_config.json`, whose `config` section supplies machine-derived overrides (e.g. `EXTERNAL_N_GPU_LAYERS`, `WAV2VEC2_DEVICE`) that `mimora/config.py` reads in preference to its defaults. |
+| `tools/detect_hardware.py` | Standalone hardware probe (RAM/CPU/GPU/VRAM/audio). Writes `config/hardware_config.json`, whose `config` section supplies machine-derived overrides (e.g. `EXTERNAL_N_GPU_LAYERS`, `WAV2VEC2_DEVICE`) that `mimora/config.py` reads in preference to its defaults. |
 | `install.py` | Standalone, idempotent installer: checks Python, detects GPU/CUDA and installs matching torch / llama-cpp-python, installs requirements, checks espeak-ng, pre-downloads the HF models and the GGUF chat model, then runs `detect_hardware.py`. |
 
 ---

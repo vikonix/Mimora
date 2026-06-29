@@ -13,7 +13,7 @@ run Mimora on a fresh machine:
   5. Check for the native espeak-ng binary (optionally help install it).
   6. Pre-download the Hugging Face models into model_cache/.
   7. Download the GGUF chat model into models/.
-  8. Run hwconfig/detect_hardware.py to write hardware_config.json.
+  8. Run tools/detect_hardware.py to write config/hardware_config.json.
 
 Design notes
 ------------
@@ -68,7 +68,7 @@ LOG_FILE = LOG_DIR / "install.log"
 REQUIREMENTS = PROJECT_ROOT / "requirements.txt"
 MODELS_DIR = PROJECT_ROOT / "models"
 MODEL_CACHE_DIR = PROJECT_ROOT / "model_cache"
-DETECT_HW_SCRIPT = PROJECT_ROOT / "hwconfig" / "detect_hardware.py"
+DETECT_HW_SCRIPT = PROJECT_ROOT / "tools" / "detect_hardware.py"
 
 MIN_PYTHON = (3, 11)  # matches requires-python in pyproject.toml
 # Highest Python minor we have verified has prebuilt wheels for every
@@ -968,7 +968,7 @@ def step_detect_hardware(
         return
 
     cmd = [sys.executable, str(DETECT_HW_SCRIPT)]
-    desc = ("Probe the machine and write hwconfig/hardware_config.json (the app "
+    desc = ("Probe the machine and write config/hardware_config.json (the app "
             "reads GPU-tuned parameters from it).")
     if not confirmer.confirm(desc, " ".join(cmd)):
         report.add("hardware detection", SKIPPED)
