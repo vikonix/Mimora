@@ -190,16 +190,35 @@ class TrainerView:
                                     font=(FONT_FAMILY, 9), fg=THEME["text_dim"], bg=THEME["bg_panel"])
         self.stats_label.pack(side=tk.RIGHT, padx=15, pady=4)
 
-        # 3. Bottom control panel (mic + instruction + replay buttons)
+        # 3. Bottom control panel: the mic flanked by its two phrase-level
+        # actions - Reference (replay the example) on the left, New phrase
+        # (generate the next one) on the right - with the instruction line below.
         control_frame = tk.Frame(self.root, bg=THEME["bg_main"])
         control_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(0, 10))
 
-        self.btn_canvas = tk.Canvas(control_frame, width=100, height=100, bg=THEME["bg_main"],
+        # Equal-width buttons keep the mic visually centred between them.
+        action_btn_width = 14
+
+        # Horizontal row: [Reference] [mic] [New phrase].
+        mic_row = tk.Frame(control_frame, bg=THEME["bg_main"])
+        mic_row.pack()
+
+        self.ref_btn = self._make_button(
+            mic_row, "▶ Reference", self._cb.play_reference, width=action_btn_width)
+        self.ref_btn.pack(side=tk.LEFT, padx=(0, 15))
+        self.ref_btn.config(state=tk.DISABLED)
+
+        self.btn_canvas = tk.Canvas(mic_row, width=100, height=100, bg=THEME["bg_main"],
                                     highlightthickness=0, cursor="hand2")
-        self.btn_canvas.pack(pady=5)
+        self.btn_canvas.pack(side=tk.LEFT, pady=5)
         self.btn_canvas.bind("<ButtonPress-1>", lambda e: self._cb.on_gui_btn_press())
         self.btn_canvas.bind("<ButtonRelease-1>", lambda e: self._cb.on_gui_btn_release())
         self.draw_mic_button("loading")
+
+        self.generate_btn = self._make_button(
+            mic_row, "🎲 New phrase", self._cb.on_generate_phrase, width=action_btn_width)
+        self.generate_btn.pack(side=tk.LEFT, padx=(15, 0))
+        self.generate_btn.config(state=tk.DISABLED)
 
         self.instruction_label = tk.Label(control_frame, text="Loading components...",
                                           font=(FONT_FAMILY, 10), fg=THEME["text_dim"], bg=THEME["bg_main"])
@@ -446,9 +465,10 @@ class TrainerView:
         self.toggle_prosody_charts()
         self.toggle_face()
 
-        # 6. Action row directly under the result window: groups every action
-        # button on one line - Test diagnostic, replay of the user's recording,
-        # reference replay and new-phrase generation.
+        # 6. Action row directly under the result window: replays the user's own
+        # attempt. Reference and New phrase live down by the mic; the diagnostic
+        # self-test has no visible button - it stays reachable via the ↑ hotkey,
+        # gated by self._test_enabled (see is_test_enabled / _set_actions).
         #
         # Packed BEFORE the feedback panel below and at side=BOTTOM on purpose:
         # the feedback panel uses expand=True with a large default height and
@@ -458,33 +478,15 @@ class TrainerView:
         action_frame = tk.Frame(self.root, bg=THEME["bg_main"])
         action_frame.pack(side=tk.BOTTOM, padx=20, pady=(0, 8))
 
-        # Small diagnostic button: run the reference through analysis instead
-        # of a recording (it should score near 100 against itself).
-        self.test_btn = tk.Button(action_frame, text="Self test", command=self._cb.on_test_reference,
-                                  font=(FONT_FAMILY, 8), bg=THEME["bg_panel"], fg=THEME["text_muted"],
-                                  activebackground=THEME["border"], activeforeground=THEME["info"],
-                                  bd=0, padx=8, pady=3, cursor="hand2",
-                                  disabledforeground=THEME["text_disabled_dim"])
-        self.test_btn.pack(side=tk.LEFT, padx=(0, 10))
-        self.test_btn.config(state=tk.DISABLED)
+        # Self-test enabled state. The visible button was removed, but the
+        # feature lives on via the ↑ hotkey; the enter_* states still toggle this
+        # through _set_actions(test=...), and is_test_enabled gates the hotkey.
+        self._test_enabled = False
 
-        # Uniform width so the three main action buttons line up regardless of
-        # label length (the widest label, "▶ My recording", sets the size).
-        ACTION_BTN_WIDTH = 14
         self.user_btn = self._make_button(
-            action_frame, "▶ My recording", self._cb.play_user_recording, width=ACTION_BTN_WIDTH)
-        self.user_btn.pack(side=tk.LEFT, padx=(0, 6))
+            action_frame, "▶ My recording", self._cb.play_user_recording, width=action_btn_width)
+        self.user_btn.pack()
         self.user_btn.config(state=tk.DISABLED)
-
-        self.ref_btn = self._make_button(
-            action_frame, "▶ Reference", self._cb.play_reference, width=ACTION_BTN_WIDTH)
-        self.ref_btn.pack(side=tk.LEFT, padx=(0, 6))
-        self.ref_btn.config(state=tk.DISABLED)
-
-        self.generate_btn = self._make_button(
-            action_frame, "🎲 New phrase", self._cb.on_generate_phrase, width=ACTION_BTN_WIDTH)
-        self.generate_btn.pack(side=tk.LEFT)
-        self.generate_btn.config(state=tk.DISABLED)
 
         # 7. Feedback log (fills remaining space). Packed AFTER action_frame so
         # its expand=True only consumes space left over above the button row.
@@ -695,11 +697,12 @@ class TrainerView:
         return str(self.generate_btn["state"]) == str(tk.NORMAL)
 
     def is_test_enabled(self) -> bool:
-        """True when the Test (self-test) button is currently clickable."""
-        return str(self.test_btn["state"]) == str(tk.NORMAL)
+        """True when the self-test is currently allowed. There is no visible
+        button; the ↑ hotkey reads this flag (kept in sync by _set_actions)."""
+        return self._test_enabled
 
     def is_user_enabled(self) -> bool:
-        """True when the My recording replay button is currently clickable."""
+        """True when the My phrase replay button is currently clickable."""
         return str(self.user_btn["state"]) == str(tk.NORMAL)
 
     def get_show_pitch(self) -> bool:
@@ -728,7 +731,7 @@ class TrainerView:
         if user is not None:
             self.user_btn.config(state=state(user))
         if test is not None:
-            self.test_btn.config(state=state(test))
+            self._test_enabled = bool(test)
 
     def enter_app_ready(self):
         """Models loaded, no phrase yet: only New phrase is available."""

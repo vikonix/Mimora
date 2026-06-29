@@ -159,12 +159,13 @@ class PronunciationTrainerGUI:
         self.playback_stop_event = threading.Event()
 
         # Recording is press-to-start / auto-stop (see the recording controls
-        # section). space_down only tracks whether the spacebar is physically
-        # held, so key-autorepeat does not fire repeated toggles - it is no
-        # longer a "hold to record" flag. The actual capture lives in
-        # AudioRecorder; all four callbacks fire on the capture thread, so they
-        # marshal every UI touch onto the Tk main thread via root.after.
-        self.space_down = False
+        # section). _record_key_held only tracks whether a record key (spacebar
+        # or the Down arrow) is physically held, so key-autorepeat does not fire
+        # repeated toggles - it is no longer a "hold to record" flag. The actual
+        # capture lives in AudioRecorder; all four callbacks fire on the capture
+        # thread, so they marshal every UI touch onto the Tk main thread via
+        # root.after.
+        self._record_key_held = False
         self.recorder = AudioRecorder(
             on_max_duration=self._on_record_max_duration,
             on_stream_error=self._on_record_stream_error,
@@ -240,21 +241,31 @@ class PronunciationTrainerGUI:
         threading.Thread(target=self.load_components, daemon=True).start()
 
     def bind_events(self):
+        # Record keys: the spacebar and the Down arrow both toggle capture,
+        # mirroring the mic button. Press/release share an auto-repeat guard so
+        # holding the key does not fire repeated toggles.
         self.root.bind("<KeyPress-space>", self.on_keyboard_press)
         self.root.bind("<KeyRelease-space>", self.on_keyboard_release)
-        # Arrow-key shortcuts mirror the four action buttons. Each is gated the
-        # same way the button is: ignored while a text field has focus (so arrows
-        # still move the caret there) and only fired when the matching button is
-        # actually enabled, so a hotkey can never trigger an action the UI is
-        # currently disallowing (e.g. replaying into an open mic).
+        self.root.bind("<KeyPress-Down>", self.on_keyboard_press)
+        self.root.bind("<KeyRelease-Down>", self.on_keyboard_release)
+        # Shortcut keys mirror the actions. Each is gated the same way its control
+        # is: ignored while a text field has focus (so the key does its normal job
+        # there) and only fired when the matching action is actually enabled, so a
+        # hotkey can never trigger something the UI is currently disallowing
+        # (e.g. replaying into an open mic). Mapping:
+        #   Left -> Reference replay      Right -> New phrase
+        #   Up   -> My recording replay   Down  -> mic / record toggle (above)
+        #   t    -> reference self-test
         self.root.bind("<Left>", lambda _: self._hotkey(
             self.view.is_reference_enabled, self.play_reference))
         self.root.bind("<Right>", lambda _: self._hotkey(
             self.view.is_generate_enabled, self.on_generate_phrase))
         self.root.bind("<Up>", lambda _: self._hotkey(
-            self.view.is_test_enabled, self.on_test_reference))
-        self.root.bind("<Down>", lambda _: self._hotkey(
             self.view.is_user_enabled, self.play_user_recording))
+        self.root.bind("<KeyPress-t>", lambda _: self._hotkey(
+            self.view.is_test_enabled, self.on_test_reference))
+        self.root.bind("<KeyPress-T>", lambda _: self._hotkey(
+            self.view.is_test_enabled, self.on_test_reference))
         self.root.bind("<Escape>", lambda _: self.quit_app())
         self.root.protocol("WM_DELETE_WINDOW", self.quit_app)
 
@@ -667,19 +678,24 @@ class PronunciationTrainerGUI:
         return isinstance(self.root.focus_get(), (tk.Entry, tk.Text))
 
     def on_keyboard_press(self, event):
-        # Holding the spacebar makes Tk fire KeyPress repeatedly (auto-repeat).
-        # space_down gates those out so one physical press is one toggle; it is
-        # cleared on the matching KeyRelease.
-        if event.keysym == "space" and not self.space_down \
+        # Holding a record key (space or Down) makes Tk fire KeyPress repeatedly
+        # (auto-repeat). _record_key_held gates those out so one physical press is
+        # one toggle; it is cleared on the matching KeyRelease. Returning "break"
+        # when handled stops Tk from also applying the key's default behavior
+        # (e.g. the Down arrow moving focus).
+        if event.keysym in ("space", "Down") and not self._record_key_held \
                 and not self._typing_in_text_field():
-            self.space_down = True
+            self._record_key_held = True
             self._toggle_recording()
+            return "break"
+        return None
 
     def on_keyboard_release(self, event):
         # Only clears the auto-repeat guard; the take keeps recording until it
-        # auto-stops on silence or the user presses space/clicks the mic again.
-        if event.keysym == "space":
-            self.space_down = False
+        # auto-stops on silence or the user presses a record key / clicks the mic
+        # again.
+        if event.keysym in ("space", "Down"):
+            self._record_key_held = False
 
     def _can_record(self) -> bool:
         """Recording is only allowed once a phrase is ready and nothing else is busy."""
