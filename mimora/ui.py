@@ -272,7 +272,7 @@ class TrainerView:
 
         self.source_text = scrolledtext.ScrolledText(
             source_frame, bg=THEME["bg_panel"], fg=THEME["text"], insertbackground=THEME["text_bright"],
-            font=(FONT_FAMILY, 10), wrap=tk.WORD, bd=0, height=6,
+            font=(FONT_FAMILY, 10), wrap=tk.WORD, bd=0, height=7,
             highlightthickness=1, highlightbackground=THEME["border"], highlightcolor=THEME["accent"],
             padx=10, pady=8)
         self.source_text.pack(fill=tk.X, pady=4)
@@ -1101,6 +1101,13 @@ class TrainerView:
         # First line: the target phrase, highlighting what was said well (green)
         # vs mispronounced (red). Driven by the engine-neutral reference_words
         # tags; falls back to the raw phrase if an engine left them empty.
+        # Separate consecutive results with a blank line, but not before the
+        # first one. Each block leaves its last line unterminated, so the
+        # separator needs two newlines: one to close that line, one for the blank
+        # row. (A single leading "\n" only closed the previous line, which is why
+        # it appeared to fire just once - on the initially empty panel.)
+        if self.feedback_display.get("1.0", "end-1c"):
+            self.feedback_display.insert(tk.END, "\n\n")
         self.feedback_display.insert(tk.END, "Phrase: ", "label")
         if result.reference_words:
             for entry in result.reference_words:
@@ -1126,27 +1133,24 @@ class TrainerView:
             self.feedback_display.insert(tk.END, "Work on: ", "label")
             for entry in result.weak_phonemes:
                 self.feedback_display.insert(tk.END, f"/{entry['phoneme']}/ ", "bad")
-            self.feedback_display.insert(tk.END, "\n")
         elif getattr(result, "bucket", -1) >= 0:
             # Phoneme engine with no weak phones -> a clean read.
             self.feedback_display.insert(tk.END, "Work on: ", "label")
-            self.feedback_display.insert(tk.END, "nothing major - nice work ✓\n", "good")
+            self.feedback_display.insert(tk.END, "nothing major - nice work ✓", "good")
         else:
             # Acoustic engine fallback: the original recognised-units "Heard" line.
             self.feedback_display.insert(tk.END, "Heard: ", "label")
             # "matches the target" only when there are no mispronounced words AND the
             # take passed -- so a low score can no longer sit next to a "matches ✓".
             if not result.word_diff and result.passed:
-                self.feedback_display.insert(tk.END, "matches the target ✓\n", "good")
+                self.feedback_display.insert(tk.END, "matches the target ✓", "good")
             elif result.recognized_units:
                 for entry in result.recognized_units:
                     tag = "good" if entry.get("correct") else "bad"
                     self.feedback_display.insert(tk.END, entry["unit"] + " ", tag)
-                self.feedback_display.insert(tk.END, "\n")
             else:
-                self.feedback_display.insert(tk.END, f"{result.transcription or '-'}\n", "text")
+                self.feedback_display.insert(tk.END, f"{result.transcription or '-'}", "text")
 
-        self.feedback_display.insert(tk.END, "\n")
         self.feedback_display.configure(state=tk.DISABLED)
         self.feedback_display.see(tk.END)
 
