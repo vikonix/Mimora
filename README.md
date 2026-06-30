@@ -4,9 +4,9 @@
 
 Mimora is built on the SpeakLoop voice-tutor stack. Its default **phoneme** scoring engine is Mimora's own; the alternative **acoustic** engine reuses the pronunciation-scoring core of [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) as a library.
 
-| Light theme | Dark theme |
+| Dark theme | Light theme |
 |:---:|:---:|
-| ![Mimora pronunciation trainer, light theme](docs/mimora-light.png) | ![Mimora pronunciation trainer, dark theme](docs/mimora-dark.png) |
+| ![Mimora pronunciation trainer, dark theme](docs/mimora-dark.png) | ![Mimora pronunciation trainer, light theme](docs/mimora-light.png) |
 
 *Themes are configurable in `config/themes/`.*
 
