@@ -6,7 +6,7 @@ Mimora is built on the SpeakLoop voice-tutor stack. Its default **phoneme** scor
 
 | Dark theme | Light theme |
 |:---:|:---:|
-| ![Mimora pronunciation trainer, dark theme](docs/mimora-dark.png) | ![Mimora pronunciation trainer, light theme](docs/mimora-light.png) |
+| ![Mimora pronunciation trainer, dark theme](docs/mimora-dark2.png) | ![Mimora pronunciation trainer, light theme](docs/mimora-light2.png) |
 
 *Themes are configurable in `config/themes/`.*
 
