@@ -37,6 +37,11 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError, OSError):
         pass  # stream may be None (pythonw), wrapped by an IDE, or already detached
 
+# Print as early as possible: the heavy mimora.* imports below (torch, transformers,
+# Kokoro) can take many seconds on slow machines, so this is the first sign of life
+# the user gets. flush=True defeats stdout buffering when output is redirected.
+print("starting ...", flush=True)
+
 import warnings
 import logging
 import tkinter as tk
