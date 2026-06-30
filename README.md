@@ -98,6 +98,11 @@ and only the GGUF chat model must be obtained manually.
 builds, and model downloads in one guided run. The manual steps further below are
 an alternative if you prefer to run each command yourself.
 
+Installation is set up to use **prebuilt packages (wheels), so no compilation
+toolchain is needed** - everything installs from ready-made binaries except a few
+small pure-Python packages that build trivially. You do not need a C/C++ compiler
+or CUDA toolkit for the standard setup.
+
 ### Quick install (script, recommended)
 
 `install.py` automates the whole setup: it installs the Python dependencies,
