@@ -2,13 +2,31 @@
 
 **A local, offline pronunciation trainer.** Mimora says a phrase out loud, you repeat it, and it scores how close you were - highlighting the words to work on. Practice the same phrase until you pass, then move on to the next one. Everything runs on your machine: speech synthesis, speech recognition, phrase generation, and acoustic analysis.
 
-Mimora is built on the SpeakLoop voice-tutor stack. Its default **phoneme** scoring engine is Mimora's own; the alternative **acoustic** engine reuses the pronunciation-scoring core of [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) as a library.
-
 | Dark theme | Light theme |
 |:---:|:---:|
 | ![Mimora pronunciation trainer, dark theme](docs/mimora-dark2.png) | ![Mimora pronunciation trainer, light theme](docs/mimora-light2.png) |
 
 *Themes are configurable in `config/themes/`.*
+
+<!-- TODO: add a short demo GIF of one full loop here: New phrase -> SPACE -> speak -> score appears -> words highlighted -> Replay. -->
+
+---
+
+## Why Mimora?
+
+- 🔒 **100% offline after install** - your voice never leaves your computer. No cloud, no accounts, no API keys.
+- ♾️ **Unlimited, varied practice** - a local LLM writes fresh phrases from your own text, so you are not stuck repeating the same canned sentences.
+- 💸 **No subscription** - free and open source; the only cost is disk space for the models.
+- 💻 **Runs on a normal PC** - works on **16 GB RAM with no graphics card**. A GPU is optional and just makes it faster.
+- 🎯 **Instant, word-level feedback** - a 0-100 score plus the exact words to work on, with reference-vs-you replay.
+
+## Who is it for?
+
+Anyone working on clearer speech in a new language - language learners, accent reduction, and shadowing practice. You bring your own text (a paragraph, a song, a script) and Mimora turns it into spoken drills and scores how close you get.
+
+## Supported languages
+
+**English** is supported today. **Spanish** is next on the roadmap. (The translation panel already renders the practice phrase in 200+ languages - that is the translation shown beside the phrase, not the practice language itself.)
 
 ---
 
@@ -24,54 +42,34 @@ For each practice phrase Mimora runs a simple loop:
 
 You can replay the **reference** and **your own recording** back-to-back to hear the difference.
 
+### Example
+
+```text
+Reference:  The weather is getting colder.
+You said:   The weather is getting color.
+Score:      82 / 100
+Work on:    colder
+```
+
 ---
 
 ## Features
 
-- 🎙️ **One-press recording** with peak normalization and automatic silence-based auto-stop.
-- 🗣️ **Single voice everywhere** - the reference phrase is synthesized by Kokoro, the same engine used for prompts (no second TTS).
-- 🧠 **LLM-generated phrases** built from an editable *practice text* panel - paste your own paragraph, song, or sentences to drill.
-- ⚙️ **Practice controls** - pick the Kokoro **voice** and playback **speed**, choose the **phrase length** (full phrase or a few words), and set the **translation language** for the side-by-side translation panel. A **user name** selects the per-user scoring calibration.
-- 📊 **Two pronunciation-scoring engines**, selected by `ENGINE` in `mimora/config.py`. The default **phoneme** engine scores espeak reference phonemes against a wav2vec2 phoneme recognizer (feature-weighted edit distance, mapped to a calibrated 0-5 grade). The **acoustic** engine combines per-step cosine DTW over Wav2Vec2 embeddings (40%) with phoneme (30%) and word (30%) error rates. Both are length-invariant and calibratable to your voice (`python pronunciation/<engine>/calibrate.py`).
-- 🔁 **Replay reference vs. your recording** to compare.
+- 🎙️ **One-press recording** - press once, speak, and it stops by itself when you go quiet (peak normalization, silence-based auto-stop).
+- 🗣️ **One consistent reference voice** - prompts and the scored reference are spoken by the same Kokoro voice, so you always compare against the same target (no second TTS).
+- 🧠 **Practice your own material** - paste a paragraph, song, or sentences into the *practice text* panel and the local LLM turns it into an endless stream of phrases to drill.
+- ⚙️ **Practice controls** - pick the Kokoro **voice** and playback **speed**, choose the **phrase length** (full phrase or a few words), and set the **translation language** for the side-by-side panel. A **user name** selects the per-user scoring calibration.
+- 📊 **Objective scoring with two interchangeable engines**, selected by `ENGINE` in `mimora/config.py`. The default **phoneme** engine scores espeak reference phonemes against a wav2vec2 phoneme recognizer (feature-weighted edit distance, mapped to a calibrated 0-5 grade). The **acoustic** engine combines per-step cosine DTW over Wav2Vec2 embeddings (40%) with phoneme (30%) and word (30%) error rates. Both are length-invariant and calibratable to your voice (`python pronunciation/<engine>/calibrate.py`).
+- 🔁 **Replay reference vs. your recording** to hear the difference.
 - 😀 **Articulation face** - a schematic mouth opens and closes with the speech as a reference or your recording plays, and shows a smiley reflecting your score while idle.
 - 🧵 **Responsive UI** - analysis and model loading run in daemon threads; the GUI is updated only via `root.after()`.
 - 💻 **Fully local & offline** after the models are downloaded.
 
 ---
 
-## Architecture
-
-| File | Responsibility |
-|---|---|
-| `main.py` | `PronunciationTrainerGUI` - Tkinter GUI, recording, the Prompt→Record→Analyze→Feedback→Loop state machine, threading orchestration, LLM-server subprocess management. |
-| `mimora/engine.py` | Engine dispatcher - binds the backend chosen by `ENGINE` (`phoneme` default, `acoustic` alternative) and exposes one `analyze(...)` interface, so `main.py` is engine-agnostic. |
-| `mimora/prosody.py` | Engine-agnostic prosody layer: F0/energy contour extraction (no torch). Computed in `main.py` from the raw user/reference audio so the pitch/energy charts work the same across engines. |
-| `mimora/tts.py` | `TTSManager` - Kokoro TTS. `synthesize()` returns the waveform; `play_array()` plays any waveform (reference at 24 kHz, your recording at 16 kHz). `loudness_envelope()` precomputes the per-frame mouth-openness track used by the face. |
-| `mimora/face_widget.py` | `FaceWidget` - schematic articulation face (Tk Canvas). Talking mouth driven from a precomputed loudness track while audio plays; smiley reflecting the score when idle. Stdlib `tkinter` only. |
-| `mimora/llm.py` | `LLMManager` - OpenAI-compatible client. `generate_phrase()` produces one practice phrase per request. |
-| `mimora/llm_server_ctl.py` | `LLMServerController` - starts/stops the local LLM-server subprocess (used by the `local_server` backend). |
-| `mimora/recorder.py` | `AudioRecorder` - microphone capture thread, device selection, normalization and WAV dumps; returns the take as one 16 kHz array. |
-| `mimora/audio_io.py` | Shared audio-device infrastructure (PortAudio reset, winsound path selection) depended on by both the mic and speaker paths. |
-| `mimora/translator.py` | `TranslatorManager` - offline NLLB-200 translation of the practice phrase for the translation panel. |
-| `mimora/ui.py` | `TrainerView` - passive Tkinter view (all widgets and copy), composed into the controller; talks to it only via typed callbacks. |
-| `mimora/loader.py` | Pure, stateless config-loading helpers (JSON parsing, setting validation, device probe) used by `config.py`. |
-| `mimora/prosody_utils.py` | Pure plotting helpers (`to_semitones`, `resample_series`) kept free of the ML/audio stack. |
-| `mimora/config.py` | All configuration: device, model names, score threshold, practice-text path, phrase-generation settings, audio settings. |
-| `llm_server/server.py` | Standalone FastAPI server loading GGUF models via `llama_cpp`; runs as a separate process to avoid CUDA contention. See [`llm_server/README.md`](llm_server/README.md). |
-| `pronunciation/phoneme/speech.py` | **Default** pronunciation engine - espeak reference phonemes vs a wav2vec2 phoneme recognizer, feature-weighted edit distance, calibrated 0-5 grade. No GUI dependency. |
-| `pronunciation/phoneme/calibrate.py` | On-request scoring calibration for the **default** phoneme engine: reads the per-attempt samples from `logs/phoneme_samples.jsonl` and writes `pronunciation/phoneme/calibration.json`. |
-| `pronunciation/acoustic/speech.py` | Alternative pronunciation engine (adapted from OpenPronounce). Single entry point `analyze(...)`; Wav2Vec2 embeddings + DTW, phoneme comparison, scoring. No GUI dependency. |
-| `pronunciation/acoustic/calibrate.py` | On-request scoring calibration for the acoustic engine: reads the per-attempt samples from `logs/acoustic_samples.jsonl` and writes the acoustic floor to `pronunciation/acoustic/calibration.json`. |
-| `config/` | User configuration data: `settings.json` (hand-edited preferences), `hardware_config.json` (machine-derived overrides written by `tools/detect_hardware.py`), and `themes/` (UI color schemes). |
-| `texts/practice_text.txt` | Default source text shown in the input panel at startup; put your own practice texts in `texts/`. |
-| `tools/detect_hardware.py` | Standalone hardware probe (RAM/CPU/GPU/VRAM/audio). Writes `config/hardware_config.json`, whose `config` section supplies machine-derived overrides (e.g. `EXTERNAL_N_GPU_LAYERS`, `WAV2VEC2_DEVICE`) that `mimora/config.py` reads in preference to its defaults. |
-| `install.py` | Standalone, idempotent installer: checks Python, detects GPU/CUDA and installs matching torch / llama-cpp-python, installs requirements, checks espeak-ng, pre-downloads the HF models and the GGUF chat model, then runs `detect_hardware.py`. |
-
----
-
 ## Requirements
 
+- **Hardware** - runs on a typical laptop or desktop: **16 GB RAM and no GPU required** (CPU-only works; the first few phrases are slower). An NVIDIA GPU is optional and speeds up pronunciation analysis and phrase generation.
 - **Python 3.11 or 3.12** (developed and tested on 3.11 and 3.12). Python 3.13 and newer are not yet supported (as of June 2026).
 - **Windows** is the primary target (TTS playback uses `winsound`); a `sounddevice` fallback exists for other platforms.
 - A microphone and speakers.
@@ -192,7 +190,12 @@ To do it manually instead, download a small instruct model (e.g. `Llama-3.2-3B-I
 
 ## Usage
 
+Run from the **same virtual environment** you installed into (so the app uses the interpreter that has all the dependencies):
+
 ```bash
+.venv\Scripts\activate            # Windows
+# source .venv/bin/activate       # macOS / Linux
+
 python main.py
 ```
 
@@ -229,6 +232,38 @@ Key options in [`mimora/config.py`](mimora/config.py) (overridable via [`config/
 | `PHRASE_GEN_WINDOW_REPEATS` | `5` | Phrases generated per window position before it slides forward by half its size. |
 | `LLM_BACKEND` | `local_server` | `local_server` (auto-started subprocess) or `lm-studio`. |
 | `MAX_RECORD_SECONDS` | `20` | Safety cap on recording length. |
+
+---
+
+## Architecture
+
+Mimora is built on the SpeakLoop voice-tutor stack. Its default **phoneme** scoring engine is Mimora's own; the alternative **acoustic** engine reuses the pronunciation-scoring core of [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) as a library.
+
+| File | Responsibility |
+|---|---|
+| `main.py` | `PronunciationTrainerGUI` - Tkinter GUI, recording, the Prompt→Record→Analyze→Feedback→Loop state machine, threading orchestration, LLM-server subprocess management. |
+| `mimora/engine.py` | Engine dispatcher - binds the backend chosen by `ENGINE` (`phoneme` default, `acoustic` alternative) and exposes one `analyze(...)` interface, so `main.py` is engine-agnostic. |
+| `mimora/prosody.py` | Engine-agnostic prosody layer: F0/energy contour extraction (no torch). Computed in `main.py` from the raw user/reference audio so the pitch/energy charts work the same across engines. |
+| `mimora/tts.py` | `TTSManager` - Kokoro TTS. `synthesize()` returns the waveform; `play_array()` plays any waveform (reference at 24 kHz, your recording at 16 kHz). `loudness_envelope()` precomputes the per-frame mouth-openness track used by the face. |
+| `mimora/face_widget.py` | `FaceWidget` - schematic articulation face (Tk Canvas). Talking mouth driven from a precomputed loudness track while audio plays; smiley reflecting the score when idle. Stdlib `tkinter` only. |
+| `mimora/llm.py` | `LLMManager` - OpenAI-compatible client. `generate_phrase()` produces one practice phrase per request. |
+| `mimora/llm_server_ctl.py` | `LLMServerController` - starts/stops the local LLM-server subprocess (used by the `local_server` backend). |
+| `mimora/recorder.py` | `AudioRecorder` - microphone capture thread, device selection, normalization and WAV dumps; returns the take as one 16 kHz array. |
+| `mimora/audio_io.py` | Shared audio-device infrastructure (PortAudio reset, winsound path selection) depended on by both the mic and speaker paths. |
+| `mimora/translator.py` | `TranslatorManager` - offline NLLB-200 translation of the practice phrase for the translation panel. |
+| `mimora/ui.py` | `TrainerView` - passive Tkinter view (all widgets and copy), composed into the controller; talks to it only via typed callbacks. |
+| `mimora/loader.py` | Pure, stateless config-loading helpers (JSON parsing, setting validation, device probe) used by `config.py`. |
+| `mimora/prosody_utils.py` | Pure plotting helpers (`to_semitones`, `resample_series`) kept free of the ML/audio stack. |
+| `mimora/config.py` | All configuration: device, model names, score threshold, practice-text path, phrase-generation settings, audio settings. |
+| `llm_server/server.py` | Standalone FastAPI server loading GGUF models via `llama_cpp`; runs as a separate process to avoid CUDA contention. See [`llm_server/README.md`](llm_server/README.md). |
+| `pronunciation/phoneme/speech.py` | **Default** pronunciation engine - espeak reference phonemes vs a wav2vec2 phoneme recognizer, feature-weighted edit distance, calibrated 0-5 grade. No GUI dependency. |
+| `pronunciation/phoneme/calibrate.py` | On-request scoring calibration for the **default** phoneme engine: reads the per-attempt samples from `logs/phoneme_samples.jsonl` and writes `pronunciation/phoneme/calibration.json`. |
+| `pronunciation/acoustic/speech.py` | Alternative pronunciation engine (adapted from OpenPronounce). Single entry point `analyze(...)`; Wav2Vec2 embeddings + DTW, phoneme comparison, scoring. No GUI dependency. |
+| `pronunciation/acoustic/calibrate.py` | On-request scoring calibration for the acoustic engine: reads the per-attempt samples from `logs/acoustic_samples.jsonl` and writes the acoustic floor to `pronunciation/acoustic/calibration.json`. |
+| `config/` | User configuration data: `settings.json` (hand-edited preferences), `hardware_config.json` (machine-derived overrides written by `tools/detect_hardware.py`), and `themes/` (UI color schemes). |
+| `texts/practice_text.txt` | Default source text shown in the input panel at startup; put your own practice texts in `texts/`. |
+| `tools/detect_hardware.py` | Standalone hardware probe (RAM/CPU/GPU/VRAM/audio). Writes `config/hardware_config.json`, whose `config` section supplies machine-derived overrides (e.g. `EXTERNAL_N_GPU_LAYERS`, `WAV2VEC2_DEVICE`) that `mimora/config.py` reads in preference to its defaults. |
+| `install.py` | Standalone, idempotent installer: checks Python, detects GPU/CUDA and installs matching torch / llama-cpp-python, installs requirements, checks espeak-ng, pre-downloads the HF models and the GGUF chat model, then runs `detect_hardware.py`. |
 
 ---
 
@@ -281,7 +316,7 @@ Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by
 
 ## Known limitations
 
-- **Practice language is English for now.** The `acoustic` engine is English-only (English ASR model + phonemizer `en-us`). The default `phoneme` engine uses a multilingual IPA recognizer and is planned to be calibrated for other languages in future releases. (The translation panel already targets many languages - that is the practice phrase's translation, not the practice language itself.)
+- **Practice language is English for now.** The `acoustic` engine is English-only (English ASR model + phonemizer `en-us`). The default `phoneme` engine uses a multilingual IPA recognizer and is planned to be calibrated for other languages in future releases (Spanish next). (The translation panel already targets many languages - that is the practice phrase's translation, not the practice language itself.)
 - The transcription-based word errors only surface mistakes the ASR actually "hears"; subtle distortions where the word is still recognized may not appear in the word list (the default phoneme engine's IPA edit distance, or the acoustic engine's DTW, plus prosody partially compensate).
 - Scoring is **heuristic** and depends on your voice and microphone. After a practice session, re-anchor the active engine to your data: `python pronunciation/phoneme/calibrate.py` (default engine) or `python pronunciation/acoustic/calibrate.py` (acoustic engine); `--dry-run` previews the change. Every attempt's raw components are logged to `logs/phoneme_samples.jsonl` (or `logs/acoustic_samples.jsonl`) and `logs/main.log` for inspection.
 
