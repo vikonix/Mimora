@@ -142,7 +142,7 @@ class TrainerView:
         button = tk.Button(parent, text=text, command=command,
                            font=(FONT_FAMILY, 10, "bold"),
                            bg=THEME["bg_button"], fg=THEME["text_button"],
-                           activebackground=THEME["bg_button_active"], activeforeground=THEME["text_button"],
+                           activebackground=THEME["bg_button_active"], activeforeground=THEME["text"],
                            bd=0, padx=12, pady=6, cursor="hand2",
                            disabledforeground=THEME["text_disabled"])
         if width is not None:
@@ -181,7 +181,7 @@ class TrainerView:
         self.status_bar = tk.Frame(self.root, bg=THEME["bg_panel"], height=30)
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-        self.status_label = tk.Label(self.status_bar, text="Status: Starting...",
+        self.status_label = tk.Label(self.status_bar, text="Starting...",
                                      font=(FONT_FAMILY, 9), fg=THEME["ready"], bg=THEME["bg_panel"])
         self.status_label.pack(side=tk.LEFT, padx=15, pady=4)
 
@@ -247,13 +247,13 @@ class TrainerView:
             text_header, text="Paste", command=self._paste_practice_text,
             font=(FONT_FAMILY, 9), bg=THEME["bg_accent"], fg=THEME["text_accent"],
             activebackground=THEME["bg_accent_active"], activeforeground=THEME["text_bright"],
-            bd=0, padx=8, pady=1, cursor="hand2")
+            bd=0, width=10, padx=8, pady=1, cursor="hand2")
         self._paste_btn.pack(side=tk.LEFT, padx=(10, 0))
         self._clear_btn = tk.Button(
             text_header, text="Clear text", command=self._clear_practice_text,
             font=(FONT_FAMILY, 9), bg=THEME["bg_accent"], fg=THEME["text_accent"],
             activebackground=THEME["bg_accent_active"], activeforeground=THEME["text_bright"],
-            bd=0, padx=8, pady=1, cursor="hand2")
+            bd=0, width=10, padx=8, pady=1, cursor="hand2")
         self._clear_btn.pack(side=tk.LEFT, padx=(6, 0))
 
         self.user_name_var = tk.StringVar(value=config.USER_NAME)
@@ -359,7 +359,7 @@ class TrainerView:
                                           highlightthickness=1, highlightbackground=THEME["border"])
         self.translation_label = tk.Label(
             self.translation_frame, text="-", font=(FONT_FAMILY, 13),
-            fg=THEME["text_dim"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
+            fg=THEME["text"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
         self.translation_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
         # Right-click the translation to copy it (independently of the phrase).
         self._bind_copy_menu(self.translation_label)
@@ -452,7 +452,7 @@ class TrainerView:
         # Reading hint: horizontal axis is time (stretched to equal width for both),
         # so the goal is matching the *shape* of the reference, not exact overlap.
         tk.Label(prosody_frame,
-                 text="Time runs left→right (stretched to equal width). Aim to match the reference shape.",
+                 text="Time runs (stretched to equal width). Aim to match the reference shape.",
                  font=(FONT_FAMILY, 8), fg=THEME["text_dim"], bg=THEME["bg_main"],
                  wraplength=540, justify=tk.LEFT).pack(anchor=tk.W, pady=(3, 0))
 
@@ -901,7 +901,7 @@ class TrainerView:
         self.feedback_display.see(tk.END)
 
     def update_status(self, text: str, color: str = THEME["text_dim"]):
-        self.status_label.configure(text=f"Status: {text}", fg=color)
+        self.status_label.configure(text=text, fg=color)
 
     def update_instruction(self, text: str):
         self.instruction_label.configure(text=text)
@@ -1013,7 +1013,7 @@ class TrainerView:
                 x = pad_x + (i / (len(points) - 1)) * plot_w
                 y = pad_y + (1 - (value - lo) / span) * plot_h
                 coords.extend((x, y))
-            canvas.create_line(*coords, fill=color, width=2, smooth=True)
+            canvas.create_line(*coords, fill=color, width=3, smooth=True)
 
     def _make_chart_checkbox(self, parent, text, variable):
         """Create a themed chart-title checkbox that toggles its chart's visibility.

@@ -64,7 +64,7 @@ class FaceWidget(tk.Canvas):
         size: int = 160,
         *,
         bg: str = "#1e1e1e",
-        face_color: str = "#ffffff",
+        face_color: str = "#f8f8f2",
         face_outline: str = "",
         eye_color: str = "#1e2a44",
         mouth_color: str = "#8a3a2c",
