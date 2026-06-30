@@ -4,6 +4,12 @@
 
 Mimora is built on the SpeakLoop voice-tutor stack. Its default **phoneme** scoring engine is Mimora's own; the alternative **acoustic** engine reuses the pronunciation-scoring core of [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) as a library.
 
+| Light theme | Dark theme |
+|:---:|:---:|
+| ![Mimora pronunciation trainer, light theme](docs/mimora-light.png) | ![Mimora pronunciation trainer, dark theme](docs/mimora-dark.png) |
+
+*Themes are configurable in `config/themes/`.*
+
 ---
 
 ## How it works
@@ -25,6 +31,7 @@ You can replay the **reference** and **your own recording** back-to-back to hear
 - 🎙️ **One-press recording** with peak normalization and automatic silence-based auto-stop.
 - 🗣️ **Single voice everywhere** - the reference phrase is synthesized by Kokoro, the same engine used for prompts (no second TTS).
 - 🧠 **LLM-generated phrases** built from an editable *practice text* panel - paste your own paragraph, song, or sentences to drill.
+- ⚙️ **Practice controls** - pick the Kokoro **voice** and playback **speed**, choose the **phrase length** (full phrase or a few words), and set the **translation language** for the side-by-side translation panel. A **user name** selects the per-user scoring calibration.
 - 📊 **Two pronunciation-scoring engines**, selected by `ENGINE` in `mimora/config.py`. The default **phoneme** engine scores espeak reference phonemes against a wav2vec2 phoneme recognizer (feature-weighted edit distance, mapped to a calibrated 0-5 grade). The **acoustic** engine combines per-step cosine DTW over Wav2Vec2 embeddings (40%) with phoneme (30%) and word (30%) error rates. Both are length-invariant and calibratable to your voice (`python pronunciation/<engine>/calibrate.py`).
 - 🔁 **Replay reference vs. your recording** to compare.
 - 😀 **Articulation face** - a schematic mouth opens and closes with the speech as a reference or your recording plays, and shows a smiley reflecting your score while idle.
