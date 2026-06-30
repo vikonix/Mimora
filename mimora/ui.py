@@ -358,7 +358,7 @@ class TrainerView:
         self.translation_frame = tk.Frame(self.root, bg=THEME["bg_panel"],
                                           highlightthickness=1, highlightbackground=THEME["border"])
         self.translation_label = tk.Label(
-            self.translation_frame, text="-", font=(FONT_FAMILY, 13),
+            self.translation_frame, text="-", font=(FONT_FAMILY, 12),
             fg=THEME["text"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
         self.translation_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
         # Right-click the translation to copy it (independently of the phrase).
@@ -452,7 +452,7 @@ class TrainerView:
         # Reading hint: horizontal axis is time (stretched to equal width for both),
         # so the goal is matching the *shape* of the reference, not exact overlap.
         tk.Label(prosody_frame,
-                 text="Time runs (stretched to equal width). Aim to match the reference shape.",
+                  text="Time runs (stretched to equal width). Aim to match the reference shape.",
                  font=(FONT_FAMILY, 8), fg=THEME["text_dim"], bg=THEME["bg_main"],
                  wraplength=540, justify=tk.LEFT).pack(anchor=tk.W, pady=(3, 0))
 
