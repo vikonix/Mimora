@@ -37,6 +37,22 @@ for _stream in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError, OSError):
         pass  # stream may be None (pythonw), wrapped by an IDE, or already detached
 
+# Parse CLI arguments before anything heavy: the mimora.* imports below pull in
+# torch/transformers/Kokoro and can take many seconds, so `--version` (which
+# exits inside parse_args) must run before them to return fast. Importing bare
+# `mimora` is free - its __init__.py only defines __version__. Guarded by
+# __name__ so importing this module never consumes sys.argv.
+from mimora import __version__
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="mimora", description="Mimora pronunciation trainer.")
+    parser.add_argument(
+        "--version", action="version", version=f"Mimora {__version__}")
+    parser.parse_args()
+
 # Print as early as possible: the heavy mimora.* imports below (torch, transformers,
 # Kokoro) can take many seconds on slow machines, so this is the first sign of life
 # the user gets. flush=True defeats stdout buffering when output is redirected.
@@ -56,7 +72,7 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 warnings.filterwarnings("ignore", message="dropout option adds dropout.*")
 warnings.filterwarnings("ignore", message=".*weight_norm.*deprecated.*")
 
-from mimora import config, prosody, __version__
+from mimora import config, prosody
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.audio_io import KOKORO_SAMPLE_RATE
@@ -1134,14 +1150,7 @@ class PronunciationTrainerGUI:
 
 
 if __name__ == "__main__":
-    import argparse
-
-    # Parse CLI args before the heavy GUI/model startup so `--version` returns fast.
-    parser = argparse.ArgumentParser(
-        prog="mimora", description="Mimora pronunciation trainer.")
-    parser.add_argument(
-        "--version", action="version", version=f"Mimora {__version__}")
-    parser.parse_args()
-
+    # CLI arguments (--version) were already parsed at the top of the module,
+    # before the heavy imports, so reaching this point means "run the app".
     app = PronunciationTrainerGUI()
     app.run()
