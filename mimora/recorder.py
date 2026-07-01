@@ -21,7 +21,7 @@ import numpy as np
 import sounddevice as sd
 
 from mimora import config
-from mimora.audio_io import reset_portaudio
+from mimora.audio_io import reset_portaudio, stream_closed, stream_opened
 
 # Technical recording & signal processing parameters
 RECORDING_BLOCKSIZE = 0  # 0 → PortAudio picks an optimal block size. A small fixed
@@ -285,6 +285,7 @@ class AudioRecorder:
                 except Exception:
                     stream.close()  # don't leak the never-started stream
                     raise
+                stream_opened()  # counted only once fully started (see finally)
 
             # Voice-activity state for the silence auto-stop. We measure the
             # level of newly arrived chunks here on the poll thread (never in the
@@ -357,6 +358,7 @@ class AudioRecorder:
                         stream.close()
                     except Exception as close_error:
                         logging.debug(f"Error during sound input stream close: {close_error}")
+                    stream_closed()
 
         except Exception:
             logging.exception("Recording InputStream error:")

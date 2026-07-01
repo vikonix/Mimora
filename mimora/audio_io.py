@@ -39,6 +39,28 @@ KOKORO_SAMPLE_RATE = 24_000
 WINSOUND_LEAD_IN_SECONDS = 0.15  # 150ms of silence
 
 
+# Number of PortAudio streams currently open in this process. Guarded by
+# config.AUDIO_LOCK: every stream open/close and every reset_portaudio() call
+# happens while holding it, so a plain int is safe (no separate lock needed).
+# reset_portaudio() consults it to skip the reset while any stream is open:
+# the reset invalidates every PortAudio stream in the process, so running it
+# then would corrupt a live stream (e.g. recording starting while a playback
+# thread is still inside stream.write on the sounddevice path).
+_open_streams = 0
+
+
+def stream_opened() -> None:
+    """Record that a PortAudio stream was opened. Call under config.AUDIO_LOCK."""
+    global _open_streams
+    _open_streams += 1
+
+
+def stream_closed() -> None:
+    """Record that a PortAudio stream was closed. Call under config.AUDIO_LOCK."""
+    global _open_streams
+    _open_streams = max(0, _open_streams - 1)
+
+
 def reset_portaudio():
     """Fully reinitialize PortAudio before opening a stream.
 
@@ -46,9 +68,17 @@ def reset_portaudio():
     on Windows. sd._terminate/_initialize are *not* public sounddevice API
     (present in 0.4.x/0.5.x); if an upgrade removes them this degrades to a
     logged no-op and the reset can simply be dropped. Call only while holding
-    config.AUDIO_LOCK and with no other stream open - the reset invalidates
-    every existing PortAudio stream in the process.
+    config.AUDIO_LOCK.
+
+    The reset invalidates every existing PortAudio stream in the process, so it
+    is skipped while any stream is still open (see stream_opened/stream_closed);
+    an open stream also proves PortAudio is currently healthy, so the heal is
+    not needed then.
     """
+    if _open_streams > 0:
+        logging.debug("PortAudio reset skipped: %d stream(s) still open.",
+                      _open_streams)
+        return
     try:
         sd._terminate()
         sd._initialize()

@@ -13,6 +13,8 @@ from mimora.audio_io import (
     WINSOUND_AVAILABLE,
     WINSOUND_LEAD_IN_SECONDS,
     reset_portaudio,
+    stream_closed,
+    stream_opened,
     uses_winsound,
 )
 import io
@@ -206,6 +208,7 @@ class TTSManager:
                 except Exception:
                     stream.close()  # don't leak the never-started stream
                     raise
+                stream_opened()  # counted only once fully started (see finally)
 
             try:
                 chunk_size = 1024
@@ -220,6 +223,7 @@ class TTSManager:
                         stream.close()
                     except Exception as close_error:
                         logging.debug(f"Error during sound output stream close: {close_error}")
+                    stream_closed()
 
         except Exception:
             logging.exception("TTS playback error:")
