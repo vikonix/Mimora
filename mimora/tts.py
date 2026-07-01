@@ -3,7 +3,8 @@
 
 import logging
 import os
-from threading import Event
+import time
+from threading import Event, Thread
 from typing import Optional
 import numpy as np
 import sounddevice as sd
@@ -27,6 +28,12 @@ if WINSOUND_AVAILABLE:
 
 # A never-set event used as a default so callers may omit stop/shutdown events.
 _NULL_EVENT = Event()
+
+# How long the winsound stop-guard thread keeps watching for a racing stop
+# after playback starts (see play_array). The stop/start race window is
+# microseconds; 0.2 s covers it with a huge margin without keeping an extra
+# thread alive for the whole duration of long clips.
+WINSOUND_STOP_GUARD_SECONDS = 0.2
 
 # Language-specific warm-up words to prevent out-of-vocabulary phoneme warnings
 KOKORO_WARMUP_WORDS = {
@@ -185,10 +192,38 @@ class TTSManager:
                     wav_file.writeframes(pcm_data.tobytes())
                 wav_bytes = wav_io.getvalue()
 
-                # Synchronous; interrupted by stop_playback() -> PlaySound(None, 0).
                 if stop_event.is_set() or shutdown_event.is_set():
                     return
-                winsound.PlaySound(wav_bytes, winsound.SND_MEMORY | winsound.SND_NODEFAULT)
+                # winsound cannot combine SND_MEMORY with SND_ASYNC (it raises
+                # "Cannot play asynchronously from memory"), so playback stays
+                # synchronous and a short-lived stop-guard thread closes the
+                # stop/start race instead: a stop_playback() landing in the
+                # microseconds between the check above and PlaySound taking the
+                # audio channel has already fired its PlaySound(None, 0) too
+                # early, and the clip would play to the end anyway (possibly
+                # into an open microphone). The guard re-checks the stop events
+                # for the first WINSOUND_STOP_GUARD_SECONDS of playback and
+                # re-issues the interrupt, so such a stop cuts the sound within
+                # ~10 ms. ``done`` keeps a guard that outlives this playback
+                # from killing a superseding one.
+                done = Event()
+
+                def _stop_guard():
+                    guard_deadline = time.monotonic() + WINSOUND_STOP_GUARD_SECONDS
+                    while time.monotonic() < guard_deadline and not done.is_set():
+                        if stop_event.is_set() or shutdown_event.is_set():
+                            if not done.is_set():
+                                winsound.PlaySound(None, 0)
+                            return
+                        time.sleep(0.01)
+
+                Thread(target=_stop_guard, daemon=True).start()
+                try:
+                    # Synchronous; normally interrupted by stop_playback() ->
+                    # PlaySound(None, 0).
+                    winsound.PlaySound(wav_bytes, winsound.SND_MEMORY | winsound.SND_NODEFAULT)
+                finally:
+                    done.set()
                 return
 
             # Fallback to sounddevice for non-Windows platforms.

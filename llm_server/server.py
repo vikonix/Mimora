@@ -170,31 +170,46 @@ def _stream_chat(request: ChatCompletionRequest) -> Iterator[str]:
     messages = [{"role": m.role, "content": m.content} for m in request.messages]
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:8]}"  # one id for the whole stream
 
+    # NOTE: _inference_lock is held across the yields below. Starlette iterates
+    # a sync generator through a threadpool, so the acquire and the release may
+    # happen on *different* worker threads. That is legal for threading.Lock
+    # (any thread may release it) but would silently break with an RLock, which
+    # only its owning thread may release - keep this a plain Lock.
     with _inference_lock:
         if _model is None:
             yield _make_sse_chunk(chunk_id, {}, finish_reason="stop")
             yield "data: [DONE]\n\n"
             return
 
-        stream = _model.create_chat_completion(
-            messages=messages,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            top_p=request.top_p,
-            stream=True,
-            # Fresh seed per request: without it llama-cpp-python derives the
-            # sampler seed deterministically from the model's load-time seed,
-            # so every app run produces the same sequence of completions.
-            seed=random.randint(0, 2**31 - 1),
-        )
+        try:
+            stream = _model.create_chat_completion(
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                top_p=request.top_p,
+                stream=True,
+                # Fresh seed per request: without it llama-cpp-python derives the
+                # sampler seed deterministically from the model's load-time seed,
+                # so every app run produces the same sequence of completions.
+                seed=random.randint(0, 2**31 - 1),
+            )
 
-        for chunk in stream:
-            try:
-                choice = chunk["choices"][0]
-                yield _make_sse_chunk(chunk_id, choice.get("delta") or {},
-                                      choice.get("finish_reason"))
-            except (KeyError, IndexError):
-                continue
+            for chunk in stream:
+                try:
+                    choice = chunk["choices"][0]
+                    yield _make_sse_chunk(chunk_id, choice.get("delta") or {},
+                                          choice.get("finish_reason"))
+                except (KeyError, IndexError):
+                    continue
+        except Exception:
+            # A llama_cpp failure mid-stream must not tear the SSE stream down
+            # without a terminator - clients would hang or report a protocol
+            # error. Close the stream in the OpenAI format instead (a finished,
+            # if truncated, completion). GeneratorExit (client disconnect) is
+            # deliberately not caught: it must propagate so the generator
+            # closes and releases the lock.
+            logging.exception("Streaming chat completion failed mid-stream:")
+            yield _make_sse_chunk(chunk_id, {}, finish_reason="stop")
 
     yield "data: [DONE]\n\n"
 

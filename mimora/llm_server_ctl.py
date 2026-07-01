@@ -55,14 +55,31 @@ class LLMServerController:
         log_path = config.LLM_SERVER_LOG_FILE
         logging.info(f"Starting LLM server: {' '.join(cmd)}")
         self._log_file = open(log_path, "w", encoding="utf-8", buffering=1)
-        self._process = subprocess.Popen(cmd, stdout=self._log_file, stderr=self._log_file)
+        try:
+            self._process = subprocess.Popen(cmd, stdout=self._log_file, stderr=self._log_file)
+        except Exception:
+            # Don't leak the just-opened log file when the launch itself fails
+            # (e.g. a missing interpreter); the exception still propagates to
+            # the caller's error handling.
+            self._log_file.close()
+            self._log_file = None
+            raise
 
         deadline = time.time() + config.LOCAL_SERVER_STARTUP_TIMEOUT
         llm_mgr.init_client(base_url=config.LOCAL_SERVER_URL,
                             api_key=config.LOCAL_SERVER_API_KEY)
         while time.time() < deadline:
-            if self._process.poll() is not None:
-                logging.error(f"LLM server exited unexpectedly (code {self._process.returncode}).")
+            # Snapshot the process reference: shutdown() (called from quit_app
+            # on the Tk main thread while this loop runs on the loader thread)
+            # sets self._process to None, and reading it twice would race that
+            # and crash on None.poll(). A cleared reference means the app is
+            # quitting - stop waiting quietly.
+            process = self._process
+            if process is None:
+                logging.info("LLM server startup aborted: shutdown requested.")
+                return False
+            if process.poll() is not None:
+                logging.error(f"LLM server exited unexpectedly (code {process.returncode}).")
                 self.shutdown()  # nothing to terminate; closes the log file
                 return False
             if llm_mgr.check_connection(silent=True):
