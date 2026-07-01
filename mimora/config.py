@@ -54,6 +54,7 @@ _KNOWN_USER_KEYS = {
     "user_name",
     "phrase_length",
     "reference_speed",
+    "save_recordings",
     "show_pitch_chart",
     "show_energy_chart",
     "show_face",
@@ -139,6 +140,14 @@ MAX_RECORD_SECONDS = _num("max_record_seconds", 20, minimum=1)
 #                       Raise it only if a noisy room keeps the take from stopping.
 SILENCE_TIMEOUT = _num("silence_timeout", 3.0, minimum=0.5)
 SILENCE_THRESHOLD = _num("silence_threshold", 0.01, minimum=0.0)
+
+# Diagnostic recording dumps ("save_recordings"): when true, every take writes
+# the spoken reference (model.wav), the raw mic capture (raw.wav), the
+# normalized signal (normalized.wav) and the phrase text (phrase.txt) to
+# records/, each overwritten per take so only the latest is kept. Off by
+# default: the dumps put the user's voice on disk on every attempt, so they
+# are opt-in for debugging rather than always-on.
+SAVE_RECORDINGS = _bool("save_recordings", False)
 
 # Hardware Acceleration setup - the value detected by hardware detection wins;
 # otherwise loader.detect_device probes torch directly (and does not import torch

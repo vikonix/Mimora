@@ -16,6 +16,8 @@
   "silence_timeout": 3.0,
   "_silence_threshold": "RMS level (0..1) at or above which a chunk counts as speech rather than silence. Raise it only if a noisy room keeps the take from stopping.",
   "silence_threshold": 0.01,
+  "_save_recordings": "Diagnostic recording dumps: when true, every take writes the spoken reference (model.wav), the raw mic capture (raw.wav), the normalized signal (normalized.wav) and the phrase text (phrase.txt) to records/, each overwritten per take so only the latest is kept. Off by default: it puts your voice on disk on every attempt.",
+  "save_recordings": false,
   "_llm_backend": "'local_server' starts llm_server automatically; 'lm-studio' uses an already-running LM Studio app.",
   "llm_backend": "local_server",
   "_external_model_path": "GGUF model file for the local_server backend. Relative paths resolve against the project root.",

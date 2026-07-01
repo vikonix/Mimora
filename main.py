@@ -64,7 +64,6 @@ from mimora.tts import TTSManager, loudness_envelope
 from mimora.translator import TranslatorManager
 from mimora.recorder import (
     AudioRecorder,
-    DEBUG_DUMP_RECORDINGS,
     RECORD_MODEL_FILE,
     RECORD_NORMALIZED_FILE,
     RECORD_PHRASE_FILE,
@@ -608,7 +607,7 @@ class PronunciationTrainerGUI:
             self.current_translation = ""
             self.current_voice = voice
             self.reference_audio = reference_audio
-            if DEBUG_DUMP_RECORDINGS:
+            if config.SAVE_RECORDINGS:
                 dump_record_wav(reference_audio, RECORD_MODEL_FILE, KOKORO_SAMPLE_RATE)
                 dump_record_text(phrase, RECORD_PHRASE_FILE)
             # Show the phrase and play the reference for the user to hear
@@ -889,13 +888,13 @@ class PronunciationTrainerGUI:
                 self.root.after(0, self._reset_to_retry)
                 return
 
-            if DEBUG_DUMP_RECORDINGS:
+            if config.SAVE_RECORDINGS:
                 dump_record_wav(audio, RECORD_RAW_FILE, config.AUDIO_SAMPLE_RATE)
 
             audio = normalize_audio(audio)
             self.last_user_audio = audio
 
-            if DEBUG_DUMP_RECORDINGS:
+            if config.SAVE_RECORDINGS:
                 dump_record_wav(audio, RECORD_NORMALIZED_FILE, config.AUDIO_SAMPLE_RATE)
 
             if self.current_phrase is None or self.reference_audio is None:

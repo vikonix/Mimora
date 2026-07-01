@@ -35,11 +35,12 @@ AUDIO_NORMALIZATION_CEILING = 0.9    # Scales the peak target output level direc
 # How long to wait for the recording thread to finish after stopping.
 RECORD_THREAD_JOIN_TIMEOUT_SEC = 1.5
 
-# When True, every take is written to disk as WAV so the audio can be inspected
-# independently of playback. Only three fixed files are kept, each overwritten on
-# every take (no history): the model's spoken reference, the raw mic capture, and
-# the normalized signal. Set to False to disable the dumps entirely.
-DEBUG_DUMP_RECORDINGS = True
+# Where the diagnostic recording dumps go. The dumps are gated by the
+# "save_recordings" setting (config.SAVE_RECORDINGS, off by default): when
+# enabled, every take is written to disk as WAV so the audio can be inspected
+# independently of playback. Only three fixed files are kept, each overwritten
+# on every take (no history): the model's spoken reference, the raw mic
+# capture, and the normalized signal.
 RECORDS_DIR = str(config.BASE_DIR / "records")
 
 # Fixed file names for the dumped recordings (overwritten each take).
@@ -67,7 +68,7 @@ def normalize_audio(audio: np.ndarray) -> np.ndarray:
 def dump_record_wav(audio: np.ndarray, file_name: str, sample_rate: int):
     """Write a mono float32 waveform to records/<file_name> as 16-bit PCM.
 
-    Diagnostic only (guarded by DEBUG_DUMP_RECORDINGS). The file name is fixed
+    Diagnostic only (guarded by config.SAVE_RECORDINGS). The file name is fixed
     (model.wav / raw.wav / normalized.wav), so each take overwrites the previous
     one and only the latest recording is kept on disk.
     """
@@ -89,7 +90,7 @@ def dump_record_wav(audio: np.ndarray, file_name: str, sample_rate: int):
 def dump_record_text(text: str, file_name: str):
     """Write the spoken phrase to records/<file_name> as UTF-8 text.
 
-    Companion to dump_record_wav (guarded by DEBUG_DUMP_RECORDINGS): the file
+    Companion to dump_record_wav (guarded by config.SAVE_RECORDINGS): the file
     name is fixed (phrase.txt), so each take overwrites the previous one and
     only the latest phrase is kept on disk, matching the dumped WAV files.
     """
