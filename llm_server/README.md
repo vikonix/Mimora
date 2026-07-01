@@ -81,19 +81,8 @@ When the LLM backend is `local_server` (the default; set via `"llm_backend"` in 
 | `GET` | `/health` | Model status and load parameters |
 | `GET` | `/v1/models` | Model list (OpenAI-compatible) |
 | `POST` | `/v1/chat/completions` | Chat completion (streaming and non-streaming) |
-| `POST` | `/v1/model/load` | Hot-swap model without restarting the server |
 
-### Hot-Swapping the Model
-
-```bash
-curl -X POST http://127.0.0.1:8765/v1/model/load \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model_path": "../models/qwen2.5-3b-instruct-q4_k_m.gguf",
-    "n_gpu_layers": 20,
-    "n_ctx": 2048
-  }'
-```
+The model is loaded once at startup (`--model`). There is deliberately no hot-reload endpoint: the server is unauthenticated (localhost only), so an endpoint accepting a filesystem path would let any local process repoint or unload the model, and the app never swaps models at runtime (changing the GGUF is a `settings.json` edit plus restart).
 
 ## Choosing `n_gpu_layers`
 

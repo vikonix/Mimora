@@ -15,7 +15,13 @@ Endpoints:
     GET  /health                  - model status
     GET  /v1/models               - OpenAI-compatible model list
     POST /v1/chat/completions     - streaming or non-streaming chat
-    POST /v1/model/load           - hot-reload model without restarting server
+
+The model is loaded once at startup (--model); there is deliberately no
+hot-reload endpoint. The server is bound to localhost but unauthenticated, so
+an endpoint accepting a filesystem path would let any local process repoint or
+unload the model - and the app never swaps models at runtime anyway (switching
+the GGUF is a settings.json edit + restart). Bring it back only if runtime
+model switching becomes a real product feature.
 """
 
 import argparse
@@ -83,8 +89,8 @@ app = FastAPI(title="Mimora LLM Server", version="1.0.0")
 
 # Global model state.
 # _inference_lock serialises all inference calls - llama_cpp is not thread-safe.
-# It is held for the entire streaming duration, so model reload blocks until
-# the current generation finishes. This is intentional for a single-user app.
+# It is held for the entire streaming duration, so concurrent requests wait for
+# the current generation to finish. This is intentional for a single-user app.
 _model: Optional[Llama] = None
 _model_path: Optional[str] = None
 _model_params: dict = {}
@@ -107,23 +113,11 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = False
 
 
-class ModelLoadRequest(BaseModel):
-    model_path: str
-    n_gpu_layers: int = 20
-    n_ctx: int = 2048
-
-
 # ── Model management ──────────────────────────────────────────────────────────
 
 def _load_model(model_path: str, n_gpu_layers: int, n_ctx: int, verbose: bool = False) -> None:
-    """Load (or reload) the GGUF model. Must be called with _inference_lock held."""
+    """Load the GGUF model once at startup. Must be called with _inference_lock held."""
     global _model, _model_path, _model_params
-
-    if _model is not None:
-        logging.info("Unloading current model before reload...")
-        if hasattr(_model, "close"):
-            _model.close()
-        _model = None
 
     logging.info(
         f"Loading model: {model_path} | "
@@ -255,7 +249,7 @@ def chat_completions(request: ChatCompletionRequest):
     if _model is None:
         raise HTTPException(
             status_code=503,
-            detail="Model not loaded. POST /v1/model/load first.",
+            detail="Model not loaded. Restart the server with --model <path>.",
         )
 
     if request.stream:
@@ -287,32 +281,6 @@ def chat_completions(request: ChatCompletionRequest):
     return result
 
 
-@app.post("/v1/model/load")
-def reload_model(req: ModelLoadRequest):
-    """
-    Hot-reload the model without restarting the server.
-    Blocks until any in-progress inference finishes.
-    """
-    if not os.path.exists(req.model_path):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Model file not found: {req.model_path}",
-        )
-    try:
-        with _inference_lock:
-            _load_model(req.model_path, req.n_gpu_layers, req.n_ctx)
-        return {"status": "loaded", "model_path": req.model_path}
-    except Exception as exc:
-        # _load_model unloads the old model before loading the new one (two
-        # models may not fit in VRAM simultaneously), so a failed reload leaves
-        # the server with no model at all - say so explicitly.
-        raise HTTPException(
-            status_code=500,
-            detail=f"Reload failed and the server now has NO model loaded "
-                   f"(POST /v1/model/load again): {exc}",
-        )
-
-
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main():
@@ -336,8 +304,8 @@ def main():
             _load_model(args.model, args.n_gpu_layers, args.n_ctx, verbose=args.verbose)
     else:
         logging.warning(
-            "No --model provided. Server will start without a model. "
-            "POST /v1/model/load to load one."
+            "No --model provided. The server will start without a model and "
+            "answer 503 to completions; restart it with --model <path>."
         )
 
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
