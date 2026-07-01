@@ -98,11 +98,14 @@ class TranslatorManager:
     def warm_up(self):
         """Run one throwaway translation so the first real call is not slow.
 
-        Non-fatal: a warm-up failure is logged and swallowed. The model is still
-        usable afterwards, and a transient hiccup here must not abort startup.
+        Warms the *configured* target language (falling back to Russian when
+        none is selected, e.g. when called directly in a test), so the first
+        real translation pays nothing extra. Non-fatal: a warm-up failure is
+        logged and swallowed. The model is still usable afterwards, and a
+        transient hiccup here must not abort startup.
         """
         try:
-            self.translate("Hello.", "Russian")
+            self.translate("Hello.", config.TRANSLATION_LANGUAGE or "Russian")
         except Exception:
             logging.exception("Translator warm-up failed (continuing).")
 

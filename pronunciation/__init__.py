@@ -8,7 +8,9 @@ type they share:
 
     pronunciation.acoustic -- Wav2Vec2 embeddings + cosine-DTW (the alternative engine)
     pronunciation.phoneme  -- espeak reference + phoneme ASR + edit distance (the default engine)
-    pronunciation.common   -- the engine-neutral PronunciationResult both return
+    pronunciation.common   -- the engine-neutral PronunciationResult both return,
+                              plus the shared torch-free waveform helpers
+                              (pronunciation.common.audio)
 
 The host never imports a subpackage directly: ``mimora/engine.py`` selects one by
 ``config.ENGINE`` and exposes a uniform interface. This package intentionally does

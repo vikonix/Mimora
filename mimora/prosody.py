@@ -18,11 +18,10 @@ pulls in ``librosa``/``scikit-learn`` for the actual signal analysis. It stays
 free of ``torch``/``transformers`` (the heavy engine stack), so computing
 prosody never forces the recognition model to load.
 
-The waveform-prep helpers (``_prepare_waveform`` / ``_trim_silence``) mirror the
-ones in ``pronunciation/acoustic/speech.py`` on purpose: the prosody must be measured on the
-same prepared signal the acoustic engine used, yet ``pronunciation.acoustic`` is meant to stay
-application-agnostic and must not import from ``mimora``. The two copies are a
-handful of lines of pure numpy/librosa and carry no torch dependency.
+The waveform-prep helpers come from ``pronunciation.common.audio``: the prosody
+must be measured on the same prepared signal the engines score, and that shared
+module is the single torch-free copy of the preparation code (``mimora`` may
+depend on ``pronunciation``, never the other way around).
 """
 
 import threading
@@ -32,45 +31,17 @@ import numpy as np
 import librosa
 from sklearn.preprocessing import MinMaxScaler
 
-# F0/energy are analysed at 16 kHz (the recognition sample rate); both user and
-# reference waveforms are resampled to this before any contour is taken.
-TARGET_SAMPLE_RATE = 16_000
-# Silence-trim threshold relative to the peak, in dB. Matches pronunciation/acoustic/speech.py
-# so the trimmed signal - and therefore the contours - line up with the engine's.
-TRIM_TOP_DB = 30
-
-
-# =====================================================================
-# Waveform preparation (kept torch-free; mirrors pronunciation/acoustic/speech.py)
-# =====================================================================
-def _prepare_waveform(waveform: np.ndarray, orig_sr: int) -> np.ndarray:
-    """Return a 1-D float32 mono waveform resampled to TARGET_SAMPLE_RATE."""
-    wav = np.asarray(waveform, dtype=np.float32)
-
-    # Down-mix to mono. torchaudio gives [channels, samples] while soundfile gives
-    # [samples, channels], so average along whichever axis is smaller (the channels).
-    if wav.ndim > 1:
-        wav = wav.mean(axis=int(np.argmin(wav.shape)))
-
-    if orig_sr != TARGET_SAMPLE_RATE:
-        wav = librosa.resample(wav, orig_sr=orig_sr, target_sr=TARGET_SAMPLE_RATE)
-
-    return np.ascontiguousarray(wav, dtype=np.float32)
-
-
-def _trim_silence(wav: np.ndarray) -> np.ndarray:
-    """Cut leading/trailing silence so pauses don't distort the contours.
-
-    Mirrors the engine's trim so prosody is measured on the same span the
-    acoustic comparison used. Keeps the original audio when trimming would leave
-    less than 0.1 s (i.e. near-silent input).
-    """
-    if wav.size == 0:
-        return wav
-    trimmed, _ = librosa.effects.trim(wav, top_db=TRIM_TOP_DB)
-    if trimmed.size < int(0.1 * TARGET_SAMPLE_RATE):
-        return wav
-    return np.ascontiguousarray(trimmed, dtype=np.float32)
+# Shared waveform preparation (single copy, torch-free). The underscored
+# aliases keep this module's established local names (and the unit tests that
+# exercise them) intact. F0/energy are analysed at TARGET_SAMPLE_RATE (16 kHz,
+# the recognition sample rate); both user and reference waveforms are resampled
+# to it before any contour is taken.
+from pronunciation.common.audio import (
+    TARGET_SAMPLE_RATE,
+    prepare_waveform as _prepare_waveform,
+    trim_silence as _trim_silence,
+    waveform_digest,
+)
 
 
 # =====================================================================
@@ -126,7 +97,7 @@ def _reference_prosody(reference_audio: np.ndarray, reference_sr: int) -> Dict[s
     """Return the reference F0 (interpolated) and energy contours, cached."""
     global _reference_cache
     arr = np.asarray(reference_audio)
-    key = (reference_sr, arr.shape, hash(arr.tobytes()))
+    key = (reference_sr, arr.shape, waveform_digest(arr))
     with _reference_cache_lock:
         if _reference_cache.get("key") != key:
             wav = _trim_silence(_prepare_waveform(arr, reference_sr))

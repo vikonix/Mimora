@@ -156,17 +156,19 @@ class TTSManager:
         if full_audio.size == 0:
             return
 
+        # Normalise the peak to avoid clipping. Applied before the platform
+        # branch so playback loudness is identical on the winsound and
+        # sounddevice paths (it used to run only for winsound).
+        peak = np.max(np.abs(full_audio))
+        if peak > 0:
+            full_audio = full_audio / peak * 0.9
+
         try:
             # Windows-only robust winsound implementation (bypasses PortAudio MME
             # error 6). winsound can only target the default output device, so an
             # explicit AUDIO_OUTPUT_DEVICE forces the sounddevice path below -
             # otherwise that config option would be silently ignored on Windows.
             if uses_winsound():
-                # Normalise peak to avoid clipping.
-                peak = np.max(np.abs(full_audio))
-                if peak > 0:
-                    full_audio = full_audio / peak * 0.9
-
                 # Prepend silence so the Windows Audio Session can initialize without
                 # clipping the first ~150ms. Lead-in scales with the sample rate.
                 lead_in = np.zeros(int(sample_rate * WINSOUND_LEAD_IN_SECONDS), dtype=np.float32)

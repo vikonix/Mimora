@@ -64,12 +64,20 @@ from .config import get_config
 # the acoustic_* fields stay at their defaults.
 from pronunciation.common import PronunciationResult
 
+# Shared waveform preparation (single torch-free copy in pronunciation.common).
+# The underscored alias keeps this module's established local name intact.
+from pronunciation.common.audio import (
+    TARGET_SAMPLE_RATE,
+    prepare_waveform as _prepare_waveform,
+    waveform_digest,
+)
+
 
 # =====================================================================
 # Constants and config.
 # =====================================================================
-# The wav2vec2 recognizer expects strictly 16 kHz mono input.
-TARGET_SAMPLE_RATE = 16_000
+# The wav2vec2 recognizer expects strictly 16 kHz mono input: TARGET_SAMPLE_RATE
+# (imported above from pronunciation.common.audio).
 # Kokoro synthesises at 24 kHz; used as the default reference sample rate.
 KOKORO_SAMPLE_RATE = 24_000
 
@@ -140,6 +148,31 @@ def _user_phoneme_good(lang: str, user_name: str) -> Optional[float]:
         except (TypeError, ValueError):
             return None
     return None
+
+
+# Data-fit scoring constants, declared with their built-in defaults so the
+# module's attribute set is explicit (visible to readers, IDEs and static
+# analysis). _apply_model_calibration() below overwrites them from the model
+# calibration JSON - at import time and again whenever the configured
+# language/user changes - so these literals only take effect when a calibration
+# file is missing a key (they duplicate the .get() fallbacks used there).
+# Semantics of each constant are documented inside _apply_model_calibration.
+PHONEME_GOOD = 0.0
+BAD_SHRINK_PHONES = 12
+BAD_CEILING = 0.40
+INSERTION_CAP_PER_PHONE = 0.25
+INSERTION_CONF_MIN = 0.0
+INSERTION_CONF_AGG = "max"
+RECALL_MAX_DIST = 0.13
+WEIGHT_PHONEME = 0.7
+WEIGHT_WORD = 0.3
+WORD_GOOD_FRAC = 0.33
+WORD_BAD_FRAC = 0.66
+OVERPRODUCTION_TOLERANCE = 0.5
+OVERPRODUCTION_STRENGTH = 1.0
+BUCKET_CUTPOINTS: List[float] = []
+BUCKET_TO_PERCENT: Dict[str, Any] = {}
+PASS_BUCKET = 4
 
 
 def _apply_model_calibration(calib: dict) -> None:
@@ -393,20 +426,9 @@ def _ensure_espeak() -> None:
     _espeak_registered = True
 
 
-# =====================================================================
-# Audio preparation.
-# =====================================================================
-def _prepare_waveform(waveform: np.ndarray, orig_sr: int) -> np.ndarray:
-    """Return a 1-D float32 mono waveform resampled to TARGET_SAMPLE_RATE."""
-    import librosa
-
-    wav = np.asarray(waveform, dtype=np.float32)
-    if wav.ndim > 1:
-        # Down-mix to mono along the channel axis (the smaller dimension).
-        wav = wav.mean(axis=int(np.argmin(wav.shape)))
-    if orig_sr != TARGET_SAMPLE_RATE:
-        wav = librosa.resample(wav, orig_sr=orig_sr, target_sr=TARGET_SAMPLE_RATE)
-    return np.ascontiguousarray(wav, dtype=np.float32)
+# Audio preparation lives in pronunciation.common.audio (_prepare_waveform is
+# imported above), shared with the acoustic engine and the host's prosody layer
+# so all of them measure the same prepared signal.
 
 
 # =====================================================================
@@ -822,13 +844,14 @@ def align_and_score(reference: List[str], spoken: List[str],
 # mirrors acoustic's _reference_features. Keyed by content hash + sample rate; the
 # cache is tiny and self-clearing, so it never grows on a long session.
 # =====================================================================
-_ref_cache: Dict[Tuple[int, int], List[str]] = {}
+_ref_cache: Dict[Tuple[bytes, Tuple[int, ...], int], List[str]] = {}
 
 
 def _recognize_reference(reference_audio: np.ndarray, reference_sr: int,
                          device: str) -> List[str]:
     """Recognized phonemes of the reference take, cached by content + sample rate."""
-    key = (hash(np.asarray(reference_audio, dtype=np.float32).tobytes()), reference_sr)
+    arr = np.asarray(reference_audio, dtype=np.float32)
+    key = (waveform_digest(arr), arr.shape, reference_sr)
     cached = _ref_cache.get(key)
     if cached is not None:
         return cached

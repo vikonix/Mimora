@@ -37,7 +37,6 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import torch
-import librosa
 import Levenshtein
 from fastdtw import fastdtw
 from scipy.spatial.distance import cosine
@@ -49,6 +48,16 @@ from phonemizer import phonemize
 # acoustic.configure(). get_config() returns the active configuration.
 from .config import get_config
 
+# Shared waveform preparation (single torch-free copy in pronunciation.common).
+# The underscored aliases keep this module's established local names (and the
+# unit tests that exercise them) intact.
+from pronunciation.common.audio import (
+    TARGET_SAMPLE_RATE,
+    prepare_waveform as _prepare_waveform,
+    trim_silence as _trim_silence,
+    waveform_digest,
+)
+
 
 # =====================================================================
 # Configuration.
@@ -59,8 +68,8 @@ from .config import get_config
 # inject them with acoustic.configure() after import but before analysis.
 # The constants below are intrinsic to the analyzer and are not host-tunable.
 # =====================================================================
-# Wav2Vec2 expects strictly 16 kHz mono input.
-TARGET_SAMPLE_RATE = 16_000
+# Wav2Vec2 expects strictly 16 kHz mono input: TARGET_SAMPLE_RATE (imported
+# above from pronunciation.common.audio).
 # Kokoro synthesises at 24 kHz; used as the default reference sample rate.
 KOKORO_SAMPLE_RATE = 24_000
 
@@ -82,7 +91,6 @@ KOKORO_SAMPLE_RATE = 24_000
 ACOUSTIC_BAD_DEFAULT = 0.60      # fixed ceiling when no per-utterance baseline exists
 ACOUSTIC_BAD_FRACTION = 0.9      # ceiling = this fraction of the random-pair baseline
 ACOUSTIC_MIN_SPAN = 0.05         # minimal floor-to-ceiling span (avoids degenerate scale)
-TRIM_TOP_DB = 30                 # silence trim threshold relative to peak, in dB
 
 # Persisted calibration (floor override) lives next to this module.
 CALIBRATION_FILE = Path(__file__).resolve().parent / "calibration.json"
@@ -251,38 +259,9 @@ def _ensure_loaded() -> None:
         load_models()
 
 
-# =====================================================================
-# Audio preparation
-# =====================================================================
-def _prepare_waveform(waveform: np.ndarray, orig_sr: int) -> np.ndarray:
-    """Return a 1-D float32 mono waveform resampled to TARGET_SAMPLE_RATE."""
-    wav = np.asarray(waveform, dtype=np.float32)
-
-    # Down-mix to mono. torchaudio gives [channels, samples] while soundfile gives
-    # [samples, channels], so average along whichever axis is smaller (the channels).
-    if wav.ndim > 1:
-        wav = wav.mean(axis=int(np.argmin(wav.shape)))
-
-    if orig_sr != TARGET_SAMPLE_RATE:
-        wav = librosa.resample(wav, orig_sr=orig_sr, target_sr=TARGET_SAMPLE_RATE)
-
-    return np.ascontiguousarray(wav, dtype=np.float32)
-
-
-def _trim_silence(wav: np.ndarray) -> np.ndarray:
-    """Cut leading/trailing silence so pauses don't inflate the DTW distance.
-
-    Matters especially for the user recording: peak normalization in the capture
-    path boosts the noise floor of quiet takes, turning silent padding into loud
-    noise that has no counterpart in the clean TTS reference. Keeps the original
-    audio when trimming would leave less than 0.1 s (i.e. near-silent input).
-    """
-    if wav.size == 0:
-        return wav
-    trimmed, _ = librosa.effects.trim(wav, top_db=TRIM_TOP_DB)
-    if trimmed.size < int(0.1 * TARGET_SAMPLE_RATE):
-        return wav
-    return np.ascontiguousarray(trimmed, dtype=np.float32)
+# Audio preparation lives in pronunciation.common.audio (_prepare_waveform /
+# _trim_silence are imported above), shared with the phoneme engine and the
+# host's prosody layer so all of them measure the same prepared signal.
 
 
 # =====================================================================
@@ -669,7 +648,7 @@ def _reference_features(reference_audio: np.ndarray, reference_sr: int) -> Dict[
     """Return the prepared waveform and embeddings of the reference."""
     global _reference_cache
     arr = np.asarray(reference_audio)
-    key = (reference_sr, arr.shape, hash(arr.tobytes()))
+    key = (reference_sr, arr.shape, waveform_digest(arr))
     with _reference_cache_lock:
         if _reference_cache.get("key") != key:
             wav = _trim_silence(_prepare_waveform(arr, reference_sr))
