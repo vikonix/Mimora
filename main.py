@@ -408,11 +408,13 @@ class PronunciationTrainerGUI:
         self.view.enter_app_ready()
         self.view.append_system_msg("Ready. Generate a phrase, listen, then press SPACE to repeat it.")
         # Speak a personal greeting first, then auto-generate the first phrase.
-        # The name is read here, on the main thread (Tk is not thread-safe).
+        # The name and voice are read here, on the main thread (Tk is not
+        # thread-safe); the worker only receives plain values.
         name = self.view.get_user_name()
-        threading.Thread(target=self._greet_and_start, args=(name,), daemon=True).start()
+        voice = self._selected_voice()
+        threading.Thread(target=self._greet_and_start, args=(name, voice), daemon=True).start()
 
-    def _greet_and_start(self, name: str):
+    def _greet_and_start(self, name: str, voice: str):
         """Speak a greeting, then start the first phrase. (Background thread.)
 
         The greeting uses the same Kokoro voice as the reference phrases. Any
@@ -422,7 +424,7 @@ class PronunciationTrainerGUI:
         try:
             greeting = f"Hello {name}, listen and repeat." if name else "Hello, listen and repeat."
             self.root.after(0, self.view.append_system_msg, greeting)
-            audio = self.tts_mgr.synthesize(greeting, voice=self._selected_voice())
+            audio = self.tts_mgr.synthesize(greeting, voice=voice)
             if audio.size > 0:
                 self._play_with_face(audio, KOKORO_SAMPLE_RATE, self._new_playback_event())
         except Exception:
@@ -566,25 +568,34 @@ class PronunciationTrainerGUI:
         self.last_user_audio = None
         self.view.enter_generating()
 
-        threading.Thread(target=self._generate_and_prompt, args=(source_text,), daemon=True).start()
+        # Capture every selector value here, on the main thread (Tk is not
+        # thread-safe), and once per generation, so the phrase, its audio and
+        # its translation all stay consistent even if the user changes a
+        # selector mid-generation. The worker never reads a widget.
+        length = self._selected_length()
+        language = self._selected_translation_language()
+        voice = self._selected_voice()
+        speed = self._selected_speed()
 
-    def _generate_and_prompt(self, source_text: str):
-        """Generate one phrase, synthesize the reference, and play it. (Background thread.)"""
+        threading.Thread(target=self._generate_and_prompt,
+                         args=(source_text, length, language, voice, speed),
+                         daemon=True).start()
+
+    def _generate_and_prompt(self, source_text: str, length: str,
+                             language: str, voice: str, speed: float):
+        """Generate one phrase, synthesize the reference, and play it. (Background thread.)
+
+        All selector values (``length``, ``language``, ``voice``, ``speed``) are
+        captured by the caller on the Tk main thread and passed in as plain
+        values: this worker must never read widgets (Tk is not thread-safe).
+        """
         try:
-            # Capture the length and translation language once, up front, so the
-            # phrase, its audio, and its translation all stay consistent even if
-            # the user changes a selector mid-generation.
-            length = self._selected_length()
-            language = self._selected_translation_language()
             phrase = self.llm_mgr.generate_phrase(source_text, length=length)
             if not phrase:
                 self.root.after(0, self._phrase_generation_failed, "The model returned no phrase. Try again.")
                 return
 
             # Synthesize the reference once; reused for playback and analysis.
-            # Capture the voice in a local first so the phrase, audio and voice
-            # stored below are guaranteed consistent with each other.
-            voice = self._selected_voice()
             reference_audio = self.tts_mgr.synthesize(phrase, voice=voice)
             if reference_audio.size == 0:
                 self.root.after(0, self._phrase_generation_failed, "Could not synthesize the reference audio.")
@@ -605,7 +616,7 @@ class PronunciationTrainerGUI:
             self.root.after(0, self._show_new_phrase, phrase)
             # Honor the selected reference speed (see play_reference for the
             # lowered-sample-rate slowing approach) instead of always 1.0×.
-            effective_sr = int(KOKORO_SAMPLE_RATE * self._selected_speed())
+            effective_sr = int(KOKORO_SAMPLE_RATE * speed)
             self._play_with_face(self.reference_audio, effective_sr,
                                  self._new_playback_event())
 
