@@ -504,8 +504,9 @@ class PronunciationTrainerGUI:
         """Regenerate the phrase when the desired length changes."""
         logging.info(f"Phrase length changed to {self.view.get_length_label()!r}.")
         self._persist_setting("phrase_length", self._selected_length())
-        # The translation panel and selector depend on the length mode (fragments
-        # are not translated), so reconcile them before anything else.
+        # Reconcile the translation panel and selector. Fragments are translated
+        # too, so the length mode does not affect them; this is a consistency
+        # refresh, not a mode switch.
         self.view.refresh_translation_ui()
         # Return focus to the window so the spacebar record toggle keeps working.
         self.root.focus_set()

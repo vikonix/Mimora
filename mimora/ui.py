@@ -287,8 +287,8 @@ class TrainerView:
         # ("Russian", "Spanish", …) names the language; the empty first choice
         # means "translation off". Selecting a language shows the translation
         # panel under the phrase card (see refresh_translation_ui); the panel and
-        # the extra LLM work stay off until a language is picked. Disabled in
-        # "Few words" mode, where fragments are not translated.
+        # the extra translation work stay off until a language is picked. Both
+        # full sentences and "Few words" fragments are translated.
         self.translation_var = tk.StringVar(value=config.TRANSLATION_LANGUAGE)
         self.translation_selector = ttk.Combobox(
             selectors_frame, textvariable=self.translation_var, state="readonly",
@@ -467,7 +467,7 @@ class TrainerView:
 
         # 6. Action row directly under the result window: replays the user's own
         # attempt. Reference and New phrase live down by the mic; the diagnostic
-        # self-test has no visible button - it stays reachable via the ↑ hotkey,
+        # self-test has no visible button - it stays reachable via the 't' hotkey,
         # gated by self._test_enabled (see is_test_enabled / _set_actions).
         #
         # Packed BEFORE the feedback panel below and at side=BOTTOM on purpose:
@@ -479,7 +479,7 @@ class TrainerView:
         action_frame.pack(side=tk.BOTTOM, padx=20, pady=(0, 8))
 
         # Self-test enabled state. The visible button was removed, but the
-        # feature lives on via the ↑ hotkey; the enter_* states still toggle this
+        # feature lives on via the 't' hotkey; the enter_* states still toggle this
         # through _set_actions(test=...), and is_test_enabled gates the hotkey.
         self._test_enabled = False
 
@@ -698,7 +698,7 @@ class TrainerView:
 
     def is_test_enabled(self) -> bool:
         """True when the self-test is currently allowed. There is no visible
-        button; the ↑ hotkey reads this flag (kept in sync by _set_actions)."""
+        button; the 't' hotkey reads this flag (kept in sync by _set_actions)."""
         return self._test_enabled
 
     def is_user_enabled(self) -> bool:
@@ -1172,4 +1172,4 @@ class TrainerView:
         if result.passed:
             self.update_instruction("Nice! Click 'New phrase' to continue, or repeat to refine.")
         else:
-            self.update_instruction("Try again: hold SPACE or click the mic to repeat. ▶ Reference replays the example.")
+            self.update_instruction("Try again: press SPACE or click the mic to repeat. ▶ Reference replays the example.")
