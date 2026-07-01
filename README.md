@@ -2,13 +2,13 @@
 
 **A local, offline pronunciation trainer.** Mimora says a phrase out loud, you repeat it, and it scores how close you were - highlighting the words to work on. Practice the same phrase until you pass, then move on to the next one. Everything runs on your machine: speech synthesis, speech recognition, phrase generation, and acoustic analysis.
 
+![Mimora demo: one full practice loop - new phrase, speak, score, highlighted words, replay](docs/mimora1.gif)
+
 | Dark theme | Light theme |
 |:---:|:---:|
 | ![Mimora pronunciation trainer, dark theme](docs/mimora-dark2.png) | ![Mimora pronunciation trainer, light theme](docs/mimora-light2.png) |
 
 *Themes are configurable in `config/themes/`.*
-
-<!-- TODO: add a short demo GIF of one full loop here: New phrase -> SPACE -> speak -> score appears -> words highlighted -> Replay. -->
 
 ---
 
