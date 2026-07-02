@@ -70,9 +70,7 @@ class ViewCallbacks:
     Tk event argument and are also called with none elsewhere, hence the
     ``Callable[..., None]`` signatures for those.
     """
-    on_open_practice_text: Callable[[], None]
     on_settings_clicked: Callable[[], None]
-    quit_app: Callable[[], None]
     on_gui_btn_press: Callable[[], None]
     on_gui_btn_release: Callable[[], None]
     on_user_name_changed: Callable[..., None]
@@ -194,18 +192,6 @@ class TrainerView:
         # Window background (shows through wherever no widget covers it). The
         # view owns the window chrome so the controller need not know the palette.
         self.root.configure(bg=THEME["bg_main"])
-
-        # 0. Menu bar (cross-platform tk.Menu). On Windows it is drawn by the
-        # OS, so it does not follow the app's dark theme - that is expected.
-        # The handler (on_open_practice_text) lives in the controller (main.py).
-        menubar = tk.Menu(self.root)
-        file_menu = tk.Menu(menubar, tearoff=0)
-        file_menu.add_command(label="Open Practice Text…",
-                              command=self._cb.on_open_practice_text)
-        file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self._cb.quit_app)
-        menubar.add_cascade(label="File", menu=file_menu)
-        self.root.config(menu=menubar)
 
         # 1. Header
         header_frame = tk.Frame(self.root, bg=THEME["bg_main"], height=60)

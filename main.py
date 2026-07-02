@@ -62,7 +62,7 @@ print("starting ...", flush=True)
 import warnings
 import logging
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import ttk
 from pathlib import Path
 import numpy as np
 
@@ -259,9 +259,7 @@ class PronunciationTrainerGUI:
         self._suppress_persist = False
 
         self.view = TrainerView(self.root, ViewCallbacks(
-            on_open_practice_text=self.on_open_practice_text,
             on_settings_clicked=self.on_settings_clicked,
-            quit_app=self.quit_app,
             on_gui_btn_press=self.on_gui_btn_press,
             on_gui_btn_release=self.on_gui_btn_release,
             on_user_name_changed=self.on_user_name_changed,
@@ -413,33 +411,13 @@ class PronunciationTrainerGUI:
 
         self.view.set_practice_text(text.strip())
 
-    def on_open_practice_text(self):
-        """Pick a practice text file via File → Open Practice Text… (main thread).
-
-        The chosen file is loaded into the source panel right away and the path
-        is persisted to settings.json ("practice_text_file"), so the same file
-        is loaded again on the next launch.
-        """
-        path = filedialog.askopenfilename(
-            parent=self.root,
-            title="Open Practice Text",
-            initialdir=os.path.dirname(config.PRACTICE_TEXT_FILE),
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-        )
-        # Return focus to the window so the spacebar record toggle keeps working.
-        self.root.focus_set()
-        if not path:
-            return  # dialog cancelled
-        self._load_practice_file(path)
-
     def _load_practice_file(self, path: str):
         """Load *path* into the source panel and persist it (main thread).
 
-        Shared by the File menu (on_open_practice_text) and the settings
-        window's practice-file picker, so both apply the file immediately and
-        store the same settings.json value. A relative *path* (the stored
-        settings.json form) is resolved against the project root, matching the
-        loader convention.
+        Called by the settings window's practice-file picker: the file is
+        applied immediately and stored in settings.json. A relative *path*
+        (the stored settings.json form) is resolved against the project root,
+        matching the loader convention.
         """
         if not os.path.isabs(path):
             path = str(config.BASE_DIR / path)
