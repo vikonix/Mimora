@@ -50,6 +50,7 @@ _KNOWN_USER_KEYS = {
     "external_model_path",
     "external_n_ctx",
     "practice_text_file",
+    "practice_text_collapsed",
     "phrase_gen_window_sentences",
     "phrase_gen_window_repeats",
     "user_name",
@@ -87,6 +88,7 @@ USER_SETTING_DEFAULTS = {
     "external_model_path": "models/llama-3.2-3b-instruct-q4_k_m.gguf",
     "external_n_ctx": None,
     "practice_text_file": "texts/practice_text.txt",
+    "practice_text_collapsed": False,
     "phrase_gen_window_sentences": 5,
     "phrase_gen_window_repeats": 5,
     "user_name": "",
@@ -596,6 +598,11 @@ SHOW_ENERGY_CHART = _bool("show_energy_chart", True)
 # Visibility of the articulation face shown beside the prosody charts, toggled
 # by the "Face" checkbox in the prosody header and persisted on change.
 SHOW_FACE = _bool("show_face", True)
+
+# Collapsed state of the editable practice-text box, toggled by clicking the
+# "Practice text:" caption in the app and persisted on change. The selector
+# row below the box stays visible either way.
+PRACTICE_TEXT_COLLAPSED = _bool("practice_text_collapsed", False)
 
 # =====================================================================
 # Color Theme (UI palette)

@@ -28,6 +28,8 @@
   "external_n_ctx": 4096,
   "_practice_text_file": "Source text shown in the input panel at startup. Relative paths resolve against the project root.",
   "practice_text_file": "texts/practice_text.txt",
+  "_practice_text_collapsed": "Start with the practice-text box collapsed (the selector row below it stays visible). Also toggled by clicking the 'Practice text:' caption in the app.",
+  "practice_text_collapsed": false,
   "_phrase_gen_window_sentences": "How many consecutive sentences of the source text are sent to the LLM per request (sliding window).",
   "phrase_gen_window_sentences": 5,
   "_phrase_gen_window_repeats": "How many phrases are generated at one window position before the window slides forward by half its size.",

@@ -167,6 +167,10 @@ def build_sections() -> tuple:
             Field("show_energy_chart", "Show energy chart", "bool",
                   lambda: config.user_setting("show_energy_chart",
                                               config.SHOW_ENERGY_CHART)),
+            Field("practice_text_collapsed", "Collapse practice text", "bool",
+                  lambda: config.user_setting("practice_text_collapsed",
+                                              config.PRACTICE_TEXT_COLLAPSED),
+                  help="Hide the editable text box under its caption."),
         )),
         Section("LLM & phrase generation", (
             Field("llm_backend", "LLM backend", "choice",

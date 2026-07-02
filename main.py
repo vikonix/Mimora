@@ -260,6 +260,7 @@ class PronunciationTrainerGUI:
 
         self.view = TrainerView(self.root, ViewCallbacks(
             on_settings_clicked=self.on_settings_clicked,
+            on_practice_collapsed_toggled=self.on_practice_collapsed_toggled,
             on_gui_btn_press=self.on_gui_btn_press,
             on_gui_btn_release=self.on_gui_btn_release,
             on_user_name_changed=self.on_user_name_changed,
@@ -618,6 +619,13 @@ class PronunciationTrainerGUI:
         self._persist_setting("show_face", self.view.get_show_face())
         self._sync_settings_window("show_face", self.view.get_show_face())
 
+    def on_practice_collapsed_toggled(self):
+        """Apply the practice-text collapse toggle and persist it."""
+        self.view.toggle_practice_text()
+        collapsed = self.view.get_practice_collapsed()
+        self._persist_setting("practice_text_collapsed", collapsed)
+        self._sync_settings_window("practice_text_collapsed", collapsed)
+
     # ------------------------------------------------------------------
     # Settings window (mimora/settings_window.py)
     # ------------------------------------------------------------------
@@ -686,6 +694,9 @@ class PronunciationTrainerGUI:
         elif key == "show_face":
             self.view.set_show_face(value)
             self.on_show_face_toggled()
+        elif key == "practice_text_collapsed":
+            self.view.set_practice_collapsed(value)
+            self.on_practice_collapsed_toggled()
         elif key in ("show_pitch_chart", "show_energy_chart"):
             if key == "show_pitch_chart":
                 self.view.set_show_pitch(value)

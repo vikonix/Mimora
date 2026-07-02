@@ -71,6 +71,7 @@ class ViewCallbacks:
     ``Callable[..., None]`` signatures for those.
     """
     on_settings_clicked: Callable[[], None]
+    on_practice_collapsed_toggled: Callable[[], None]
     on_gui_btn_press: Callable[[], None]
     on_gui_btn_release: Callable[[], None]
     on_user_name_changed: Callable[..., None]
@@ -269,8 +270,18 @@ class TrainerView:
         # editing finishes (see on_user_name_changed).
         text_header = tk.Frame(source_frame, bg=THEME["bg_main"])
         text_header.pack(fill=tk.X)
-        tk.Label(text_header, text="Practice text:",
-                 font=(FONT_FAMILY, 9, "bold"), fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
+        # The caption doubles as the collapse toggle for the text box: clicking
+        # it hides/shows the editor (Paste/Clear go with it) to free vertical
+        # space; the arrow prefix mirrors the state (see toggle_practice_text).
+        # The selector row below the box stays visible either way.
+        self.practice_collapsed = tk.BooleanVar(value=config.PRACTICE_TEXT_COLLAPSED)
+        self._practice_caption = tk.Button(
+            text_header, text="▾ Practice text:",
+            command=self._on_practice_caption_clicked,
+            font=(FONT_FAMILY, 9, "bold"), fg=THEME["text_dim"], bg=THEME["bg_main"],
+            activebackground=THEME["bg_main"], activeforeground=THEME["text"],
+            bd=0, padx=0, pady=0, cursor="hand2")
+        self._practice_caption.pack(side=tk.LEFT)
 
         # Quick-edit affordances next to the caption. Their real job is
         # discoverability: a control visible even while the field still shows the
@@ -318,6 +329,9 @@ class TrainerView:
         # padding tight so all four fit the fixed 600px window width.
         selectors_frame = tk.Frame(source_frame, bg=THEME["bg_main"])
         selectors_frame.pack(anchor=tk.W, pady=(2, 0))
+        # Kept for toggle_practice_text: re-showing the editor re-packs it
+        # before this row to restore the build order.
+        self._selectors_frame = selectors_frame
 
         # Translation-language selector (leftmost). No caption - the value itself
         # ("Russian", "Spanish", …) names the language; the empty first choice
@@ -370,6 +384,10 @@ class TrainerView:
         # Changing the speed replays the reference so the difference is heard
         # immediately (see on_speed_changed).
         self.speed_selector.bind("<<ComboboxSelected>>", self._cb.on_speed_changed)
+
+        # The editor is packed above by default; hide it now if the persisted
+        # state says collapsed (same late-apply idiom as the prosody toggles).
+        self.toggle_practice_text()
 
         # 5. Current phrase card
         self.phrase_frame = tk.Frame(self.root, bg=THEME["bg_panel"],
@@ -649,6 +667,44 @@ class TrainerView:
         """Empty the practice field and focus it, ready for the user's own text."""
         self.source_text.delete("1.0", tk.END)
         self.source_text.focus_set()
+
+    def _on_practice_caption_clicked(self):
+        """Flip the collapse flag and route it through the controller.
+
+        Unlike the Face Checkbutton, the caption Button has no variable of its
+        own, so the view flips the flag here; the controller then applies and
+        persists it exactly like the other visibility toggles.
+        """
+        self.practice_collapsed.set(not self.practice_collapsed.get())
+        self._cb.on_practice_collapsed_toggled()
+
+    def toggle_practice_text(self):
+        """Show/hide the practice-text editor to match the collapse flag."""
+        # Return focus to the window so the spacebar record toggle keeps working.
+        self.root.focus_set()
+        collapsed = self.practice_collapsed.get()
+        self._practice_caption.config(
+            text="▸ Practice text:" if collapsed else "▾ Practice text:")
+        # ScrolledText delegates pack/pack_forget to its outer .frame but NOT
+        # winfo_manager: asking the Text itself always answers "pack" (it is
+        # permanently packed inside that frame), so probe the frame instead.
+        shown = self.source_text.frame.winfo_manager() == "pack"
+        if collapsed and shown:
+            self.source_text.pack_forget()
+            self._paste_btn.pack_forget()
+            self._clear_btn.pack_forget()
+        elif not collapsed and not shown:
+            # Restore the build order: the editor above the selector row, the
+            # buttons after the caption (LEFT packing preserves their order).
+            self.source_text.pack(fill=tk.X, pady=4, before=self._selectors_frame)
+            self._paste_btn.pack(side=tk.LEFT, padx=(10, 0))
+            self._clear_btn.pack(side=tk.LEFT, padx=(6, 0))
+
+    def set_practice_collapsed(self, flag: bool):
+        self.practice_collapsed.set(bool(flag))
+
+    def get_practice_collapsed(self) -> bool:
+        return bool(self.practice_collapsed.get())
 
     def get_user_name(self) -> str:
         return self.user_name_var.get().strip()
