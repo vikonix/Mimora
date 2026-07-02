@@ -61,7 +61,7 @@ print("starting ...", flush=True)
 import warnings
 import logging
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, ttk
 from pathlib import Path
 import numpy as np
 
@@ -288,6 +288,12 @@ class PronunciationTrainerGUI:
         self.root.bind("<KeyPress-T>", lambda _: self._hotkey(
             self.view.is_test_enabled, self.on_test_reference))
         self.root.bind("<Escape>", lambda _: self.quit_app())
+        # Clicking anywhere that is not a text input returns keyboard focus to
+        # the window, so the hotkeys above resume working after the user edits
+        # the source text. Without this, focus would stay in the text field
+        # forever: plain frames/labels never take focus on click in Tk, and
+        # only button handlers happen to call focus_set().
+        self.root.bind_all("<Button-1>", self._on_global_click, add="+")
         self.root.protocol("WM_DELETE_WINDOW", self.quit_app)
 
     def _hotkey(self, is_enabled, action):
@@ -712,6 +718,23 @@ class PronunciationTrainerGUI:
         # view's button-release binding (ViewCallbacks.on_gui_btn_release) still
         # has a target.
         pass
+
+    def _on_global_click(self, event):
+        """Give keyboard focus back to the window on clicks outside text inputs.
+
+        Tk moves focus into Entry/Text widgets on click but never moves it back
+        out when empty space is clicked, so the hotkeys would stay disabled
+        (_typing_in_text_field) until some button handler called focus_set().
+        Text inputs, comboboxes, and scrollbars are left alone so clicking them
+        keeps normal editing/selection behavior. Widgets created inside Tk
+        itself (e.g. the combobox dropdown list) reach a bind_all handler as
+        path strings rather than instances - those are skipped too.
+        """
+        if isinstance(event.widget, str):
+            return
+        if isinstance(event.widget, (tk.Entry, tk.Text, ttk.Combobox, tk.Scrollbar)):
+            return
+        self.root.focus_set()
 
     def _typing_in_text_field(self) -> bool:
         """True when a text-input widget owns focus - spacebar should type, not record."""
