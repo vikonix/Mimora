@@ -899,9 +899,17 @@ class TrainerView:
     # Talking face (driven by the controller from a loudness envelope)
     # ------------------------------------------------------------------
     def face_fps(self):
-        """Frame rate of the talking-mouth animation, or None if no face."""
+        """Frame rate of the talking-mouth animation, or None if no face is shown.
+
+        Returns None while the face panel is hidden (the "Face" checkbox), not
+        just when no face exists: the caller skips building the loudness track
+        then, so a hidden face costs no per-playback work (envelope computation
+        plus a 30 fps after-loop animating an invisible mouth).
+        """
         face = getattr(self, "face", None)
-        return face.fps if face is not None else None
+        if face is None or not self.get_show_face():
+            return None
+        return face.fps
 
     def face_play_levels(self, levels, fps):
         """Drive the talking mouth from a pre-computed loudness track."""

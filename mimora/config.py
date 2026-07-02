@@ -61,6 +61,7 @@ _KNOWN_USER_KEYS = {
     "silence_timeout",
     "silence_threshold",
     "translation_language",
+    "warm_up",
 }
 for _key in _USER:
     if not _key.startswith("_") and _key not in _KNOWN_USER_KEYS:
@@ -148,6 +149,13 @@ SILENCE_THRESHOLD = _num("silence_threshold", 0.01, minimum=0.0)
 # default: the dumps put the user's voice on disk on every attempt, so they
 # are opt-in for debugging rather than always-on.
 SAVE_RECORDINGS = _bool("save_recordings", False)
+
+# Model warm-up at startup ("warm_up"): when true (the default) every loaded
+# model runs one dummy pass right after loading, so the first real take pays no
+# first-call latency. false skips those passes to shorten startup on slow
+# machines - the cost simply moves to the first take (and, for the phoneme
+# engine, to the first panphon/espeak use), it is never avoided twice.
+WARM_UP = _bool("warm_up", False)
 
 # Hardware Acceleration setup - the value detected by hardware detection wins;
 # otherwise loader.detect_device probes torch directly (and does not import torch

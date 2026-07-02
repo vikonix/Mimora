@@ -215,6 +215,12 @@ class PronunciationTrainerGUI:
         # Last user name written to settings.json; lets on_user_name_changed
         # skip the file write when the field loses focus without an edit.
         self._saved_user_name: str = config.USER_NAME
+        # Whether any prosody chart is visible, mirrored from the checkboxes so
+        # analysis workers can skip the (expensive) prosody computation without
+        # touching Tk widgets. Written only on the Tk main thread (here and in
+        # on_prosody_charts_toggled); workers only read it.
+        self._prosody_wanted: bool = (config.SHOW_PITCH_CHART
+                                      or config.SHOW_ENERGY_CHART)
 
         # Initialize core modular sub-managers
         self.tts_mgr = TTSManager()
@@ -355,12 +361,18 @@ class PronunciationTrainerGUI:
                 if not self.llm_mgr.check_connection():
                     self.root.after(0, self.view.append_error_msg, "Warning: LM Studio is offline. Start it to generate phrases!")
 
-            self.root.after(0, self.view.enter_warming_up)
-            self.tts_mgr.warm_up()
-            engine.warm_up()
-            if config.TRANSLATION_LANGUAGE:
-                self.translator_mgr.warm_up()
-            logging.info("Models warmed up.")
+            if config.WARM_UP:
+                self.root.after(0, self.view.enter_warming_up)
+                self.tts_mgr.warm_up()
+                engine.warm_up()
+                if config.TRANSLATION_LANGUAGE:
+                    self.translator_mgr.warm_up()
+                logging.info("Models warmed up.")
+            else:
+                # settings.json "warm_up": false - skip the dummy passes so the
+                # app is ready sooner on slow machines; the first take pays the
+                # first-call latency instead (see config.WARM_UP).
+                logging.info("Model warm-up skipped (warm_up=false).")
 
             self.root.after(0, self.load_practice_text)
             self.root.after(0, self.make_app_ready)
@@ -567,6 +579,10 @@ class PronunciationTrainerGUI:
         extra write of an unchanged value is harmless.
         """
         self.view.toggle_prosody_charts()
+        # Keep the worker-visible flag in sync (read by _compute_prosody_safe
+        # on analysis threads; written only here, on the Tk main thread).
+        self._prosody_wanted = (self.view.get_show_pitch()
+                                or self.view.get_show_energy())
         self._persist_setting("show_pitch_chart", self.view.get_show_pitch())
         self._persist_setting("show_energy_chart", self.view.get_show_energy())
 
@@ -875,6 +891,34 @@ class PronunciationTrainerGUI:
     # ------------------------------------------------------------------
     # Analyze phase
     # ------------------------------------------------------------------
+    def _compute_prosody_safe(self, user_audio: np.ndarray, user_sr: int) -> dict:
+        """Prosody contours for the feedback charts, or ``{}`` when skipped/failed.
+
+        Prosody is the engine-agnostic audio layer: it is computed here, from the
+        same waveforms the engine scored, so the charts work identically across
+        engines. Two cases degrade to empty contours instead:
+          * Both prosody charts are hidden: the pitch tracking (librosa.pyin)
+            costs seconds of CPU per take on slow machines, so hidden charts
+            must not pay for it. Re-enabling a chart shows data again from the
+            next take (the skipped take has nothing cached to draw).
+          * The computation failed: a prosody failure must not discard the
+            completed analysis - the score is already valid, so the feedback is
+            shown without charts.
+        Runs on analysis worker threads; reads only plain values (never widgets).
+        """
+        if not self._prosody_wanted:
+            return {}
+        try:
+            return prosody.compute_prosody(
+                user_audio=user_audio,
+                user_sr=user_sr,
+                reference_audio=self.reference_audio,
+                reference_sr=KOKORO_SAMPLE_RATE,
+            )
+        except Exception:
+            logging.exception("Prosody computation failed; showing the result without charts:")
+            return {}
+
     def on_test_reference(self):
         """Diagnostic: feed the reference audio through analysis instead of a
         recording. Since the reference is compared against itself it should score
@@ -918,20 +962,8 @@ class PronunciationTrainerGUI:
                 voice=self.current_voice,
                 is_reference=True,                # self-test: excluded from GOOD calibration
             )
-            # Prosody is the engine-agnostic audio layer: compute it here from the
-            # same waveforms so the charts work identically across engines. A
-            # prosody failure must not discard the completed analysis - the
-            # score is already valid, so degrade to empty charts instead.
-            try:
-                result.prosody = prosody.compute_prosody(
-                    user_audio=self.reference_audio,
-                    user_sr=KOKORO_SAMPLE_RATE,
-                    reference_audio=self.reference_audio,
-                    reference_sr=KOKORO_SAMPLE_RATE,
-                )
-            except Exception:
-                logging.exception("Prosody computation failed; showing the result without charts:")
-                result.prosody = {}
+            result.prosody = self._compute_prosody_safe(self.reference_audio,
+                                                         KOKORO_SAMPLE_RATE)
             self.root.after(0, self.view.show_feedback, result, self.current_phrase,
                             self._has_user_recording())
         except Exception:
@@ -985,20 +1017,8 @@ class PronunciationTrainerGUI:
             elapsed_ms = (time.perf_counter() - analyze_start) * 1000
             logging.info(f"Pronunciation analysis done in {elapsed_ms:.0f}ms. Score={result.score}")
 
-            # Prosody is the engine-agnostic audio layer: compute it here from the
-            # same waveforms so the charts work identically across engines. A
-            # prosody failure must not discard the completed analysis - the
-            # score is already valid, so degrade to empty charts instead.
-            try:
-                result.prosody = prosody.compute_prosody(
-                    user_audio=audio,
-                    user_sr=config.AUDIO_SAMPLE_RATE,
-                    reference_audio=self.reference_audio,
-                    reference_sr=KOKORO_SAMPLE_RATE,
-                )
-            except Exception:
-                logging.exception("Prosody computation failed; showing the result without charts:")
-                result.prosody = {}
+            result.prosody = self._compute_prosody_safe(audio,
+                                                         config.AUDIO_SAMPLE_RATE)
 
             self.root.after(0, self.view.show_feedback, result, self.current_phrase,
                             self._has_user_recording())
