@@ -21,7 +21,24 @@ view shares no implicit namespace with the controller:
 import logging
 import platform
 import tkinter as tk
-from tkinter import ttk
+# ttkbootstrap is a drop-in replacement for tkinter.ttk (same widget classes,
+# modern flat themes). Aliased as ``ttk`` so every ttk.Combobox / ttk.Style
+# reference below keeps working unchanged.
+import ttkbootstrap as ttk
+from ttkbootstrap.style import Bootstyle
+
+# On import ttkbootstrap patches the constructors of the classic tk widgets
+# ("autostyle"): right after creation every widget is repainted with the base
+# theme's colors, discarding the explicit THEME bg/fg this view passes (buttons
+# turned theme-blue, the phrase label white, panels grey). This view themes
+# every classic widget itself, so the hook is unwanted globally - including for
+# widgets created inside libraries (scrolledtext internals, the FaceWidget
+# canvas), which the per-widget ``autostyle=False`` flag cannot reach. Only the
+# classic-widget hook is disabled; ttk widgets (the comboboxes) keep their
+# ttkbootstrap styling. Verified against ttkbootstrap 1.x internals - see the
+# version pin in requirements.txt.
+Bootstyle.update_tk_widget_style = staticmethod(lambda widget=None: None)
+
 from tkinter import scrolledtext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, Optional
@@ -32,6 +49,13 @@ from mimora.face_widget import FaceWidget
 # Resolved UI color palette (semantic name -> hex), selected by the
 # "color_theme" setting in settings.json; see config.py.
 THEME = config.THEME
+
+# ttkbootstrap base theme per Mimora color theme. The base theme supplies only
+# the ttk widget geometry/elements (combobox arrow, focus behaviour); every
+# visible color is still overridden from THEME in _apply_ttk_palette, so the
+# palette keeps coming from config/themes/ exactly as before.
+_BOOTSTRAP_THEMES = {"dark": "darkly", "light": "flatly"}
+BOOTSTRAP_THEME = _BOOTSTRAP_THEMES.get(config.COLOR_THEME, "darkly")
 
 if TYPE_CHECKING:  # only for the show_feedback annotation; no runtime import
     from pronunciation.common import PronunciationResult
@@ -99,13 +123,34 @@ class TrainerView:
         self._last_prosody = None
         self.setup_styles()
         self.build_ui()
+        # Second palette pass: the comboboxes created in build_ui made
+        # ttkbootstrap build its default TCombobox style, which can override
+        # the colors applied in setup_styles (see _apply_ttk_palette).
+        self._apply_ttk_palette()
 
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
     def setup_styles(self):
-        self.style = ttk.Style()
-        self.style.theme_use("clam")
+        # The first Style() instantiation applies the ttkbootstrap base theme
+        # (replacing the old ttk theme_use("clam")); later calls return the
+        # same singleton. All visible colors are then overridden from THEME.
+        self.style = ttk.Style(theme=BOOTSTRAP_THEME)
+        self._apply_ttk_palette()
+        # The popdown list is a classic Tk Listbox, themed via the option DB.
+        self.root.option_add("*TCombobox*Listbox.background", THEME["bg_panel"])
+        self.root.option_add("*TCombobox*Listbox.foreground", THEME["text_accent"])
+        self.root.option_add("*TCombobox*Listbox.selectBackground", THEME["bg_accent_active"])
+        self.root.option_add("*TCombobox*Listbox.selectForeground", THEME["text_bright"])
+
+    def _apply_ttk_palette(self):
+        """Apply the THEME colors to the ttk widget styles.
+
+        Called once before the widgets are built and once after: ttkbootstrap
+        builds a widget class's default style lazily when the first widget of
+        that class is created, which would overwrite configure() calls made
+        beforehand. The second pass makes the THEME colors win.
+        """
         self.style.configure("Vertical.TScrollbar",
                              gripcount=0,
                              background=THEME["bg_panel"],
@@ -127,11 +172,6 @@ class TrainerView:
                        foreground=[("readonly", THEME["text_accent"]),
                                    ("disabled", THEME["text_disabled"])],
                        arrowcolor=[("disabled", THEME["text_disabled"])])
-        # The popdown list is a classic Tk Listbox, themed via the option DB.
-        self.root.option_add("*TCombobox*Listbox.background", THEME["bg_panel"])
-        self.root.option_add("*TCombobox*Listbox.foreground", THEME["text_accent"])
-        self.root.option_add("*TCombobox*Listbox.selectBackground", THEME["bg_accent_active"])
-        self.root.option_add("*TCombobox*Listbox.selectForeground", THEME["text_bright"])
 
     def _make_button(self, parent, text, command, width=None):
         """Create a consistently styled themed button.
