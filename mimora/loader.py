@@ -115,6 +115,31 @@ def save_setting(path: Path, key: str, value, memory_dict: dict) -> bool:
     return True
 
 
+def reset_settings(path: Path, keys, memory_dict: dict) -> bool:
+    """Remove *keys* from the settings file, keeping every other key.
+
+    Companion to save_setting for the settings window's "Default" reset: with
+    the overrides gone, the built-in defaults (and the hardware-detection
+    layer) take effect again on the next start. The "_" comment keys and any
+    unknown keys are preserved. On success the in-memory *memory_dict* is
+    updated too. Failures are reported, never raised. Returns True on success.
+    """
+    data = read_json(path)
+    for key in keys:
+        data.pop(key, None)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+            fh.write("\n")
+    except OSError as exc:
+        print(f"[config] cannot write {path.name} ({exc}); settings not reset",
+              file=sys.stderr)
+        return False
+    for key in keys:
+        memory_dict.pop(key, None)  # keep the in-memory view consistent
+    return True
+
+
 def ensure_dir(path: Path) -> None:
     """Create *path* if missing (parents assumed to exist), idempotently."""
     path.mkdir(exist_ok=True)

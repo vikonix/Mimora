@@ -71,6 +71,7 @@ class ViewCallbacks:
     ``Callable[..., None]`` signatures for those.
     """
     on_open_practice_text: Callable[[], None]
+    on_settings_clicked: Callable[[], None]
     quit_app: Callable[[], None]
     on_gui_btn_press: Callable[[], None]
     on_gui_btn_release: Callable[[], None]
@@ -213,9 +214,18 @@ class TrainerView:
         tk.Label(header_frame, text="MIMORA • Pronunciation Trainer",
                  font=(FONT_FAMILY, 14, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
 
+        # Settings gear at the right edge of the header; the language chip sits
+        # just left of it. Opens the settings window (see main.py
+        # on_settings_clicked).
+        tk.Button(header_frame, text="⚙", command=self._cb.on_settings_clicked,
+                  font=(FONT_FAMILY, 12), bg=THEME["bg_main"], fg=THEME["text_dim"],
+                  activebackground=THEME["bg_accent_active"],
+                  activeforeground=THEME["text_bright"],
+                  bd=0, padx=6, pady=0, cursor="hand2").pack(side=tk.RIGHT)
+
         tk.Label(header_frame, text=config.TARGET_LANGUAGE,
                  font=(FONT_FAMILY, 9, "bold"), fg=THEME["text_dim"], bg=THEME["bg_panel"],
-                 padx=10, pady=4, bd=0).pack(side=tk.RIGHT)
+                 padx=10, pady=4, bd=0).pack(side=tk.RIGHT, padx=(0, 8))
 
         # 2. Status bar (absolute bottom)
         self.status_bar = tk.Frame(self.root, bg=THEME["bg_panel"], height=30)
@@ -727,6 +737,37 @@ class TrainerView:
 
     def get_speed_label(self) -> str:
         return self.playback_speed.get()
+
+    # ------------------------------------------------------------------
+    # Write accessors (controller pushes settings-window changes into the
+    # main-window controls; pure value updates, no callbacks fire)
+    # ------------------------------------------------------------------
+    def set_user_name(self, name: str):
+        self.user_name_var.set(name)
+
+    def set_voice(self, voice: str):
+        self.voice_var.set(voice)
+
+    def set_length_mode(self, mode: str):
+        """Set the length selector from the persisted mode ('full'/'fragment')."""
+        self.length_var.set(LENGTH_FEW_WORDS if mode == "fragment" else LENGTH_FULL)
+
+    def set_translation_language(self, language: str):
+        self.translation_var.set(language)
+        self.translation_selector.set(language)  # readonly combobox repaint
+
+    def set_show_face(self, flag: bool):
+        self.show_face.set(bool(flag))
+
+    def set_show_pitch(self, flag: bool):
+        self.show_f0.set(bool(flag))
+
+    def set_show_energy(self, flag: bool):
+        self.show_energy.set(bool(flag))
+
+    def set_speed(self, speed: float):
+        """Set the reference-speed selector from a plain float (e.g. 1.0)."""
+        self.playback_speed.set(f"{float(speed):.1f}×")
 
     def is_reference_enabled(self) -> bool:
         """True when the Reference replay button is currently clickable."""

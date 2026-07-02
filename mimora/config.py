@@ -69,6 +69,39 @@ for _key in _USER:
         print(f"[config] settings.json: unknown key {_key!r} ignored",
               file=sys.stderr)
 
+# Built-in default for every user key, mirroring the fallback literals used
+# throughout this module (keep the two in sync - tests/test_settings_fields.py
+# pins the key set). Consumed by the settings window's "Default" reset, which
+# removes all overrides from settings.json and applies these live. None means
+# "no fixed literal": voice follows the accent's default voice, and
+# external_n_ctx is machine-derived by hardware detection (restart applies it).
+USER_SETTING_DEFAULTS = {
+    "engine": "phoneme",
+    "english_accent": "american",
+    "voice": None,
+    "color_theme": "dark",
+    "pronunciation_score_threshold": 70.0,
+    "phoneme_good_mode": "global",
+    "max_record_seconds": 20,
+    "llm_backend": "local_server",
+    "external_model_path": "models/llama-3.2-3b-instruct-q4_k_m.gguf",
+    "external_n_ctx": None,
+    "practice_text_file": "texts/practice_text.txt",
+    "phrase_gen_window_sentences": 5,
+    "phrase_gen_window_repeats": 5,
+    "user_name": "",
+    "phrase_length": "full",
+    "reference_speed": 1.0,
+    "save_recordings": False,
+    "show_pitch_chart": True,
+    "show_energy_chart": True,
+    "show_face": True,
+    "silence_timeout": 3.0,
+    "silence_threshold": 0.01,
+    "translation_language": "",
+    "warm_up": False,
+}
+
 
 # Validated accessors for settings.json values. The loader functions are pure
 # (they take the parsed dict as their first argument); binding _USER - and
@@ -76,6 +109,63 @@ for _key in _USER:
 _num = partial(loader.user_number, _USER)
 _path = partial(loader.user_path, _USER, BASE_DIR)
 _bool = partial(loader.user_bool, _USER)
+
+
+def user_setting(key: str, fallback):
+    """The value currently stored in settings.json for *key*, else *fallback*.
+
+    save_user_setting keeps the in-memory _USER view current, so this reflects
+    every change made during the session - including restart-only settings the
+    running constants do not pick up. The settings window reads through this so
+    a reopened window shows what is saved, not what this run started with.
+
+    Falls back on None ("voice": null means "accent default") and on a value
+    whose type does not match the fallback's - a hand-edited settings.json can
+    hold anything, and the caller expects the fallback's type (mirrors the
+    per-type checks the loader helpers apply to the constants).
+    """
+    value = _USER.get(key)
+    if value is None:
+        return fallback
+    if isinstance(fallback, bool):
+        return value if isinstance(value, bool) else fallback
+    if isinstance(fallback, (int, float)):
+        # bool is a subclass of int - exclude it, as loader.user_number does.
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            return value
+        return fallback
+    if isinstance(fallback, str):
+        return value if isinstance(value, str) else fallback
+    return value
+
+
+def reset_user_settings() -> bool:
+    """Remove every known user key from settings.json ("Default" reset).
+
+    The overrides are gone from both the file and the in-memory _USER view, so
+    user_setting() immediately starts reporting fallbacks and the next start
+    runs on the built-in defaults plus hardware detection. Returns True on
+    success.
+    """
+    return loader.reset_settings(CONFIG_DIR / "settings.json",
+                                 _KNOWN_USER_KEYS, _USER)
+
+
+def default_user_settings() -> dict:
+    """Resolved built-in defaults, ready to apply live after a reset.
+
+    Resolves the None placeholders in USER_SETTING_DEFAULTS where possible
+    (voice -> the default accent's default voice) and makes the path defaults
+    absolute; keys with no resolvable literal (external_n_ctx) are omitted -
+    hardware detection supplies them on the next start.
+    """
+    values = {key: value for key, value in USER_SETTING_DEFAULTS.items()
+              if value is not None}
+    values["voice"] = accent_default_voice(
+        USER_SETTING_DEFAULTS["english_accent"])
+    values["practice_text_file"] = str(BASE_DIR / values["practice_text_file"])
+    values["external_model_path"] = str(BASE_DIR / values["external_model_path"])
+    return values
 
 
 def save_user_setting(key: str, value) -> bool:
@@ -170,8 +260,9 @@ DEVICE = loader.detect_device(_HW.get("DEVICE"))
 # Backend selection, read from settings.json ("llm_backend"):
 #   "lm-studio"    - external LM Studio app (must be running separately)
 #   "local_server" - llm_server.py started automatically as a subprocess
+LLM_BACKEND_CHOICES = ("local_server", "lm-studio")
 LLM_BACKEND = _USER.get("llm_backend", "local_server")
-if LLM_BACKEND not in ("local_server", "lm-studio"):
+if LLM_BACKEND not in LLM_BACKEND_CHOICES:
     print(f"[config] settings.json: unknown llm_backend {LLM_BACKEND!r} "
           f"(expected 'local_server' or 'lm-studio'); using 'local_server'",
           file=sys.stderr)
@@ -254,6 +345,31 @@ _ACCENT_PROFILES = {
     },
 }
 
+def accent_choices() -> tuple:
+    """Accent names selectable in the UI, in their definition order."""
+    return tuple(_ACCENT_PROFILES)
+
+
+def accent_voices(accent: str) -> tuple:
+    """Voices belonging to *accent*, or () for an unknown accent.
+
+    Public accessor for the settings window: it lets the voice list follow the
+    accent selector without reaching into the private _ACCENT_PROFILES dict.
+    """
+    profile = _ACCENT_PROFILES.get(accent)
+    return tuple(profile["voices"]) if profile else ()
+
+
+def accent_default_voice(accent: str) -> str:
+    """Default voice of *accent*, or "" for an unknown accent.
+
+    Used when the accent selector changes: the persisted voice must belong to
+    the newly selected accent, so it is reset to that accent's default.
+    """
+    profile = _ACCENT_PROFILES.get(accent)
+    return profile["default_voice"] if profile else ""
+
+
 # A typo in the hand-edited settings.json must not crash startup - warn and
 # fall back to the default accent instead.
 # (isinstance guards the dict lookup: an unhashable value such as a list
@@ -315,11 +431,11 @@ if REFERENCE_SPEED not in REFERENCE_SPEED_CHOICES:
 #                 compares the takes by ear)
 # The dispatcher (mimora/engine.py) binds one backend at startup; only that engine's
 # models are loaded. Changing the engine requires a restart.
-_ENGINES = ("phoneme", "acoustic", "none")
+ENGINE_CHOICES = ("phoneme", "acoustic", "none")
 ENGINE = _USER.get("engine", "phoneme")
-if not isinstance(ENGINE, str) or ENGINE not in _ENGINES:
+if not isinstance(ENGINE, str) or ENGINE not in ENGINE_CHOICES:
     print(f"[config] settings.json: unknown engine {ENGINE!r} "
-          f"(expected one of {_ENGINES}); using 'phoneme'", file=sys.stderr)
+          f"(expected one of {ENGINE_CHOICES}); using 'phoneme'", file=sys.stderr)
     ENGINE = "phoneme"
 
 # GOOD-anchor mode for the phoneme engine (see pronunciation/phoneme/config.py),
@@ -331,8 +447,9 @@ if not isinstance(ENGINE, str) or ENGINE not in _ENGINES:
 #               distance, so a flawless read maps to 100 for each phrase. Costs an
 #               extra recognizer pass over the reference per phrase and shifts
 #               scores away from the global anchor the buckets were calibrated for.
+PHONEME_GOOD_MODE_CHOICES = ("global", "ceiling")
 PHONEME_GOOD_MODE = _USER.get("phoneme_good_mode", "global")
-if PHONEME_GOOD_MODE not in ("global", "ceiling"):
+if PHONEME_GOOD_MODE not in PHONEME_GOOD_MODE_CHOICES:
     print(f"[config] settings.json: phoneme_good_mode must be 'global' or "
           f"'ceiling', got {PHONEME_GOOD_MODE!r}; using 'global'", file=sys.stderr)
     PHONEME_GOOD_MODE = "global"
@@ -405,8 +522,9 @@ PHRASE_GEN_FRAGMENT_MAX_TOKENS = 16
 # Phrase length selected in the UI ("phrase_length"), persisted on change:
 # "full" → complete sentence, "fragment" → 2-4 word fragment (see
 # LLMManager.generate_phrase).
+PHRASE_LENGTH_CHOICES = ("full", "fragment")
 PHRASE_LENGTH = _USER.get("phrase_length", "full")
-if PHRASE_LENGTH not in ("full", "fragment"):
+if PHRASE_LENGTH not in PHRASE_LENGTH_CHOICES:
     print(f"[config] settings.json: phrase_length must be 'full' or "
           f"'fragment', got {PHRASE_LENGTH!r}; using 'full'", file=sys.stderr)
     PHRASE_LENGTH = "full"
@@ -531,6 +649,22 @@ _DARK_THEME = {
     "mic_processing_bg": "#36220f",
     "mic_speaking_bg": "#0f2c1d",
 }
+
+def available_themes() -> tuple:
+    """Theme names selectable in the UI, discovered from config/themes/.
+
+    Every ``<name>_schema.json`` file is one theme; the built-in "dark" palette
+    is always included even without a schema file (see the fallback logic
+    below). Sorted for a stable selector order.
+    """
+    names = {"dark"}
+    try:
+        for schema in (CONFIG_DIR / "themes").glob("*_schema.json"):
+            names.add(schema.name[: -len("_schema.json")])
+    except OSError:
+        pass  # unreadable themes dir - the built-in dark theme still works
+    return tuple(sorted(names))
+
 
 COLOR_THEME = _USER.get("color_theme", "dark")
 if not isinstance(COLOR_THEME, str) or not COLOR_THEME.strip():

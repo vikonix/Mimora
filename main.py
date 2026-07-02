@@ -16,6 +16,7 @@ the whole app. Run this module to start the trainer:
     python main.py
 """
 
+import subprocess
 import time
 import threading
 from typing import Optional
@@ -94,6 +95,11 @@ from mimora.recorder import (
 # directly, so switching is a single settings.json flip.
 from mimora import engine
 from mimora.ui import TrainerView, ViewCallbacks, LENGTH_FEW_WORDS
+from mimora.settings_window import (
+    PREVIEW_PHRASE,
+    SettingsCallbacks,
+    SettingsWindow,
+)
 
 # Configure comprehensive events logging (console + file). force=True replaces
 # any handlers auto-installed by logging calls during the imports above (e.g.
@@ -245,8 +251,16 @@ class PronunciationTrainerGUI:
         # Compose the view: it builds and owns the widgets, and forwards widget
         # callbacks back to this controller through an explicit ViewCallbacks
         # bundle (the view never holds the controller itself).
+        # Settings window (mimora/settings_window.py); at most one instance,
+        # created on demand by on_settings_clicked. _suppress_persist is set
+        # only while on_reset_settings re-applies the defaults (see
+        # _persist_setting); written and read on the Tk main thread only.
+        self._settings_window: Optional[SettingsWindow] = None
+        self._suppress_persist = False
+
         self.view = TrainerView(self.root, ViewCallbacks(
             on_open_practice_text=self.on_open_practice_text,
+            on_settings_clicked=self.on_settings_clicked,
             quit_app=self.quit_app,
             on_gui_btn_press=self.on_gui_btn_press,
             on_gui_btn_release=self.on_gui_btn_release,
@@ -416,7 +430,19 @@ class PronunciationTrainerGUI:
         self.root.focus_set()
         if not path:
             return  # dialog cancelled
+        self._load_practice_file(path)
 
+    def _load_practice_file(self, path: str):
+        """Load *path* into the source panel and persist it (main thread).
+
+        Shared by the File menu (on_open_practice_text) and the settings
+        window's practice-file picker, so both apply the file immediately and
+        store the same settings.json value. A relative *path* (the stored
+        settings.json form) is resolved against the project root, matching the
+        loader convention.
+        """
+        if not os.path.isabs(path):
+            path = str(config.BASE_DIR / path)
         try:
             with open(path, "r", encoding="utf-8") as f:
                 text = f.read().strip()
@@ -440,6 +466,10 @@ class PronunciationTrainerGUI:
         except ValueError:
             saved = path  # outside the project - keep the absolute path
         self._persist_setting("practice_text_file", saved)
+        # Keep the runtime view current for load_practice_text and the file
+        # dialog's initialdir; the settings window reads the persisted value.
+        config.PRACTICE_TEXT_FILE = str(path)
+        self._sync_settings_window("practice_text_file", saved)
 
     def make_app_ready(self):
         self.app_ready = True
@@ -494,10 +524,20 @@ class PronunciationTrainerGUI:
         except AttributeError:
             return ""
 
-    def _persist_setting(self, key: str, value):
-        """Save one UI setting to settings.json, reporting failure in the UI."""
-        if not config.save_user_setting(key, value):
-            self.view.append_error_msg(f"Could not save {key} to settings.json.")
+    def _persist_setting(self, key: str, value) -> bool:
+        """Save one UI setting to settings.json, reporting failure in the UI.
+
+        No-op while _suppress_persist is set (the "Default" reset just removed
+        every override from settings.json; the handlers re-run to apply the
+        default values live and must not write them back as overrides).
+        Returns True on success (or when suppressed).
+        """
+        if self._suppress_persist:
+            return True
+        if config.save_user_setting(key, value):
+            return True
+        self.view.append_error_msg(f"Could not save {key} to settings.json.")
+        return False
 
     def on_voice_changed(self, event=None):
         """Regenerate the phrase with the newly chosen voice.
@@ -508,6 +548,7 @@ class PronunciationTrainerGUI:
         """
         logging.info(f"Reference voice changed to {self._selected_voice()}.")
         self._persist_setting("voice", self._selected_voice())
+        self._sync_settings_window("voice", self._selected_voice())
         # Return focus to the window so the spacebar record toggle keeps working.
         self.root.focus_set()
         if self.app_ready and not self.is_generating:
@@ -536,16 +577,16 @@ class PronunciationTrainerGUI:
         name = self.view.get_user_name()
         if name == self._saved_user_name:
             return  # unchanged - don't rewrite the file
-        if config.save_user_setting("user_name", name):
+        if self._persist_setting("user_name", name):
             self._saved_user_name = name
             logging.info(f"User name saved: {name!r}.")
-        else:
-            self.view.append_error_msg("Could not save the user name to settings.json.")
+            self._sync_settings_window("user_name", name)
 
     def on_length_changed(self, event=None):
         """Regenerate the phrase when the desired length changes."""
         logging.info(f"Phrase length changed to {self.view.get_length_label()!r}.")
         self._persist_setting("phrase_length", self._selected_length())
+        self._sync_settings_window("phrase_length", self._selected_length())
         # Reconcile the translation panel and selector. Fragments are translated
         # too, so the length mode does not affect them; this is a consistency
         # refresh, not a mode switch.
@@ -566,6 +607,7 @@ class PronunciationTrainerGUI:
         language = self.view.get_translation_language()
         logging.info(f"Translation language changed to {language!r}.")
         self._persist_setting("translation_language", language)
+        self._sync_settings_window("translation_language", language)
         # The cached translation belonged to the previous language, so drop it and
         # blank the panel to "-"; the next generated phrase fills it for the new
         # language (translations are applied to the next phrase, like voice/length).
@@ -589,11 +631,163 @@ class PronunciationTrainerGUI:
                                 or self.view.get_show_energy())
         self._persist_setting("show_pitch_chart", self.view.get_show_pitch())
         self._persist_setting("show_energy_chart", self.view.get_show_energy())
+        self._sync_settings_window("show_pitch_chart", self.view.get_show_pitch())
+        self._sync_settings_window("show_energy_chart", self.view.get_show_energy())
 
     def on_show_face_toggled(self):
         """Apply the face checkbox (show/hide the panel) and persist it."""
         self.view.toggle_face()
         self._persist_setting("show_face", self.view.get_show_face())
+        self._sync_settings_window("show_face", self.view.get_show_face())
+
+    # ------------------------------------------------------------------
+    # Settings window (mimora/settings_window.py)
+    # ------------------------------------------------------------------
+    # settings.json key -> (config attribute, cast) for settings that the
+    # runtime re-reads from the config module on every use (recorder loop,
+    # phrase generator, recording dumps). Updating the attribute applies the
+    # change immediately; everything else in _RESTART-marked fields waits for
+    # a restart because it was bound at startup.
+    _LIVE_CONFIG_ATTRS = {
+        "save_recordings": ("SAVE_RECORDINGS", bool),
+        "max_record_seconds": ("MAX_RECORD_SECONDS", float),
+        "silence_timeout": ("SILENCE_TIMEOUT", float),
+        "silence_threshold": ("SILENCE_THRESHOLD", float),
+        "phrase_gen_window_sentences": ("PHRASE_GEN_WINDOW_SENTENCES", int),
+        "phrase_gen_window_repeats": ("PHRASE_GEN_WINDOW_REPEATS", int),
+    }
+
+    def on_settings_clicked(self):
+        """Open the settings window, or raise the one already open."""
+        if self._settings_window is not None and self._settings_window.exists():
+            self._settings_window.lift()
+            return
+        self._settings_window = SettingsWindow(self.root, SettingsCallbacks(
+            on_setting_changed=self.on_setting_changed,
+            on_preview_voice=self.on_preview_voice,
+            on_restart_requested=self.restart_app,
+            on_reset_settings=self.on_reset_settings,
+        ))
+
+    def _sync_settings_window(self, key: str, value):
+        """Mirror a main-window setting change into the settings window.
+
+        No-op when the window is closed. set_value never re-emits, so a change
+        that originated in the settings window cannot loop back through here.
+        """
+        window = self._settings_window
+        if window is not None and window.exists():
+            window.set_value(key, value)
+
+    def on_setting_changed(self, key: str, value):
+        """Apply one settings-window change (Tk main thread).
+
+        Keys that also have a main-window control are routed through that
+        control's own handler (which persists and applies), so both windows
+        always behave identically. Keys the runtime re-reads are persisted and
+        applied via _LIVE_CONFIG_ATTRS. Restart-only keys are just persisted -
+        the settings window shows the pending-restart hint for them.
+        """
+        if key == "user_name":
+            self.view.set_user_name(value)
+            self.on_user_name_changed()
+        elif key == "voice":
+            if value in config.KOKORO_VOICES:
+                self.view.set_voice(value)
+                self.on_voice_changed()
+            else:
+                # A voice of the other (not yet active) accent: valid only
+                # after restarting into that accent, so only persist it.
+                self._persist_setting("voice", value)
+        elif key == "phrase_length":
+            self.view.set_length_mode(value)
+            self.on_length_changed()
+        elif key == "translation_language":
+            self.view.set_translation_language(value)
+            self.on_translation_language_changed()
+        elif key == "show_face":
+            self.view.set_show_face(value)
+            self.on_show_face_toggled()
+        elif key in ("show_pitch_chart", "show_energy_chart"):
+            if key == "show_pitch_chart":
+                self.view.set_show_pitch(value)
+            else:
+                self.view.set_show_energy(value)
+            self.on_prosody_charts_toggled()
+        elif key == "reference_speed":
+            # Settings-window origin only ("Default" reset / Cancel revert):
+            # update the selector without replaying the reference, unlike the
+            # main-window on_speed_changed which replays to demo the change.
+            self.view.set_speed(float(value))
+            self._persist_setting(key, value)
+        elif key == "practice_text_file":
+            self._load_practice_file(value)
+        else:
+            self._persist_setting(key, value)
+            live = self._LIVE_CONFIG_ATTRS.get(key)
+            if live is not None:
+                attr, cast = live
+                setattr(config, attr, cast(value))
+                logging.info(f"Applied live setting config.{attr} = {value!r}.")
+
+    def on_reset_settings(self) -> bool:
+        """Reset every user setting to its default ("Default" button).
+
+        Two steps, matching the chosen semantics: first every override is
+        removed from settings.json (defaults live in the code, so an empty
+        file IS the default state), then the known default values are pushed
+        through the normal on_setting_changed dispatch to take effect live -
+        with persistence suppressed, so the applied defaults are not written
+        straight back as overrides. Returns True on success.
+        """
+        if not config.reset_user_settings():
+            self.view.append_error_msg("Could not reset settings.json.")
+            return False
+        logging.info("Settings reset to defaults; applying live values.")
+        self._suppress_persist = True
+        try:
+            for key, value in config.default_user_settings().items():
+                self.on_setting_changed(key, value)
+        finally:
+            self._suppress_persist = False
+        return True
+
+    def on_preview_voice(self, voice: str):
+        """Speak the preview phrase with *voice* (settings-window Listen button).
+
+        Gated like the other playback actions: never into an open microphone,
+        never during generation or analysis. Only voices of the active accent
+        can be previewed (the Kokoro pipeline speaks one accent per run); the
+        settings window disables the button otherwise, this check is the
+        thread-safe backstop.
+        """
+        if not self.app_ready or self.is_generating:
+            return
+        if voice not in config.KOKORO_VOICES:
+            return
+        if self.recorder.is_active():
+            return
+        with self.processing_lock:
+            if self.is_processing_audio:
+                return
+        self.stop_playback()
+        stop_event = self._new_playback_event()
+        self.view.playing_status(f"Previewing {voice}...")
+        threading.Thread(target=self._preview_voice_worker,
+                         args=(voice, stop_event), daemon=True).start()
+
+    def _preview_voice_worker(self, voice: str, stop_event: threading.Event):
+        """Synthesize and play the preview phrase. (Background thread.)"""
+        try:
+            audio = self.tts_mgr.synthesize(PREVIEW_PHRASE, voice=voice)
+            if audio.size > 0:
+                self._play_with_face(audio, KOKORO_SAMPLE_RATE, stop_event)
+        except Exception:
+            logging.exception("Voice preview error:")
+            self.root.after(0, self.view.append_error_msg,
+                            f"Could not preview voice {voice}.")
+        finally:
+            self.root.after(0, self._playback_finished, stop_event)
 
     def on_generate_phrase(self):
         if not self.app_ready or self.is_generating:
@@ -1175,38 +1369,39 @@ class PronunciationTrainerGUI:
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
-    def quit_app(self):
-        if self._closing:
-            return  # Escape and the window-close button can both land here
-        self._closing = True
-        logging.info("Shutting down Mimora...")
+    def _shutdown_runtime(self):
+        """Release the external resources before the process goes away.
+
+        Shared by quit_app and restart_app. Stops playback, ends a recording
+        in progress (so the capture thread exits its loop and closes the input
+        stream), and kills the local LLM server subprocess - the hard exit
+        below does NOT terminate children, so without this the llama_cpp
+        server would leak, keep holding VRAM, and (on restart) still occupy
+        the server port the new process needs.
+        """
         self.shutdown_event.set()
         self.stop_playback()
-
-        # Stop a recording in progress so the capture thread exits its loop and
-        # closes the input stream before the process goes away.
         self.recorder.stop()
         self.recorder.join()
-
-        # Kill the local LLM server subprocess now: os._exit (below) does NOT
-        # terminate children, so without this the llama_cpp server would leak
-        # and keep holding VRAM after we exit.
         self.llm_server.shutdown()
 
-        # Hard-exit immediately on the main thread instead of via root.destroy()
-        # + the interpreter's normal finalization. With CUDA + PyTorch loaded,
-        # the native CUDA context is torn down while still live and crashes
-        # inside the C extensions, surfacing as Windows exit code 0xC0000409
-        # (STATUS_STACK_BUFFER_OVERRUN) with no Python traceback.
-        #
-        # os._exit is NOT enough on Windows: it maps to ExitProcess, which still
-        # runs DLL_PROCESS_DETACH for every loaded DLL - and the CUDA runtime's
-        # detach is exactly what crashes. TerminateProcess ends the process at
-        # the OS level without running any DLL detach handlers, so that crash
-        # never runs. The external resources that actually need releasing - the
-        # mic stream and the LLM subprocess - were handled just above; logs are
-        # flushed here first. os._exit is the fallback for non-Windows.
-        logging.info("quit_app: cleanup done, hard-exiting now.")
+    def _hard_exit(self):
+        """End the process immediately, bypassing interpreter finalization.
+
+        Hard-exit on the main thread instead of via root.destroy() + the
+        interpreter's normal finalization. With CUDA + PyTorch loaded, the
+        native CUDA context is torn down while still live and crashes inside
+        the C extensions, surfacing as Windows exit code 0xC0000409
+        (STATUS_STACK_BUFFER_OVERRUN) with no Python traceback.
+
+        os._exit is NOT enough on Windows: it maps to ExitProcess, which still
+        runs DLL_PROCESS_DETACH for every loaded DLL - and the CUDA runtime's
+        detach is exactly what crashes. TerminateProcess ends the process at
+        the OS level without running any DLL detach handlers, so that crash
+        never runs. The external resources that actually need releasing were
+        handled by _shutdown_runtime; logs are flushed here first. os._exit is
+        the fallback for non-Windows.
+        """
         logging.shutdown()
         if sys.platform == "win32":
             import ctypes
@@ -1223,6 +1418,74 @@ class PronunciationTrainerGUI:
             kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
             kernel32.TerminateProcess(kernel32.GetCurrentProcess(), 0)
         os._exit(0)
+
+    def quit_app(self):
+        if self._closing:
+            return  # Escape and the window-close button can both land here
+        self._closing = True
+        logging.info("Shutting down Mimora...")
+        self._shutdown_runtime()
+        logging.info("quit_app: cleanup done, hard-exiting now.")
+        self._hard_exit()
+
+    def restart_app(self):
+        """Relaunch the app in a new process (settings-window restart).
+
+        Applies restart-only settings without the user quitting and starting
+        the app by hand: the same cleanup as quit_app runs first (crucially
+        freeing the LLM server port for the new process), then a detached
+        replacement process is spawned and this one hard-exits.
+        subprocess.Popen is used instead of os.execv: on Windows execv detaches
+        the console under some launchers and mangles arguments with spaces.
+
+        The replacement must not share the dying parent's console/stdio: when
+        launched from an IDE, the IDE closes those pipes as soon as the parent
+        exits and the child's first print would crash with [Errno 22] (the
+        same failure mode the module-top comment describes for os.execv). So
+        stdio is pointed at DEVNULL - the app logs to logs/main.log anyway -
+        and on Windows the child is detached from the console and, when the
+        launcher allows it, broken out of the IDE's job object so "stop" in
+        the IDE cannot kill the restarted app.
+        """
+        if self._closing:
+            return
+        self._closing = True
+        logging.info("Restarting Mimora to apply changed settings...")
+        self._shutdown_runtime()
+        try:
+            command = [sys.executable] + sys.argv
+            logging.info(f"Relaunching: {command}")
+            popen_kwargs = {
+                "cwd": os.getcwd(),
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+            }
+            if sys.platform == "win32":
+                flags = (subprocess.DETACHED_PROCESS
+                         | subprocess.CREATE_NEW_PROCESS_GROUP)
+                try:
+                    # Escape the launcher's job object (IDEs kill the whole
+                    # tree on stop). Denied by some jobs - retry without.
+                    subprocess.Popen(
+                        command,
+                        creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB,
+                        **popen_kwargs)
+                except OSError:
+                    logging.info("Job breakaway denied; relaunching attached "
+                                 "to the current job.")
+                    subprocess.Popen(command, creationflags=flags,
+                                     **popen_kwargs)
+            else:
+                # POSIX: a new session detaches from the controlling terminal.
+                subprocess.Popen(command, start_new_session=True,
+                                 **popen_kwargs)
+        except OSError:
+            # The old process must still exit cleanly - the user can relaunch
+            # by hand, which is exactly what a failed restart degrades to.
+            logging.exception("Relaunch failed; exiting without a new process:")
+        logging.info("restart_app: cleanup done, hard-exiting now.")
+        self._hard_exit()
 
     def run(self):
         self.root.mainloop()
