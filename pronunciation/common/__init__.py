@@ -40,6 +40,10 @@ class PronunciationResult:
     transcription: str                            # what the recognizer produced
     passed: bool = False                          # acoustic: score >= threshold; phoneme: bucket >= pass_bucket
     feedback: str = ""                            # human-readable summary
+    # scored: False when the engine performed no scoring at all (the "none"
+    # engine). The GUI then shows a neutral "scoring off" read-out instead of a
+    # verdict - score/passed carry no meaning for an unscored result.
+    scored: bool = True
 
     # --- Coarse 0-5 score (phoneme engine). ---
     # bucket: calibrated 0-5 grade of ``score`` (the GUI shows this instead of the raw

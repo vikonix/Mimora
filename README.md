@@ -250,7 +250,7 @@ Mimora is built on the SpeakLoop voice-tutor stack. Its default **phoneme** scor
 | File | Responsibility |
 |---|---|
 | `main.py` | `PronunciationTrainerGUI` - Tkinter GUI, recording, the Prompt→Record→Analyze→Feedback→Loop state machine, threading orchestration, LLM-server subprocess management. |
-| `mimora/engine.py` | Engine dispatcher - binds the backend chosen by `ENGINE` (`phoneme` default, `acoustic` alternative) and exposes one `analyze(...)` interface, so `main.py` is engine-agnostic. |
+| `mimora/engine.py` | Engine dispatcher - binds the backend chosen by `ENGINE` (settings.json `"engine"`: `phoneme` default, `acoustic` alternative, `none` = scoring off for slow machines) and exposes one `analyze(...)` interface, so `main.py` is engine-agnostic. |
 | `mimora/prosody.py` | Engine-agnostic prosody layer: F0/energy contour extraction (no torch). Computed in `main.py` from the raw user/reference audio so the pitch/energy charts work the same across engines. |
 | `mimora/tts.py` | `TTSManager` - Kokoro TTS. `synthesize()` returns the waveform; `play_array()` plays any waveform (reference at 24 kHz, your recording at 16 kHz). `loudness_envelope()` precomputes the per-frame mouth-openness track used by the face. |
 | `mimora/face_widget.py` | `FaceWidget` - schematic articulation face (Tk Canvas). Talking mouth driven from a precomputed loudness track while audio plays; smiley reflecting the score when idle. Stdlib `tkinter` only. |

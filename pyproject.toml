@@ -23,6 +23,7 @@ packages = [
     "pronunciation",
     "pronunciation.acoustic",
     "pronunciation.common",
+    "pronunciation.none",
     "pronunciation.phoneme",
 ]
 

@@ -6,6 +6,8 @@
   "english_accent": "american",
   "_voice": "Default TTS voice; null means the accent's default (af_heart / bf_emma). Must belong to the selected accent. American: af_heart, af_bella, af_nicole, af_sarah, af_sky, am_adam, am_michael, am_echo, am_eric, am_liam. British: bf_emma, bf_alice, bf_isabella, bf_lily, bm_george, bm_daniel, bm_fable, bm_lewis.",
   "voice": null,
+  "_engine": "Pronunciation engine: 'phoneme' (default; espeak reference + phoneme ASR), 'acoustic' (Wav2Vec2 embeddings + DTW), or 'none' (scoring off: skips the ~1.2 GB recognizer entirely, every take is accepted - for slow machines; compare the takes by ear). Restart to apply.",
+  "engine": "phoneme",
   "_pronunciation_score_threshold": "Score (0-100) at or above which an attempt is accepted; lower = more forgiving.",
   "pronunciation_score_threshold": 70.0,
   "_phoneme_good_mode": "Phoneme-engine GOOD anchor: 'global' (one calibrated anchor for all phrases; the default the 0-5 buckets were calibrated under) or 'ceiling' (per-phrase anchor from the reference audio, so a flawless read maps to 100 per phrase; costs an extra recognizer pass and shifts scores off the bucket calibration). Only used when the phoneme engine is active.",

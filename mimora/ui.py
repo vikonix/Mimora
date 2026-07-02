@@ -1127,6 +1127,12 @@ class TrainerView:
     # ------------------------------------------------------------------
     def show_feedback(self, result: "PronunciationResult", current_phrase,
                       has_recording: bool = True):
+        # An unscored result (the "none" engine) has no verdict to present:
+        # score/passed carry no meaning, so render the neutral read-out instead
+        # of a quality label that would pretend the take was judged.
+        if not getattr(result, "scored", True):
+            self._show_unscored_feedback(result, current_phrase, has_recording)
+            return
         # One consistent presentation for the whole result, so the score read-out,
         # quality label, face and the passed/try-again line never contradict each
         # other. The phoneme engine grades into a calibrated 0-5 bucket that also
@@ -1221,3 +1227,41 @@ class TrainerView:
             self.update_instruction("Nice! Click 'New phrase' to continue, or repeat to refine.")
         else:
             self.update_instruction("Try again: press SPACE or click the mic to repeat. ▶ Reference replays the example.")
+
+    def _show_unscored_feedback(self, result: "PronunciationResult", current_phrase,
+                                has_recording: bool):
+        """Feedback for an unscored take (``result.scored`` is False; "none" engine).
+
+        Keeps everything that does not depend on scoring - the phrase line, the
+        prosody charts (still computed by the host from the raw waveforms) and
+        re-enabling the controls - and shows neutral placeholders where a verdict
+        would go, so this mode never pretends the take was judged.
+        """
+        self.face.set_expression("neutral")
+        self.feedback_display.configure(state=tk.NORMAL)
+        # Same result-separator convention as show_feedback (see the comment there).
+        if self.feedback_display.get("1.0", "end-1c"):
+            self.feedback_display.insert(tk.END, "\n\n")
+        self.feedback_display.insert(tk.END, "Phrase: ", "label")
+        for token in (current_phrase or "-").split():
+            self.feedback_display.insert(tk.END, token + " ", "text")
+        self.feedback_display.insert(tk.END, "\n")
+        self.feedback_display.insert(tk.END, "Heard: ", "label")
+        self.feedback_display.insert(tk.END, "scoring is off - compare the takes by ear", "text")
+        self.feedback_display.configure(state=tk.DISABLED)
+        self.feedback_display.see(tk.END)
+
+        # Prosody still works without scoring; cache and draw it as usual.
+        self._last_prosody = result.prosody or {}
+        self.root.update_idletasks()  # ensure the canvases have a real width/height
+        self._redraw_prosody()
+
+        # Neutral score placeholder (same style clear_previous_result uses).
+        self.stats_label.configure(text="Score: - (-)", fg=THEME["text_dim"])
+
+        self._set_actions(generate=True, reference=True, user=has_recording, test=True)
+        self.draw_mic_button("idle")
+
+        self.update_status("Recorded (scoring off)", THEME["text_dim"])
+        self.update_instruction("Compare by ear: ▶ Reference and ▶ My recording, "
+                                "then repeat or click 'New phrase' to continue.")

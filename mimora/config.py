@@ -39,6 +39,7 @@ if not isinstance(_HW, dict):
 _USER = loader.read_json(CONFIG_DIR / "settings.json")
 
 _KNOWN_USER_KEYS = {
+    "engine",
     "english_accent",
     "voice",
     "color_theme",
@@ -304,13 +305,22 @@ if REFERENCE_SPEED not in REFERENCE_SPEED_CHOICES:
 # =====================================================================
 # Pronunciation Analysis (Wav2Vec2) Settings
 # =====================================================================
-# Pronunciation engine selection. Set here in code (not exposed in settings.json),
-# since it's a developer/build choice rather than an end-user preference:
+# Pronunciation engine selection, read from settings.json ("engine"). Exposed as a
+# user setting so scoring can be turned off on slow machines without code edits:
+#   "phoneme"  -> pronunciation/phoneme/   (espeak reference + phoneme ASR + edit
+#                 distance; the default)
 #   "acoustic" -> pronunciation/acoustic/  (Wav2Vec2 embeddings + cosine-DTW)
-#   "phoneme"  -> pronunciation/phoneme/   (espeak reference + phoneme ASR + edit distance)
+#   "none"     -> pronunciation/none/      (scoring disabled: no recognizer model is
+#                 downloaded or loaded and analysis returns instantly; the learner
+#                 compares the takes by ear)
 # The dispatcher (mimora/engine.py) binds one backend at startup; only that engine's
-# models are loaded.
-ENGINE = "phoneme"
+# models are loaded. Changing the engine requires a restart.
+_ENGINES = ("phoneme", "acoustic", "none")
+ENGINE = _USER.get("engine", "phoneme")
+if not isinstance(ENGINE, str) or ENGINE not in _ENGINES:
+    print(f"[config] settings.json: unknown engine {ENGINE!r} "
+          f"(expected one of {_ENGINES}); using 'phoneme'", file=sys.stderr)
+    ENGINE = "phoneme"
 
 # GOOD-anchor mode for the phoneme engine (see pronunciation/phoneme/config.py),
 # read from settings.json ("phoneme_good_mode"); only affects ENGINE == "phoneme":
@@ -425,17 +435,18 @@ TRANSLATOR_DEVICE = _HW.get("TRANSLATOR_DEVICE") or "cpu"
 # The set of required repos is engine-aware: the always-used shared models (Kokoro
 # TTS, the NLLB translator) plus the ACTIVE engine's Wav2Vec2 model only. The
 # dispatcher never loads the inactive engine's weights, so requiring them would
-# needlessly keep the Hub online (and waste ~1.2 GB the run never touches).
+# needlessly keep the Hub online (and waste ~1.2 GB the run never touches). The
+# "none" engine has no recognizer model at all, so nothing extra is required then.
 _ENGINE_MODEL_REPO = {
     "phoneme": WAV2VEC2_PHONEME_MODEL_NAME,   # default engine
     "acoustic": WAV2VEC2_MODEL_NAME,
 }
-# Fall back to the default engine's model for an unknown ENGINE, matching engine.name().
+# ENGINE was validated above, so a missing entry can only mean "none".
+_engine_repo = _ENGINE_MODEL_REPO.get(ENGINE)
 _CACHED_REPOS = (
-    "hexgrad/Kokoro-82M",                                       # Kokoro TTS (model + voice files)
-    NLLB_TRANSLATOR_MODEL_NAME,                                 # NLLB-200 offline translator
-    _ENGINE_MODEL_REPO.get(ENGINE, WAV2VEC2_PHONEME_MODEL_NAME),  # active engine's recognizer
-)
+    "hexgrad/Kokoro-82M",                     # Kokoro TTS (model + voice files)
+    NLLB_TRANSLATOR_MODEL_NAME,               # NLLB-200 offline translator
+) + ((_engine_repo,) if _engine_repo else ())  # active engine's recognizer, if any
 # HF_HOME is read from os.environ (not MODEL_CACHE_DIR) so an externally set cache
 # location is honored.
 if loader.models_cached(Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):

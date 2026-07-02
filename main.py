@@ -329,13 +329,17 @@ class PronunciationTrainerGUI:
             self.tts_mgr.load_model()
             logging.info("TTS model loaded.")
 
-            self.root.after(0, self.view.append_system_msg, "Loading Wav2Vec2 (pronunciation, ~1.2 GB on first run)...")
+            # The "none" engine loads no model, so the ~1.2 GB message would
+            # only confuse; every other engine loads a Wav2Vec2 recognizer.
+            if engine.name() != "none":
+                self.root.after(0, self.view.append_system_msg,
+                                "Loading Wav2Vec2 (pronunciation, ~1.2 GB on first run)...")
             # Inject app settings into the active engine before it loads any model.
             # The dispatcher builds the engine-specific config from app settings;
             # this is the analyzer's composition root.
             engine.configure()
             engine.load_models()
-            logging.info("Pronunciation model loaded (engine=%s).", engine.name())
+            logging.info("Pronunciation engine ready (engine=%s).", engine.name())
 
             # Translator (NLLB) is loaded only when a language is selected at
             # startup, so a session with translation off pays no RAM/time cost.

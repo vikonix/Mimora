@@ -9,13 +9,14 @@ by ``config.ENGINE`` (set in mimora/config.py):
 
     "acoustic" -> pronunciation.acoustic  (Wav2Vec2 embeddings + cosine-DTW)
     "phoneme"  -> pronunciation.phoneme   (espeak reference + phoneme ASR + edit distance; default)
+    "none"     -> pronunciation.none      (scoring disabled: no model, every take accepted)
 
-Both backends expose the same small interface (``configure`` / ``load_models`` /
+All backends expose the same small interface (``configure`` / ``load_models`` /
 ``warm_up`` / ``analyze``) and return the shared ``pronunciation.common.PronunciationResult``,
 so switching is a single config flip. Only the selected backend is imported, so the
-inactive engine's (heavy) weights are never loaded.
+inactive engines' (heavy) weights are never loaded.
 
-To switch engines, edit ``ENGINE`` in mimora/config.py and restart; the process
+To switch engines, set ``"engine"`` in config/settings.json and restart; the process
 binds one backend at startup (the first ``_backend()`` call). Hot-swapping engines
 without a restart is intentionally not supported here.
 """
@@ -31,6 +32,7 @@ from mimora import config
 _BACKENDS = {
     "acoustic": "pronunciation.acoustic",
     "phoneme": "pronunciation.phoneme",
+    "none": "pronunciation.none",
 }
 
 # The imported backend module, bound lazily on first use so the inactive engine is
@@ -69,7 +71,9 @@ def configure(engine_name: str | None = None) -> None:
     else:
         eng = _backend()
         eng_name = name()
-    if eng_name == "phoneme":
+    if eng_name == "none":
+        cfg = eng.AnalyzerConfig()  # scoring disabled: nothing to configure
+    elif eng_name == "phoneme":
         cfg = eng.AnalyzerConfig(
             model_name=config.WAV2VEC2_PHONEME_MODEL_NAME,
             device=config.WAV2VEC2_DEVICE,
