@@ -183,21 +183,43 @@ class TrainerView:
                                    ("disabled", THEME["text_disabled"])],
                        arrowcolor=[("disabled", THEME["text_disabled"])])
 
-    def _make_button(self, parent, text, command, width=None):
+    def _make_button(self, parent, text, command, width=None, padx=12):
         """Create a consistently styled themed button.
 
         ``width`` (in text characters) is optional; pass it to give a group of
         buttons a uniform width so they line up regardless of label length.
+        ``padx`` is the internal horizontal padding (default 12); the bottom
+        control row passes a smaller value so its four columns fit the 600px
+        window without clipping the last button.
         """
         button = tk.Button(parent, text=text, command=command,
                            font=(FONT_FAMILY, 10, "bold"),
                            bg=THEME["bg_button"], fg=THEME["text_button"],
                            activebackground=THEME["bg_button_active"], activeforeground=THEME["text"],
-                           bd=0, padx=12, pady=6, cursor="hand2",
+                           bd=0, padx=padx, pady=6, cursor="hand2",
                            disabledforeground=THEME["text_disabled"])
         if width is not None:
             button.config(width=width)
         return button
+
+    def _control_column(self, parent, caption):
+        """A vertical control cell: the control(s) on top, an 8pt caption below.
+
+        Used by the bottom control panel (v2c step 4) so each action - Reference,
+        the mic, My recording, Next phrase - carries a one-line hint underneath.
+        The caption is packed at the bottom up-front, so callers can simply pack
+        their control widgets (default ``side=TOP``) into the returned frame
+        without worrying about ordering. Columns are top-aligned by the caller
+        (``anchor=N``) so short buttons and the taller mic each keep their caption
+        directly beneath them, as in the mockup.
+        """
+        col = tk.Frame(parent, bg=THEME["bg_main"])
+        # padx=6 on each side yields a ~12px gap between columns - tighter than
+        # the mockup's 22px so all four columns fit the 600px window.
+        col.pack(side=tk.LEFT, anchor=tk.N, padx=6)
+        tk.Label(col, text=caption, font=(FONT_FAMILY, FONT_SIZE_CAPTION),
+                 fg=THEME["text_muted"], bg=THEME["bg_main"]).pack(side=tk.BOTTOM, pady=(5, 0))
+        return col
 
     def build_ui(self):
         # Window background (shows through wherever no widget covers it). The
@@ -237,46 +259,76 @@ class TrainerView:
                                     font=(FONT_FAMILY, 9), fg=THEME["text_dim"], bg=THEME["bg_panel"])
         self.stats_label.pack(side=tk.RIGHT, padx=15, pady=4)
 
-        # 3. Bottom control panel: the mic flanked by its two phrase-level
-        # actions - Reference (replay the example) on the left, New phrase
-        # (generate the next one) on the right - with the instruction line below.
+        # 3. Control panel (v2c step 4): one row holding every phrase-level
+        # action, each in its own column with an 8pt caption beneath. Left to
+        # right: Reference (+ slow-replay turtle), the mic, My recording, Next
+        # phrase. The old single instruction line is gone - its guidance now
+        # lives in these per-control captions, the Tip line and the status bar.
+        #
+        # The widgets are built here, but the frame is packed later - right below
+        # the hero card (see the control_frame.pack() call after the hero
+        # section) - so the on-screen order matches the mockup:
+        # header -> practice text -> hero -> controls -> prosody -> history.
         control_frame = tk.Frame(self.root, bg=THEME["bg_main"])
-        control_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(0, 10))
 
-        # Equal-width buttons keep the mic visually centred between them.
-        action_btn_width = 14
+        # Self-test enabled state. The self-test has no visible button; it stays
+        # reachable via the 't' hotkey, gated by this flag (kept in sync by
+        # _set_actions; see is_test_enabled).
+        self._test_enabled = False
 
-        # Horizontal row: [Reference] [mic] [New phrase].
-        mic_row = tk.Frame(control_frame, bg=THEME["bg_main"])
-        mic_row.pack()
+        # Equal-width buttons keep the row balanced regardless of label length;
+        # 14 chars is the width of the longest label ("My recording ▶"). A tight
+        # internal padding keeps all four columns within the 600px window.
+        action_btn_width = 13
+        action_btn_padx = 5
 
+        # Centered row of control columns (each built by _control_column, which
+        # top-aligns them and hangs the caption underneath).
+        controls_row = tk.Frame(control_frame, bg=THEME["bg_main"])
+        controls_row.pack()
+
+        # -- Reference column: the replay button paired with the slow (0.7x)
+        #    turtle. Both are gated together by _set_actions(reference=...); the
+        #    exact slow speed lives in Settings. --
+        ref_col = self._control_column(controls_row, "Listen to the example")
+        ref_pair = tk.Frame(ref_col, bg=THEME["bg_main"])
+        ref_pair.pack()
         self.ref_btn = self._make_button(
-            mic_row, "▶ Reference", self._cb.play_reference, width=action_btn_width)
+            ref_pair, "Reference ▶", self._cb.play_reference,
+            width=action_btn_width, padx=action_btn_padx)
         self.ref_btn.pack(side=tk.LEFT, padx=(0, 4))
         self.ref_btn.config(state=tk.DISABLED)
-
-        # One-tap slow replay of the same reference, one step (0.1x) slower than
-        # the normal speed. Gated together with the Reference button (see
-        # _set_actions); the normal speed lives in Settings.
-        self.slow_btn = self._make_button(mic_row, "🐢", self._cb.play_reference_slow)
-        self.slow_btn.pack(side=tk.LEFT, padx=(0, 15))
+        self.slow_btn = self._make_button(ref_pair, "🐢", self._cb.play_reference_slow,
+                                          padx=action_btn_padx)
+        self.slow_btn.pack(side=tk.LEFT)
         self.slow_btn.config(state=tk.DISABLED)
 
-        self.btn_canvas = tk.Canvas(mic_row, width=100, height=100, bg=THEME["bg_main"],
+        # -- Mic column: the press-and-hold record button (canvas-drawn). --
+        mic_col = self._control_column(controls_row, "Hold SPACE or click")
+        self.btn_canvas = tk.Canvas(mic_col, width=100, height=100, bg=THEME["bg_main"],
                                     highlightthickness=0, cursor="hand2")
-        self.btn_canvas.pack(side=tk.LEFT, pady=5)
+        self.btn_canvas.pack()
         self.btn_canvas.bind("<ButtonPress-1>", lambda e: self._cb.on_gui_btn_press())
         self.btn_canvas.bind("<ButtonRelease-1>", lambda e: self._cb.on_gui_btn_release())
         self.draw_mic_button("loading")
 
-        self.generate_btn = self._make_button(
-            mic_row, "🎲 New phrase", self._cb.on_generate_phrase, width=action_btn_width)
-        self.generate_btn.pack(side=tk.LEFT, padx=(15, 0))
-        self.generate_btn.config(state=tk.DISABLED)
+        # -- My recording column: always visible; enabled only once a take
+        #    exists (_set_actions(user=...)). It used to sit in its own row above
+        #    the feedback log; step 4 folds it into this single panel. --
+        user_col = self._control_column(controls_row, "Record first to listen")
+        self.user_btn = self._make_button(
+            user_col, "My recording ▶", self._cb.play_user_recording,
+            width=action_btn_width, padx=action_btn_padx)
+        self.user_btn.pack()
+        self.user_btn.config(state=tk.DISABLED)
 
-        self.instruction_label = tk.Label(control_frame, text="Loading components...",
-                                          font=(FONT_FAMILY, 10), fg=THEME["text_dim"], bg=THEME["bg_main"])
-        self.instruction_label.pack(pady=5)
+        # -- Next phrase column: generate the next phrase. --
+        gen_col = self._control_column(controls_row, "Skip to the next phrase")
+        self.generate_btn = self._make_button(
+            gen_col, "Next phrase ▶", self._cb.on_generate_phrase,
+            width=action_btn_width, padx=action_btn_padx)
+        self.generate_btn.pack()
+        self.generate_btn.config(state=tk.DISABLED)
 
         # 4. Source text panel (editable)
         source_frame = tk.Frame(self.root, bg=THEME["bg_main"])
@@ -450,6 +502,11 @@ class TrainerView:
         # once its checkbox variable exists (created with the prosody header
         # below, which still owns the toggle until the prosody-stage rework).
 
+        # 5a. Control panel, packed here so it sits directly under the hero card
+        # (mockup order). The frame and its buttons were built in section 3; only
+        # the placement was deferred to this point in the packing order.
+        control_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 8))
+
         # 5b. Prosody panel - pitch (F0) and energy sparklines, you vs reference.
         prosody_frame = tk.Frame(self.root, bg=THEME["bg_main"])
         prosody_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 8))
@@ -520,31 +577,14 @@ class TrainerView:
         self.toggle_prosody_charts()
         self.toggle_face()
 
-        # 6. Action row directly under the result window: replays the user's own
-        # attempt. Reference and New phrase live down by the mic; the diagnostic
-        # self-test has no visible button - it stays reachable via the 't' hotkey,
+        # 6. My recording, Reference and Next phrase now all live together in the
+        # single bottom control panel (control_frame, section 3, v2c step 4);
+        # there is no separate action row here anymore. The diagnostic self-test
+        # still has no visible button - it stays reachable via the 't' hotkey,
         # gated by self._test_enabled (see is_test_enabled / _set_actions).
-        #
-        # Packed BEFORE the feedback panel below and at side=BOTTOM on purpose:
-        # the feedback panel uses expand=True with a large default height and
-        # would otherwise claim all the space, clipping a later-packed row to
-        # zero height. Reserving this row first keeps it visible just above the
-        # mic control_frame, so it sits right under the result window.
-        action_frame = tk.Frame(self.root, bg=THEME["bg_main"])
-        action_frame.pack(side=tk.BOTTOM, padx=20, pady=(0, 8))
 
-        # Self-test enabled state. The visible button was removed, but the
-        # feature lives on via the 't' hotkey; the enter_* states still toggle this
-        # through _set_actions(test=...), and is_test_enabled gates the hotkey.
-        self._test_enabled = False
-
-        self.user_btn = self._make_button(
-            action_frame, "▶ My recording", self._cb.play_user_recording, width=action_btn_width)
-        self.user_btn.pack()
-        self.user_btn.config(state=tk.DISABLED)
-
-        # 7. Feedback log (fills remaining space). Packed AFTER action_frame so
-        # its expand=True only consumes space left over above the button row.
+        # 7. Feedback log (fills remaining space). Packed AFTER the control panel
+        # so its expand=True only consumes space left over above the button row.
         feedback_frame = tk.Frame(self.root, bg=THEME["bg_main"])
         feedback_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=20, pady=(8, 16))
 
@@ -1111,7 +1151,12 @@ class TrainerView:
         self.status_label.configure(text=text, fg=color)
 
     def update_instruction(self, text: str):
-        self.instruction_label.configure(text=text)
+        # No-op since v2c step 4: the standalone instruction line was removed.
+        # Its guidance now lives in the per-control captions of the bottom panel,
+        # the Tip line and the status bar. Kept as a harmless stub so the many
+        # enter_* state methods (and the LLM-startup path) can keep calling it
+        # without change; the dead calls are cleaned up in the step 8 pass.
+        pass
 
     def update_score_stats(self, score: float, bucket: int = -1,
                            color: Optional[str] = None):

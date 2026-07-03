@@ -502,7 +502,9 @@ PHRASE_GEN_SYSTEM_PROMPT = (
     "You generate short English sentences for pronunciation practice. "
     "Reply with exactly ONE natural spoken sentence of 4 to 8 words, easy to read aloud. "
     "Use only plain words and a single final period - no quotation marks, no numbering, "
-    "no extra commentary. Base the sentence on the topic and vocabulary of the text the user provides."
+    "no extra commentary. Output ONLY the sentence itself, with nothing before or after it: "
+    "do not add a lead-in such as 'Here's a sentence' or 'Sure', and never put a colon before "
+    "the sentence. Base the sentence on the topic and vocabulary of the text the user provides."
 )
 # Sliding window over the source text: instead of sending the whole text with
 # every request (which makes a small model converge on one "most likely"
@@ -525,7 +527,9 @@ PHRASE_GEN_FRAGMENT_SYSTEM_PROMPT = (
     "sentence - such as a sentence opening, a prepositional phrase, or the start of a "
     "question. Examples: give me; on the table; where are you from. "
     "Use only plain lowercase words - no final period, no quotation marks, no numbering, "
-    "no extra commentary. Base the fragment on the topic and vocabulary of the text the user provides."
+    "no extra commentary. Output ONLY the fragment itself, with nothing before or after it: "
+    "do not add a lead-in such as 'Here's a fragment' or 'Sure', and never put a colon before "
+    "the fragment. Base the fragment on the topic and vocabulary of the text the user provides."
 )
 PHRASE_GEN_FRAGMENT_MAX_TOKENS = 16
 

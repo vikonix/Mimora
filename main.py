@@ -367,7 +367,6 @@ class PronunciationTrainerGUI:
                 if not self.llm_server.start(self.llm_mgr):
                     self.root.after(0, self.view.append_error_msg, "Error: LLM server failed to start. Check model path and GPU memory.")
                     self.root.after(0, self.view.server_failed)
-                    self.root.after(0, self.view.update_instruction, "LLM server failed to start. Check the log and restart.")
                     return
                 self.root.after(0, self.view.append_system_msg, "LLM server is ready.")
             else:
