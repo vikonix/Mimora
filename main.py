@@ -230,12 +230,11 @@ class PronunciationTrainerGUI:
         # Last user name written to settings.json; lets on_user_name_changed
         # skip the file write when the field loses focus without an edit.
         self._saved_user_name: str = config.USER_NAME
-        # Whether any prosody chart is visible, mirrored from the checkboxes so
-        # analysis workers can skip the (expensive) prosody computation without
-        # touching Tk widgets. Written only on the Tk main thread (here and in
-        # on_prosody_charts_toggled); workers only read it.
-        self._prosody_wanted: bool = (config.SHOW_PITCH_CHART
-                                      or config.SHOW_ENERGY_CHART)
+        # Whether the prosody block is expanded, mirrored from the show_prosody
+        # flag so analysis workers can skip the (expensive) prosody computation
+        # while it is collapsed without touching Tk widgets. Written only on the
+        # Tk main thread (here and in on_prosody_toggled); workers only read it.
+        self._prosody_wanted: bool = config.SHOW_PROSODY
 
         # Initialize core modular sub-managers
         self.tts_mgr = TTSManager()
@@ -273,7 +272,7 @@ class PronunciationTrainerGUI:
             on_gui_btn_press=self.on_gui_btn_press,
             on_gui_btn_release=self.on_gui_btn_release,
             on_show_face_toggled=self.on_show_face_toggled,
-            on_prosody_charts_toggled=self.on_prosody_charts_toggled,
+            on_prosody_toggled=self.on_prosody_toggled,
             on_test_reference=self.on_test_reference,
             play_user_recording=self.play_user_recording,
             play_reference=self.play_reference,
@@ -284,8 +283,36 @@ class PronunciationTrainerGUI:
         ))
         self.bind_events()
 
+        # Bring the freshly launched window to the foreground and put keyboard
+        # focus on it, so the space-to-record hotkey works without a first click.
+        # This matters most after a settings restart: the replacement process is
+        # launched detached (see restart_app), and Windows does not auto-focus a
+        # detached process's window, so the record keys stayed dead until the
+        # user clicked the window. Scheduled on the loop (focus is only reliable
+        # once the window is realized).
+        self.root.after(0, self._grab_initial_focus)
+
         # Load all models in the background to keep the UI responsive.
         threading.Thread(target=self.load_components, daemon=True).start()
+
+    def _grab_initial_focus(self):
+        """Foreground the window and give it keyboard focus (startup/restart).
+
+        The record hotkeys are bound to the toplevel and fire only while it holds
+        keyboard focus. A brief topmost flip defeats the Windows foreground lock
+        that otherwise keeps a detached, self-launched window in the background,
+        then releases it so the window is not pinned above everything. Focus goes
+        to the window itself (not the practice-text box), so space records rather
+        than typing a space.
+        """
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            self.root.after(200, lambda: self.root.attributes("-topmost", False))
+            self.root.focus_force()
+        except tk.TclError:
+            pass  # window torn down before the callback ran
 
     def bind_events(self):
         # Record keys: the spacebar and the Down arrow both toggle capture,
@@ -592,21 +619,14 @@ class PronunciationTrainerGUI:
         # (a focused combobox would otherwise capture the spacebar).
         self.root.focus_set()
 
-    def on_prosody_charts_toggled(self):
-        """Apply a prosody-chart checkbox change and persist both flags.
-
-        Saving both keys on either toggle keeps this trivially simple; the
-        extra write of an unchanged value is harmless.
-        """
-        self.view.toggle_prosody_charts()
+    def on_prosody_toggled(self):
+        """Apply the prosody collapse toggle and persist the show_prosody flag."""
+        self.view.toggle_prosody()
         # Keep the worker-visible flag in sync (read by _compute_prosody_safe
         # on analysis threads; written only here, on the Tk main thread).
-        self._prosody_wanted = (self.view.get_show_pitch()
-                                or self.view.get_show_energy())
-        self._persist_setting("show_pitch_chart", self.view.get_show_pitch())
-        self._persist_setting("show_energy_chart", self.view.get_show_energy())
-        self._sync_settings_window("show_pitch_chart", self.view.get_show_pitch())
-        self._sync_settings_window("show_energy_chart", self.view.get_show_energy())
+        self._prosody_wanted = self.view.get_show_prosody()
+        self._persist_setting("show_prosody", self.view.get_show_prosody())
+        self._sync_settings_window("show_prosody", self.view.get_show_prosody())
 
     def on_show_face_toggled(self):
         """Apply the face checkbox (show/hide the panel) and persist it."""
@@ -667,8 +687,9 @@ class PronunciationTrainerGUI:
         (voice, phrase length, translation language, reference speed, user
         name): each is written to config (the live source of truth) and then
         applied through the matching handler, which persists it and refreshes
-        or regenerates as needed. Face/prosody checkboxes still have a
-        main-window control, so they route through it. Keys the runtime
+        or regenerates as needed. The prosody collapse toggle also has an
+        on-main control, and the face is settings-only now; both route through
+        their handler so the view and settings stay in sync. Keys the runtime
         re-reads are persisted and applied via _LIVE_CONFIG_ATTRS; restart-only
         keys are just persisted (the window shows the pending-restart hint).
         """
@@ -695,12 +716,9 @@ class PronunciationTrainerGUI:
         elif key == "practice_text_collapsed":
             self.view.set_practice_collapsed(value)
             self.on_practice_collapsed_toggled()
-        elif key in ("show_pitch_chart", "show_energy_chart"):
-            if key == "show_pitch_chart":
-                self.view.set_show_pitch(value)
-            else:
-                self.view.set_show_energy(value)
-            self.on_prosody_charts_toggled()
+        elif key == "show_prosody":
+            self.view.set_show_prosody(value)
+            self.on_prosody_toggled()
         elif key == "reference_speed":
             # Apply live so the next Reference playback uses it; no replay here
             # (the change originates in the separate Settings window, so there

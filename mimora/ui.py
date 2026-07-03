@@ -75,7 +75,7 @@ class ViewCallbacks:
     on_gui_btn_press: Callable[[], None]
     on_gui_btn_release: Callable[[], None]
     on_show_face_toggled: Callable[[], None]
-    on_prosody_charts_toggled: Callable[[], None]
+    on_prosody_toggled: Callable[[], None]
     on_test_reference: Callable[[], None]
     play_user_recording: Callable[[], None]
     play_reference: Callable[[], None]
@@ -529,71 +529,66 @@ class TrainerView:
                                face_color=THEME["face"], face_outline=THEME["border"],
                                eye_color=THEME["eyes"], mouth_color=THEME["mouth"])
         self.face.set_expression(":)")  # waiting state
-        # Not packed yet: toggle_face() applies the persisted "Face" setting
-        # once its checkbox variable exists (created with the prosody header
-        # below, which still owns the toggle until the prosody-stage rework).
+        # The face has no on-main control anymore: its visibility is a settings
+        # value ("Show articulation face"), mirrored into this var and applied by
+        # toggle_face(). Not packed yet - toggle_face() below packs it if enabled.
+        self.show_face = tk.BooleanVar(value=config.SHOW_FACE)
 
         # 5a. Control panel, packed here so it sits directly under the hero card
         # (mockup order). The frame and its buttons were built in section 3; only
         # the placement was deferred to this point in the packing order.
         control_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 8))
 
-        # 5b. Prosody panel - pitch (F0) and energy sparklines, you vs reference.
+        # 5b. Prosody panel - pitch (F0) and energy sparklines, you vs reference,
+        # folded under one collapse header (v2c step 6). Both charts live together
+        # now (the per-chart checkboxes and the on-main "Face" toggle are gone);
+        # one flag (show_prosody) shows/hides the whole body and gates the
+        # (expensive) prosody computation. Default collapsed for a calmer view.
         prosody_frame = tk.Frame(self.root, bg=THEME["bg_main"])
         prosody_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 8))
 
-        prosody_header = tk.Frame(prosody_frame, bg=THEME["bg_main"])
-        prosody_header.pack(fill=tk.X)
-        tk.Label(prosody_header, text="Prosody", font=(FONT_FAMILY, 9, "bold"),
-                 fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
-        # "Face" toggles the articulation face (now living in the hero card's
-        # score row; the checkbox stays here until the prosody-stage rework).
-        # Packed first among the right-aligned items so it sits at the far
-        # right, after the legend.
-        self.show_face = tk.BooleanVar(value=config.SHOW_FACE)
-        tk.Checkbutton(prosody_header, text="Face", variable=self.show_face,
-                       command=self._cb.on_show_face_toggled,
-                       font=(FONT_FAMILY, 8), fg=THEME["text_dim"], bg=THEME["bg_main"],
-                       activebackground=THEME["bg_main"], activeforeground=THEME["text_dim"],
-                       selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
-                       cursor="hand2").pack(side=tk.RIGHT, padx=(12, 0))
-        tk.Label(prosody_header, text="● reference", font=(FONT_FAMILY, 8),
-                 fg=THEME["reference"], bg=THEME["bg_main"]).pack(side=tk.RIGHT, padx=(8, 0))
-        tk.Label(prosody_header, text="● you", font=(FONT_FAMILY, 8),
-                 fg=THEME["info"], bg=THEME["bg_main"]).pack(side=tk.RIGHT)
+        # Header caption doubles as the collapse toggle (same idiom as the
+        # practice-text caption): clicking it expands/collapses the body; the
+        # arrow prefix mirrors the state.
+        self.show_prosody = tk.BooleanVar(value=config.SHOW_PROSODY)
+        self._prosody_caption = tk.Button(
+            prosody_frame, text="▾ Intonation & stress",
+            command=self._on_prosody_caption_clicked,
+            font=(FONT_FAMILY, 9, "bold"), fg=THEME["accent"], bg=THEME["bg_main"],
+            activebackground=THEME["bg_main"], activeforeground=THEME["accent"],
+            bd=0, padx=0, pady=0, cursor="hand2")
+        self._prosody_caption.pack(anchor=tk.W)
 
-        # Each chart title doubles as a checkbox: unchecking hides that chart's
-        # canvas to free vertical space; checking restores it in place
-        # (see toggle_prosody_charts). Initial state is the persisted setting.
-        # The Pitch title sits above the row so the face panel beside the charts
-        # lines up with the chart areas, not the labels.
-        self.show_f0 = tk.BooleanVar(value=config.SHOW_PITCH_CHART)
-        self.f0_check = self._make_chart_checkbox(
-            prosody_frame, "Pitch - intonation (semitones vs your median)", self.show_f0)
-        self.f0_check.pack(anchor=tk.W)
+        # Body: everything hidden while collapsed. toggle_prosody() packs/forgets
+        # it as a whole, so the individual children are packed once here.
+        self.prosody_body = tk.Frame(prosody_frame, bg=THEME["bg_main"])
 
-        # Body row: the charts (the face moved to the hero card's score row).
-        prosody_body = tk.Frame(prosody_frame, bg=THEME["bg_main"])
-        prosody_body.pack(fill=tk.X)
+        # Legend lives inside the body (only meaningful when charts are visible),
+        # not in the always-shown header.
+        legend_row = tk.Frame(self.prosody_body, bg=THEME["bg_main"])
+        legend_row.pack(fill=tk.X, pady=(4, 2))
+        tk.Label(legend_row, text="● you", font=(FONT_FAMILY, 8),
+                 fg=THEME["info"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
+        tk.Label(legend_row, text="● reference", font=(FONT_FAMILY, 8),
+                 fg=THEME["reference"], bg=THEME["bg_main"]).pack(side=tk.LEFT, padx=(8, 0))
 
-        charts_frame = tk.Frame(prosody_body, bg=THEME["bg_main"])
-        charts_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-
-        self.f0_canvas = tk.Canvas(charts_frame, height=46, bg=THEME["bg_panel"],
+        # Pitch chart: plain title label above its canvas (no longer a checkbox).
+        tk.Label(self.prosody_body, text="Pitch - intonation (semitones vs your median)",
+                 font=(FONT_FAMILY, 8), fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(anchor=tk.W)
+        self.f0_canvas = tk.Canvas(self.prosody_body, height=46, bg=THEME["bg_panel"],
                                    highlightthickness=1, highlightbackground=THEME["border"])
         self.f0_canvas.pack(fill=tk.X, pady=(0, 4))
 
-        self.show_energy = tk.BooleanVar(value=config.SHOW_ENERGY_CHART)
-        self.en_check = self._make_chart_checkbox(
-            charts_frame, "Energy - stress pattern", self.show_energy)
-        self.en_check.pack(anchor=tk.W)
-        self.en_canvas = tk.Canvas(charts_frame, height=46, bg=THEME["bg_panel"],
+        # Energy chart: same, below the pitch chart.
+        tk.Label(self.prosody_body, text="Energy - stress pattern",
+                 font=(FONT_FAMILY, 8), fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(anchor=tk.W)
+        self.en_canvas = tk.Canvas(self.prosody_body, height=46, bg=THEME["bg_panel"],
                                    highlightthickness=1, highlightbackground=THEME["border"])
         self.en_canvas.pack(fill=tk.X)
 
         # Reading hint: horizontal axis is time (stretched to equal width for both),
         # so the goal is matching the *shape* of the reference, not exact overlap.
-        tk.Label(prosody_frame,
+        tk.Label(self.prosody_body,
                   text="Time runs (stretched to equal width). Aim to match the reference shape.",
                  font=(FONT_FAMILY, 8), fg=THEME["text_dim"], bg=THEME["bg_main"],
                  wraplength=540, justify=tk.LEFT).pack(anchor=tk.W, pady=(3, 0))
@@ -602,10 +597,9 @@ class TrainerView:
         self.f0_canvas.bind("<Configure>", lambda e: self._redraw_prosody())
         self.en_canvas.bind("<Configure>", lambda e: self._redraw_prosody())
 
-        # Late-apply the persisted visibility settings: hide whichever chart is
-        # off, and pack the face (built unpacked in the hero card's score row)
-        # if the "Face" setting is on.
-        self.toggle_prosody_charts()
+        # Late-apply the persisted state: show the body only if expanded, and
+        # pack the face (built unpacked in the hero card's score row) if enabled.
+        self.toggle_prosody()
         self.toggle_face()
 
         # 6. My recording, Reference and Next phrase now all live together in the
@@ -976,11 +970,8 @@ class TrainerView:
     def set_show_face(self, flag: bool):
         self.show_face.set(bool(flag))
 
-    def set_show_pitch(self, flag: bool):
-        self.show_f0.set(bool(flag))
-
-    def set_show_energy(self, flag: bool):
-        self.show_energy.set(bool(flag))
+    def set_show_prosody(self, flag: bool):
+        self.show_prosody.set(bool(flag))
 
     def is_reference_enabled(self) -> bool:
         """True when the Reference replay button is currently clickable."""
@@ -999,11 +990,8 @@ class TrainerView:
         """True when the My phrase replay button is currently clickable."""
         return str(self.user_btn["state"]) == str(tk.NORMAL)
 
-    def get_show_pitch(self) -> bool:
-        return bool(self.show_f0.get())
-
-    def get_show_energy(self) -> bool:
-        return bool(self.show_energy.get())
+    def get_show_prosody(self) -> bool:
+        return bool(self.show_prosody.get())
 
     def get_show_face(self) -> bool:
         return bool(self.show_face.get())
@@ -1321,37 +1309,28 @@ class TrainerView:
                 coords.extend((x, y))
             canvas.create_line(*coords, fill=color, width=3, smooth=True)
 
-    def _make_chart_checkbox(self, parent, text, variable):
-        """Create a themed chart-title checkbox that toggles its chart's visibility.
+    def _on_prosody_caption_clicked(self):
+        """Flip the prosody collapse flag and route it through the controller.
 
-        The command goes through the controller (on_prosody_charts_toggled in
-        main.py) so the new state is also persisted to settings.json.
+        Mirrors the practice-text caption: the Button owns no variable, so the
+        view flips show_prosody here; the controller then applies (toggle_prosody)
+        and persists it, and updates the worker-visible compute flag.
         """
-        return tk.Checkbutton(parent, text=text, variable=variable,
-                              command=self._cb.on_prosody_charts_toggled,
-                              font=(FONT_FAMILY, 8), fg=THEME["text_dim"], bg=THEME["bg_main"],
-                              activebackground=THEME["bg_main"], activeforeground=THEME["text_dim"],
-                              selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
-                              cursor="hand2")
+        self.show_prosody.set(not self.show_prosody.get())
+        self._cb.on_prosody_toggled()
 
-    def toggle_prosody_charts(self):
-        """Show/hide each prosody canvas to match its title checkbox."""
-        # Return focus to the window so the spacebar record toggle keeps working
-        # (a focused checkbox would otherwise capture the spacebar and toggle).
+    def toggle_prosody(self):
+        """Show/hide the whole prosody body to match the show_prosody flag."""
+        # Return focus to the window so the spacebar record toggle keeps working.
         self.root.focus_set()
-        # Pitch chart leads the charts column (its title is above the row), so
-        # re-pack it before the Energy title to preserve order.
-        f0_shown = self.f0_canvas.winfo_manager() == "pack"
-        if self.show_f0.get() and not f0_shown:
-            self.f0_canvas.pack(fill=tk.X, pady=(0, 4), before=self.en_check)
-        elif not self.show_f0.get() and f0_shown:
-            self.f0_canvas.pack_forget()
-        # Energy chart sits right after its own title.
-        en_shown = self.en_canvas.winfo_manager() == "pack"
-        if self.show_energy.get() and not en_shown:
-            self.en_canvas.pack(fill=tk.X, after=self.en_check)
-        elif not self.show_energy.get() and en_shown:
-            self.en_canvas.pack_forget()
+        expanded = self.show_prosody.get()
+        self._prosody_caption.config(
+            text="▾ Intonation & stress" if expanded else "▸ Intonation & stress")
+        shown = self.prosody_body.winfo_manager() == "pack"
+        if expanded and not shown:
+            self.prosody_body.pack(fill=tk.X)
+        elif not expanded and shown:
+            self.prosody_body.pack_forget()
 
     def toggle_face(self):
         """Show/hide the face in the hero card's score row (the "Face" setting)."""

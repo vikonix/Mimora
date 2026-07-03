@@ -57,8 +57,7 @@ _KNOWN_USER_KEYS = {
     "phrase_length",
     "reference_speed",
     "save_recordings",
-    "show_pitch_chart",
-    "show_energy_chart",
+    "show_prosody",
     "show_face",
     "silence_timeout",
     "silence_threshold",
@@ -95,8 +94,7 @@ USER_SETTING_DEFAULTS = {
     "phrase_length": "full",
     "reference_speed": 1.0,
     "save_recordings": False,
-    "show_pitch_chart": True,
-    "show_energy_chart": True,
+    "show_prosody": False,
     "show_face": True,
     "silence_timeout": 3.0,
     "silence_threshold": 0.01,
@@ -602,13 +600,15 @@ if TRANSLATION_LANGUAGE not in TRANSLATION_LANGUAGES:
 # =====================================================================
 # Prosody panel (UI state)
 # =====================================================================
-# Visibility of the two prosody charts, toggled by their title checkboxes in
-# the app window and persisted on change.
-SHOW_PITCH_CHART = _bool("show_pitch_chart", True)
-SHOW_ENERGY_CHART = _bool("show_energy_chart", True)
+# Expanded/visible state of the prosody block (pitch + energy charts), toggled
+# by the "Intonation & stress" collapse header in the app and by the settings
+# window, and persisted on change. False = collapsed: the charts are hidden and
+# their (expensive) computation is skipped. Defaults to collapsed for a calmer
+# first view.
+SHOW_PROSODY = _bool("show_prosody", False)
 
-# Visibility of the articulation face shown beside the prosody charts, toggled
-# by the "Face" checkbox in the prosody header and persisted on change.
+# Visibility of the articulation face shown in the hero card's score row,
+# toggled from the settings window and persisted on change.
 SHOW_FACE = _bool("show_face", True)
 
 # Collapsed state of the editable practice-text box, toggled by clicking the

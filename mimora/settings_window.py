@@ -167,12 +167,10 @@ def build_sections() -> tuple:
                   runtime_value=lambda: config.COLOR_THEME),
             Field("show_face", "Show articulation face", "bool",
                   lambda: config.user_setting("show_face", config.SHOW_FACE)),
-            Field("show_pitch_chart", "Show pitch chart", "bool",
-                  lambda: config.user_setting("show_pitch_chart",
-                                              config.SHOW_PITCH_CHART)),
-            Field("show_energy_chart", "Show energy chart", "bool",
-                  lambda: config.user_setting("show_energy_chart",
-                                              config.SHOW_ENERGY_CHART)),
+            Field("show_prosody", "Show intonation & stress", "bool",
+                  lambda: config.user_setting("show_prosody",
+                                              config.SHOW_PROSODY),
+                  help="Pitch and energy charts under the recording controls."),
             Field("practice_text_collapsed", "Collapse practice text", "bool",
                   lambda: config.user_setting("practice_text_collapsed",
                                               config.PRACTICE_TEXT_COLLAPSED),
@@ -536,12 +534,16 @@ class SettingsWindow:
                   bd=0, padx=14, pady=4, cursor="hand2").pack(
             side=tk.RIGHT, pady=6)
 
+        # Restart now uses the strong (filled) button style - the same as Close -
+        # so it stands apart from the light Cancel button beside it instead of
+        # blending into it. A warn/orange fill was avoided: it fails contrast in
+        # the dark theme (light orange fill under white text).
         self._restart_btn = tk.Button(
             footer, text="Restart now", command=self._restart_now,
-            font=(FONT_FAMILY, 9, "bold"), bg=THEME["bg_accent"],
-            fg=THEME["text_accent"],
-            activebackground=THEME["bg_accent_active"],
-            activeforeground=THEME["text_bright"],
+            font=(FONT_FAMILY, 9, "bold"), bg=THEME["bg_button"],
+            fg=THEME["text_button"],
+            activebackground=THEME["bg_button_active"],
+            activeforeground=THEME["text"],
             bd=0, padx=14, pady=4, cursor="hand2")
         # Packed on demand by _update_restart_hint().
 
@@ -781,7 +783,8 @@ class SettingsWindow:
         labels = ", ".join(self._restart_pending.values())
         self._restart_label.config(text=f"Applies after restart: {labels}")
         if not self._restart_btn.winfo_manager():
-            self._restart_btn.pack(side=tk.RIGHT, pady=6)
+            # padx keeps a gap from the Cancel button on its right.
+            self._restart_btn.pack(side=tk.RIGHT, padx=(0, 8), pady=6)
 
     def _restart_now(self):
         """Footer button: an explicit click needs no extra confirmation."""
