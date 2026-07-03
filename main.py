@@ -263,16 +263,12 @@ class PronunciationTrainerGUI:
             on_practice_collapsed_toggled=self.on_practice_collapsed_toggled,
             on_gui_btn_press=self.on_gui_btn_press,
             on_gui_btn_release=self.on_gui_btn_release,
-            on_user_name_changed=self.on_user_name_changed,
-            on_length_changed=self.on_length_changed,
-            on_translation_language_changed=self.on_translation_language_changed,
-            on_voice_changed=self.on_voice_changed,
-            on_speed_changed=self.on_speed_changed,
             on_show_face_toggled=self.on_show_face_toggled,
             on_prosody_charts_toggled=self.on_prosody_charts_toggled,
             on_test_reference=self.on_test_reference,
             play_user_recording=self.play_user_recording,
             play_reference=self.play_reference,
+            play_reference_slow=self.play_reference_slow,
             on_generate_phrase=self.on_generate_phrase,
         ))
         self.bind_events()
@@ -534,25 +530,14 @@ class PronunciationTrainerGUI:
             self.on_generate_phrase()
 
     def _selected_length(self) -> str:
-        """Map the length selector label to generate_phrase's mode ('full'/'fragment')."""
+        """Map the phrase-length setting to generate_phrase's mode ('full'/'fragment')."""
         try:
             return "fragment" if self.view.get_length_label() == LENGTH_FEW_WORDS else "full"
         except AttributeError:
             return "full"
 
-    def on_speed_changed(self, event=None):
-        """Replay the reference at the newly selected speed so it is heard right away."""
-        logging.info(f"Reference speed changed to {self.view.get_speed_label()!r}.")
-        self._persist_setting("reference_speed", self._selected_speed())
-        # Return focus to the window so the spacebar record toggle keeps working.
-        self.root.focus_set()
-        # Replay only when the Reference button is also allowed (a phrase is
-        # ready and nothing is recording/analyzing).
-        if self.view.is_reference_enabled():
-            self.play_reference()
-
     def on_user_name_changed(self, event=None):
-        """Persist the user name to settings.json once editing finishes (FocusOut)."""
+        """Persist the user name after it changes in the Settings window."""
         name = self.view.get_user_name()
         if name == self._saved_user_name:
             return  # unchanged - don't rewrite the file
@@ -668,28 +653,31 @@ class PronunciationTrainerGUI:
     def on_setting_changed(self, key: str, value):
         """Apply one settings-window change (Tk main thread).
 
-        Keys that also have a main-window control are routed through that
-        control's own handler (which persists and applies), so both windows
-        always behave identically. Keys the runtime re-reads are persisted and
-        applied via _LIVE_CONFIG_ATTRS. Restart-only keys are just persisted -
-        the settings window shows the pending-restart hint for them.
+        The settings window is the sole editor for the phrase-loop settings
+        (voice, phrase length, translation language, reference speed, user
+        name): each is written to config (the live source of truth) and then
+        applied through the matching handler, which persists it and refreshes
+        or regenerates as needed. Face/prosody checkboxes still have a
+        main-window control, so they route through it. Keys the runtime
+        re-reads are persisted and applied via _LIVE_CONFIG_ATTRS; restart-only
+        keys are just persisted (the window shows the pending-restart hint).
         """
         if key == "user_name":
-            self.view.set_user_name(value)
+            config.USER_NAME = value
             self.on_user_name_changed()
         elif key == "voice":
             if value in config.KOKORO_VOICES:
-                self.view.set_voice(value)
+                config.KOKORO_VOICE = value
                 self.on_voice_changed()
             else:
                 # A voice of the other (not yet active) accent: valid only
                 # after restarting into that accent, so only persist it.
                 self._persist_setting("voice", value)
         elif key == "phrase_length":
-            self.view.set_length_mode(value)
+            config.PHRASE_LENGTH = value
             self.on_length_changed()
         elif key == "translation_language":
-            self.view.set_translation_language(value)
+            config.TRANSLATION_LANGUAGE = value
             self.on_translation_language_changed()
         elif key == "show_face":
             self.view.set_show_face(value)
@@ -704,11 +692,11 @@ class PronunciationTrainerGUI:
                 self.view.set_show_energy(value)
             self.on_prosody_charts_toggled()
         elif key == "reference_speed":
-            # Settings-window origin only ("Default" reset / Cancel revert):
-            # update the selector without replaying the reference, unlike the
-            # main-window on_speed_changed which replays to demo the change.
-            self.view.set_speed(float(value))
-            self._persist_setting(key, value)
+            # Apply live so the next Reference playback uses it; no replay here
+            # (the change originates in the separate Settings window, so there
+            # is nothing on-screen to demo against).
+            config.REFERENCE_SPEED = float(value)
+            self._persist_setting(key, float(value))
         elif key == "practice_text_file":
             self._load_practice_file(value)
         else:
@@ -1236,22 +1224,26 @@ class PronunciationTrainerGUI:
     # Playback (reference / own recording)
     # ------------------------------------------------------------------
     def _selected_speed(self) -> float:
-        """Parse the reference-speed selector (e.g. '0.9×') into a float.
-
-        Falls back to normal speed (1.0) if the value is missing or malformed.
-        """
-        try:
-            return float(self.view.get_speed_label().rstrip("×"))
-        except (ValueError, AttributeError):
-            return 1.0
+        """The reference-playback speed to use, from the Settings value."""
+        return config.REFERENCE_SPEED
 
     def play_reference(self):
+        """Replay the reference at the configured speed (Reference button)."""
+        self._play_reference_at(self._selected_speed())
+
+    def play_reference_slow(self):
+        """Replay the reference one step slower than normal (the turtle button)."""
+        slow = max(config.REFERENCE_SPEED - config.REFERENCE_SLOW_DELTA,
+                   config.REFERENCE_SLOW_MIN)
+        self._play_reference_at(slow)
+
+    def _play_reference_at(self, speed: float):
+        """Play the current reference audio at *speed* (1.0 = normal)."""
         if self.reference_audio is None or self.reference_audio.size == 0:
             return
         # Slowing is done by lowering the effective sample rate: playing 24 kHz
         # audio at, say, 12 kHz (0.5×) makes it twice as long. This is the simple
         # resampling approach - it also shifts the pitch down, no extra deps.
-        speed = self._selected_speed()
         effective_sr = int(KOKORO_SAMPLE_RATE * speed)
         status = "Playing reference..." if speed == 1.0 else f"Playing reference ({speed:g}×)..."
         self._play_async(self.reference_audio, effective_sr, status)

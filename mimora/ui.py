@@ -74,16 +74,12 @@ class ViewCallbacks:
     on_practice_collapsed_toggled: Callable[[], None]
     on_gui_btn_press: Callable[[], None]
     on_gui_btn_release: Callable[[], None]
-    on_user_name_changed: Callable[..., None]
-    on_length_changed: Callable[..., None]
-    on_translation_language_changed: Callable[..., None]
-    on_voice_changed: Callable[..., None]
-    on_speed_changed: Callable[..., None]
     on_show_face_toggled: Callable[[], None]
     on_prosody_charts_toggled: Callable[[], None]
     on_test_reference: Callable[[], None]
     play_user_recording: Callable[[], None]
     play_reference: Callable[[], None]
+    play_reference_slow: Callable[[], None]
     on_generate_phrase: Callable[[], None]
 
 # Phrase-length selector labels. The label maps to generate_phrase's ``length``
@@ -253,8 +249,15 @@ class TrainerView:
 
         self.ref_btn = self._make_button(
             mic_row, "▶ Reference", self._cb.play_reference, width=action_btn_width)
-        self.ref_btn.pack(side=tk.LEFT, padx=(0, 15))
+        self.ref_btn.pack(side=tk.LEFT, padx=(0, 4))
         self.ref_btn.config(state=tk.DISABLED)
+
+        # One-tap slow replay of the same reference, one step (0.1x) slower than
+        # the normal speed. Gated together with the Reference button (see
+        # _set_actions); the normal speed lives in Settings.
+        self.slow_btn = self._make_button(mic_row, "🐢", self._cb.play_reference_slow)
+        self.slow_btn.pack(side=tk.LEFT, padx=(0, 15))
+        self.slow_btn.config(state=tk.DISABLED)
 
         self.btn_canvas = tk.Canvas(mic_row, width=100, height=100, bg=THEME["bg_main"],
                                     highlightthickness=0, cursor="hand2")
@@ -276,15 +279,15 @@ class TrainerView:
         source_frame = tk.Frame(self.root, bg=THEME["bg_main"])
         source_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 8))
 
-        # Header row above the practice text: caption on the left, the user-name
-        # field on the right edge. The name is persisted to settings.json when
-        # editing finishes (see on_user_name_changed).
+        # Header row above the practice text: the collapse caption on the left
+        # with the Paste/Clear affordances. Translation, phrase length, voice,
+        # speed and the user name all moved to the Settings window (the header
+        # here stays deliberately minimal - see the settings_window Field model).
         text_header = tk.Frame(source_frame, bg=THEME["bg_main"])
         text_header.pack(fill=tk.X)
         # The caption doubles as the collapse toggle for the text box: clicking
         # it hides/shows the editor (Paste/Clear go with it) to free vertical
         # space; the arrow prefix mirrors the state (see toggle_practice_text).
-        # The selector row below the box stays visible either way.
         self.practice_collapsed = tk.BooleanVar(value=config.PRACTICE_TEXT_COLLAPSED)
         self._practice_caption = tk.Button(
             text_header, text="▾ Practice text:",
@@ -314,20 +317,6 @@ class TrainerView:
             bd=0, width=10, padx=8, pady=1, cursor="hand2")
         self._clear_btn.pack(side=tk.LEFT, padx=(6, 0))
 
-        self.user_name_var = tk.StringVar(value=config.USER_NAME)
-        self.user_name_entry = tk.Entry(
-            text_header, textvariable=self.user_name_var, width=14,
-            font=(FONT_FAMILY, 9), bg=THEME["bg_accent"], fg=THEME["text_accent"],
-            insertbackground=THEME["text_bright"], bd=0, highlightthickness=1,
-            highlightbackground=THEME["border"], highlightcolor=THEME["accent"])
-        self.user_name_entry.pack(side=tk.RIGHT)
-        tk.Label(text_header, text="User name:", font=(FONT_FAMILY, 9),
-                 fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.RIGHT, padx=(0, 6))
-        # Save on focus loss; Enter just drops focus (which triggers the save
-        # and returns the spacebar to record-toggle duty).
-        self.user_name_entry.bind("<FocusOut>", self._cb.on_user_name_changed)
-        self.user_name_entry.bind("<Return>", lambda e: self.root.focus_set())
-
         self.source_text = scrolledtext.ScrolledText(
             source_frame, bg=THEME["bg_panel"], fg=THEME["text"], insertbackground=THEME["text_bright"],
             font=(FONT_FAMILY, 10), wrap=tk.WORD, bd=0, height=7,
@@ -335,66 +324,10 @@ class TrainerView:
             padx=10, pady=8)
         self.source_text.pack(fill=tk.X, pady=4)
 
-        # Selector row: translation language, phrase length, voice and
-        # reference-playback speed share a single line. Labels are kept terse and
-        # padding tight so all four fit the fixed 600px window width.
-        selectors_frame = tk.Frame(source_frame, bg=THEME["bg_main"])
-        selectors_frame.pack(anchor=tk.W, pady=(2, 0))
-        # Kept for toggle_practice_text: re-showing the editor re-packs it
-        # before this row to restore the build order.
-        self._selectors_frame = selectors_frame
-
-        # Translation-language selector (leftmost). No caption - the value itself
-        # ("Russian", "Spanish", …) names the language; the empty first choice
-        # means "translation off". Selecting a language shows the translation
-        # panel under the phrase card (see refresh_translation_ui); the panel and
-        # the extra translation work stay off until a language is picked. Both
-        # full sentences and "Few words" fragments are translated.
-        self.translation_var = tk.StringVar(value=config.TRANSLATION_LANGUAGE)
-        self.translation_selector = ttk.Combobox(
-            selectors_frame, textvariable=self.translation_var, state="readonly",
-            width=12, values=config.TRANSLATION_LANGUAGES)
-        self.translation_selector.pack(side=tk.LEFT, padx=(0, 10))
-        self.translation_selector.bind(
-            "<<ComboboxSelected>>", self._cb.on_translation_language_changed)
-
-        # Phrase-length selector. "Few words" requests a short fragment instead
-        # of a full sentence; changing it regenerates the phrase (see
-        # on_length_changed).
-        tk.Label(selectors_frame, text="Phrase length:", font=(FONT_FAMILY, 9),
-                 fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.LEFT, padx=(0, 6))
-        self.length_var = tk.StringVar(
-            value=LENGTH_FEW_WORDS if config.PHRASE_LENGTH == "fragment" else LENGTH_FULL)
-        self.length_selector = ttk.Combobox(
-            selectors_frame, textvariable=self.length_var, state="readonly",
-            width=12, values=(LENGTH_FULL, LENGTH_FEW_WORDS))
-        self.length_selector.pack(side=tk.LEFT, padx=(0, 10))
-        self.length_selector.bind("<<ComboboxSelected>>", self._cb.on_length_changed)
-
-        # Voice selector for the reference speech. Changing it regenerates the
-        # phrase (see on_voice_changed) so the new voice is heard right away.
-        tk.Label(selectors_frame, text="Voice:", font=(FONT_FAMILY, 9),
-                 fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.LEFT, padx=(0, 6))
-        self.voice_var = tk.StringVar(value=config.KOKORO_VOICE)
-        self.voice_selector = ttk.Combobox(
-            selectors_frame, textvariable=self.voice_var, state="readonly",
-            width=12, values=tuple(config.KOKORO_VOICES))
-        self.voice_selector.pack(side=tk.LEFT, padx=(0, 10))
-        self.voice_selector.bind("<<ComboboxSelected>>", self._cb.on_voice_changed)
-
-        # Lower values slow the reference playback (see play_reference). Stored as
-        # the displayed label and parsed back to a float by _selected_speed().
-        tk.Label(selectors_frame, text="Speed:", font=(FONT_FAMILY, 9),
-                 fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.LEFT, padx=(0, 6))
-        # Options come from config so the persisted value is always one of them.
-        self.playback_speed = tk.StringVar(value=f"{config.REFERENCE_SPEED:.1f}×")
-        self.speed_selector = ttk.Combobox(
-            selectors_frame, textvariable=self.playback_speed, state="readonly",
-            width=5, values=tuple(f"{s:.1f}×" for s in config.REFERENCE_SPEED_CHOICES))
-        self.speed_selector.pack(side=tk.LEFT)
-        # Changing the speed replays the reference so the difference is heard
-        # immediately (see on_speed_changed).
-        self.speed_selector.bind("<<ComboboxSelected>>", self._cb.on_speed_changed)
+        # Translation language, phrase length, voice and reference speed used to
+        # sit in a selector row here; they now live in the Settings window and
+        # are read straight from config (the live source of truth), so the main
+        # window keeps only the practice text and the pronunciation loop.
 
         # The editor is packed above by default; hide it now if the persisted
         # state says collapsed (same late-apply idiom as the prosody toggles).
@@ -428,13 +361,8 @@ class TrainerView:
         self.translation_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
         # Right-click the translation to copy it (independently of the phrase).
         self._bind_copy_menu(self.translation_label)
-        # Force the readonly combobox to render its persisted value: a readonly
-        # ttk.Combobox does not always paint the initial textvariable value until
-        # the user opens the list, which made a loaded language look unselected
-        # while its panel was already shown. Then reconcile panel visibility.
-        self.translation_selector.set(config.TRANSLATION_LANGUAGE)
         # The translation frame is not packed yet - refresh_translation_ui()
-        # decides based on the selected language and phrase-length mode.
+        # decides based on config.TRANSLATION_LANGUAGE.
         self.refresh_translation_ui()
 
         # 5b. Prosody panel - pitch (F0) and energy sparklines, you vs reference.
@@ -705,9 +633,10 @@ class TrainerView:
             self._paste_btn.pack_forget()
             self._clear_btn.pack_forget()
         elif not collapsed and not shown:
-            # Restore the build order: the editor above the selector row, the
-            # buttons after the caption (LEFT packing preserves their order).
-            self.source_text.pack(fill=tk.X, pady=4, before=self._selectors_frame)
+            # Restore the build order: the editor is the last child of
+            # source_frame, and the buttons pack after the caption (LEFT packing
+            # preserves their order).
+            self.source_text.pack(fill=tk.X, pady=4)
             self._paste_btn.pack(side=tk.LEFT, padx=(10, 0))
             self._clear_btn.pack(side=tk.LEFT, padx=(6, 0))
 
@@ -717,18 +646,23 @@ class TrainerView:
     def get_practice_collapsed(self) -> bool:
         return bool(self.practice_collapsed.get())
 
+    # ------------------------------------------------------------------
+    # Read accessors for settings moved to the Settings window. config is the
+    # live source of truth (the controller updates it when a setting changes),
+    # so these read config directly instead of a main-window widget var.
+    # ------------------------------------------------------------------
     def get_user_name(self) -> str:
-        return self.user_name_var.get().strip()
+        return config.USER_NAME.strip()
 
     def get_voice(self) -> str:
-        return self.voice_var.get()
+        return config.KOKORO_VOICE
 
     def get_length_label(self) -> str:
-        return self.length_var.get()
+        return LENGTH_FEW_WORDS if config.PHRASE_LENGTH == "fragment" else LENGTH_FULL
 
     def get_translation_language(self) -> str:
-        """Return the selected translation language label ('' when off)."""
-        return self.translation_var.get()
+        """Return the current translation language label ('' when off)."""
+        return config.TRANSLATION_LANGUAGE
 
     def set_translation(self, text: str):
         """Set the translation panel text, falling back to '-' when empty.
@@ -768,16 +702,14 @@ class TrainerView:
         self.root.clipboard_append(text)
 
     def refresh_translation_ui(self):
-        """Sync the translation panel and selector to the current UI state.
+        """Show or hide the translation panel to match the current setting.
 
         Shows the panel whenever a language is selected - in both "Full phrase"
         and "Few words" modes (fragments are translated too). Safe to call
-        repeatedly - it reconciles to the current vars without side effects.
+        repeatedly - it reconciles to config.TRANSLATION_LANGUAGE without side
+        effects.
         """
-        # The language selector is always usable; translation applies to whatever
-        # the next phrase is, fragment or full sentence.
-        self.translation_selector.config(state="readonly")
-        show = bool(self.translation_var.get())
+        show = bool(config.TRANSLATION_LANGUAGE)
         packed = self.translation_frame.winfo_manager() == "pack"
         if show and not packed:
             # Insert directly under the phrase card with no gap (both pads 0) so
@@ -788,27 +720,11 @@ class TrainerView:
         elif not show and packed:
             self.translation_frame.pack_forget()
 
-    def get_speed_label(self) -> str:
-        return self.playback_speed.get()
-
     # ------------------------------------------------------------------
-    # Write accessors (controller pushes settings-window changes into the
-    # main-window controls; pure value updates, no callbacks fire)
+    # Write accessors for the checkbox settings the main window still owns
+    # (the prosody/face toggles); the controller mirrors settings-window
+    # changes into them. Pure value updates, no callbacks fire.
     # ------------------------------------------------------------------
-    def set_user_name(self, name: str):
-        self.user_name_var.set(name)
-
-    def set_voice(self, voice: str):
-        self.voice_var.set(voice)
-
-    def set_length_mode(self, mode: str):
-        """Set the length selector from the persisted mode ('full'/'fragment')."""
-        self.length_var.set(LENGTH_FEW_WORDS if mode == "fragment" else LENGTH_FULL)
-
-    def set_translation_language(self, language: str):
-        self.translation_var.set(language)
-        self.translation_selector.set(language)  # readonly combobox repaint
-
     def set_show_face(self, flag: bool):
         self.show_face.set(bool(flag))
 
@@ -817,10 +733,6 @@ class TrainerView:
 
     def set_show_energy(self, flag: bool):
         self.show_energy.set(bool(flag))
-
-    def set_speed(self, speed: float):
-        """Set the reference-speed selector from a plain float (e.g. 1.0)."""
-        self.playback_speed.set(f"{float(speed):.1f}×")
 
     def is_reference_enabled(self) -> bool:
         """True when the Reference replay button is currently clickable."""
@@ -862,6 +774,7 @@ class TrainerView:
             self.generate_btn.config(state=state(generate))
         if reference is not None:
             self.ref_btn.config(state=state(reference))
+            self.slow_btn.config(state=state(reference))
         if user is not None:
             self.user_btn.config(state=state(user))
         if test is not None:

@@ -126,6 +126,12 @@ def build_sections() -> tuple:
                                               config.PHRASE_LENGTH),
                   choices=lambda: config.PHRASE_LENGTH_CHOICES,
                   help="full = whole sentence, fragment = 2-4 words."),
+            Field("reference_speed", "Reference speed", "choice",
+                  lambda: config.user_setting("reference_speed",
+                                              config.REFERENCE_SPEED),
+                  choices=lambda: config.REFERENCE_SPEED_CHOICES,
+                  help="Normal reference playback speed. The slow-replay "
+                       "button next to Reference always plays 0.1x slower."),
             Field("practice_text_file", "Practice text file", "path",
                   lambda: config.user_setting("practice_text_file",
                                               config.PRACTICE_TEXT_FILE),

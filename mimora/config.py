@@ -409,8 +409,8 @@ if _user_voice is not None:
 # switching between them needs no pipeline reload.
 KOKORO_VOICES = _ACCENT["voices"]
 
-# Reference playback speed ("reference_speed"), selected in the UI and
-# persisted on change. The UI selector is built from these choices, so the
+# Reference playback speed ("reference_speed"), chosen in Settings and
+# persisted on change. The Settings selector is built from these choices, so the
 # valid values and the visible options can never drift apart.
 REFERENCE_SPEED_CHOICES = (1.0, 0.9, 0.8)
 REFERENCE_SPEED = float(_num("reference_speed", 1.0))
@@ -419,6 +419,14 @@ if REFERENCE_SPEED not in REFERENCE_SPEED_CHOICES:
           f"{REFERENCE_SPEED_CHOICES}, got {REFERENCE_SPEED!r}; using 1.0",
           file=sys.stderr)
     REFERENCE_SPEED = 1.0
+
+# The one-tap slow replay (the "turtle" button next to Reference) plays one
+# step slower than the normal reference: REFERENCE_SPEED - REFERENCE_SLOW_DELTA.
+# Relative rather than fixed, so it always feels "a bit slower" whatever the
+# configured speed. Floored by REFERENCE_SLOW_MIN so a very low setting cannot
+# drive the effective sample rate to zero. Not user settings.
+REFERENCE_SLOW_DELTA = 0.1
+REFERENCE_SLOW_MIN = 0.5
 
 # =====================================================================
 # Pronunciation Analysis (Wav2Vec2) Settings
