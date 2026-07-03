@@ -100,6 +100,17 @@ _FONT_FAMILIES = {
 }
 FONT_FAMILY = _FONT_FAMILIES.get(platform.system(), "DejaVu Sans")  # Linux/other
 
+# Typographic scale (Tk points). Kept in one place so the redesign pulls from a
+# single ladder instead of scattering magic sizes across widgets. Tk points
+# render larger in pixels than the CSS px in the mockup (Windows ~1.3x), so the
+# 21pt phrase lands near the mockup's 27px hero text.
+FONT_SIZE_PHRASE = 21        # hero practice phrase (mockup ~27px)
+FONT_SIZE_SCORE = 26         # big verdict score in the score row (added in the
+                             # hero-card stage; defined here to keep the scale whole)
+FONT_SIZE_TRANSLATION = 11   # translation line under the phrase
+FONT_SIZE_BODY = 10          # normal body text
+FONT_SIZE_CAPTION = 8        # sublabels, captions, legends
+
 
 class TrainerView:
     """Passive view: builds the Tk widgets and renders UI state.
@@ -394,7 +405,7 @@ class TrainerView:
                                      highlightthickness=1, highlightbackground=THEME["border"])
         self.phrase_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(8, 0))
 
-        self.phrase_label = tk.Label(self.phrase_frame, text="-", font=(FONT_FAMILY, 15, "bold"),
+        self.phrase_label = tk.Label(self.phrase_frame, text="-", font=(FONT_FAMILY, FONT_SIZE_PHRASE, "bold"),
                                      fg=THEME["phrase"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
         # Match the translation card's vertical padding so the two panels are the
         # same height (the phrase still reads larger via its bigger, bold font).
@@ -412,7 +423,7 @@ class TrainerView:
         self.translation_frame = tk.Frame(self.root, bg=THEME["bg_panel"],
                                           highlightthickness=1, highlightbackground=THEME["border"])
         self.translation_label = tk.Label(
-            self.translation_frame, text="-", font=(FONT_FAMILY, 12),
+            self.translation_frame, text="-", font=(FONT_FAMILY, FONT_SIZE_TRANSLATION),
             fg=THEME["text"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
         self.translation_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
         # Right-click the translation to copy it (independently of the phrase).

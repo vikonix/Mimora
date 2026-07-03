@@ -1,9 +1,10 @@
 {
   "_readme": "Mimora dark color scheme. Selected via 'color_theme': 'dark' in settings.json; restart to apply. Keys starting with '_' are ignored. A missing key falls back to the built-in dark palette in config.py.",
 
-  "_surfaces": "Backgrounds and borders. bg_main = window, bg_panel = panels/inputs/status bar, bg_accent = accent-tinted controls (buttons, combobox).",
+  "_surfaces": "Backgrounds and borders. Three-level surface contrast bg_main < bg_panel < bg_card: bg_main = window (darkest), bg_panel = panels/inputs/status bar, bg_card = hero-card surface (lightest). bg_accent = accent-tinted controls (buttons, combobox).",
   "bg_main": "#0d1220",
   "bg_panel": "#1b1f2a",
+  "bg_card": "#222836",
   "bg_accent": "#1d1d3a",
   "bg_accent_active": "#272653",
   "bg_button": "#4d2f87",

@@ -616,8 +616,10 @@ PRACTICE_TEXT_COLLAPSED = _bool("practice_text_collapsed", False)
 # usable (dark) palette.
 _DARK_THEME = {
     # Surfaces
-    "bg_main": "#121214",           # window background
+    "bg_main": "#121214",           # window background (darkest surface)
     "bg_panel": "#1a1a1e",          # panels, text inputs, status bar
+    "bg_card": "#222836",           # hero-card surface, lightest of the three
+                                    # (bg_main < bg_panel < bg_card)
     "bg_accent": "#1f1430",         # accent-tinted controls (combobox, small buttons)
     "bg_accent_active": "#2a1a45",  # hovered/active accent controls
     "bg_button": "#4d2f87",         # primary action buttons (muted brand purple)

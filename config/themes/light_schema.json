@@ -1,15 +1,16 @@
 {
   "_readme": "Mimora light color scheme. Selected via 'color_theme': 'light' in settings.json; restart to apply. Keys starting with '_' are ignored. A missing key falls back to the built-in dark palette in config.py.",
 
-  "_surfaces": "Backgrounds and borders. bg_main = window, bg_panel = panels/inputs/status bar, bg_accent = accent-tinted controls (buttons, combobox).",
-  "bg_main": "#fafafc",
-  "bg_panel": "#ffffff",
+  "_surfaces": "Backgrounds and borders. Three-level surface contrast bg_main < bg_panel < bg_card: bg_main = window, bg_panel = panels/inputs/status bar, bg_card = hero-card surface (pure white, the lightest). Main and panel are tinted slightly grey so the white card reads as raised. bg_accent = accent-tinted controls (buttons, combobox).",
+  "bg_main": "#eff0f4",
+  "bg_panel": "#f8f8fb",
+  "bg_card": "#ffffff",
   "bg_accent": "#e7defa",
   "bg_accent_active": "#d4c5f4",
   "bg_button": "#9657d6",
   "bg_button_active": "#8442c4",
   "text_button": "#f3f0fb",
-  "border": "#e2e2e8",
+  "border": "#dcdce4",
   "accent": "#8b4fd1",
 
   "_text": "text = body, text_emph = emphasized feedback, text_bright = selection fg / text cursor, text_dim = secondary labels, text_muted = tertiary/system, text_accent = text on accent-tinted controls, phrase = hero practice phrase (matched to the 'you' prosody curve).",
