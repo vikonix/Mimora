@@ -81,6 +81,9 @@ class ViewCallbacks:
     play_reference: Callable[[], None]
     play_reference_slow: Callable[[], None]
     on_generate_phrase: Callable[[], None]
+    # Click on an underlined ("miss") word inside the hero phrase: the
+    # controller synthesizes that single word and plays it slowly.
+    on_word_clicked: Callable[[str], None]
 
 # Phrase-length selector labels. The label maps to generate_phrase's ``length``
 # mode: LENGTH_FULL → "full" sentence, LENGTH_FEW_WORDS → "fragment".
@@ -333,37 +336,119 @@ class TrainerView:
         # state says collapsed (same late-apply idiom as the prosody toggles).
         self.toggle_practice_text()
 
-        # 5. Current phrase card
-        self.phrase_frame = tk.Frame(self.root, bg=THEME["bg_panel"],
-                                     highlightthickness=1, highlightbackground=THEME["border"])
-        self.phrase_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(8, 0))
+        # 5. Hero card - THE screen object ("one screen - one task"): the current
+        # phrase with its translation, and the result row beneath them. Drawn on
+        # bg_card, the lightest of the three surfaces (bg_main < bg_panel <
+        # bg_card), so the card visually leads the whole window.
+        self.hero_frame = tk.Frame(self.root, bg=THEME["bg_card"],
+                                   highlightthickness=1, highlightbackground=THEME["border"])
+        self.hero_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(8, 10))
 
-        self.phrase_label = tk.Label(self.phrase_frame, text="-", font=(FONT_FAMILY, FONT_SIZE_PHRASE, "bold"),
-                                     fg=THEME["phrase"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
-        # Match the translation card's vertical padding so the two panels are the
-        # same height (the phrase still reads larger via its bigger, bold font).
-        self.phrase_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
-        # Right-click the phrase to copy it (independently of the translation).
-        self._bind_copy_menu(self.phrase_label)
+        # Phrase: a read-only tk.Text (not a Label) so individual words can carry
+        # tags - the "miss" underline for problem words and its click-to-hear
+        # binding. Disabled + takefocus=0 keeps it from swallowing the spacebar
+        # record toggle (main.py gates hotkeys on a focused Text widget).
+        self.phrase_text = tk.Text(
+            self.hero_frame, font=(FONT_FAMILY, FONT_SIZE_PHRASE, "bold"),
+            fg=THEME["phrase"], bg=THEME["bg_card"], wrap=tk.WORD, bd=0,
+            highlightthickness=0, height=1, cursor="arrow", takefocus=0,
+            padx=16, pady=0)
+        self.phrase_text.pack(fill=tk.X, padx=10, pady=(18, 0))
+        # All content is inserted with the "center" tag: tk.Text has no
+        # widget-level justify, only per-tag.
+        self.phrase_text.tag_configure("center", justify=tk.CENTER)
+        # "miss" marks a mispronounced word: a colored underline (kept subtle -
+        # the word itself stays in the phrase color). underlinefg needs
+        # Tk >= 8.6.6; older Tks fall back to painting the word itself red,
+        # which keeps the signal without the separate underline color.
+        try:
+            self.phrase_text.tag_configure("miss", underline=True,
+                                           underlinefg=THEME["bad"])
+        except tk.TclError:
+            self.phrase_text.tag_configure("miss", underline=True,
+                                           foreground=THEME["bad"])
+        self.phrase_text.tag_bind("miss", "<Button-1>", self._on_miss_word_clicked)
+        # Hover affordance: hand cursor + highlight while over any miss word.
+        # Tag options are per-tag (not per-range), so hovering one miss word
+        # highlights them all - acceptable for the few misses a phrase has.
+        self.phrase_text.tag_bind(
+            "miss", "<Enter>", lambda e: (self.phrase_text.configure(cursor="hand2"),
+                                          self.phrase_text.tag_configure(
+                                              "miss", background=THEME["bg_accent_active"])))
+        self.phrase_text.tag_bind(
+            "miss", "<Leave>", lambda e: (self.phrase_text.configure(cursor="arrow"),
+                                          self.phrase_text.tag_configure(
+                                              "miss", background="")))
+        # The Text is disabled between set_phrase calls; its height follows the
+        # wrapped content (recomputed on every set_phrase and on resize).
+        self.phrase_text.configure(state=tk.DISABLED)
+        self.phrase_text.bind("<Configure>", lambda e: self._fit_phrase_height())
+        # Right-click the phrase to copy it (whole phrase - a tk.Text has no
+        # single "text" option like a Label).
+        self._bind_copy_menu(self.phrase_text,
+                             getter=lambda: self.phrase_text.get("1.0", "end-1c"))
+        # Same "-" placeholder the old Label started with.
+        self.set_phrase("-")
 
-        # 5a. Translation card - a SEPARATE panel below the phrase card (its own
-        # frame, not a sub-section of it), shown only when a translation language
-        # is selected. Same panel background as the phrase card; the
-        # small gap between the two (their pack pady) reads as two independent
-        # cards. Dimmer and smaller text so the phrase stays the focus. The frame
-        # is packed/unpacked right after the phrase card by refresh_translation_ui();
+        # Translation inside the same card, right under the phrase: just dimmer,
+        # smaller text - no separator needed. Packed/unpacked by
+        # refresh_translation_ui() when a translation language is (de)selected;
         # "-" stands in until a translation arrives with the next phrase.
-        self.translation_frame = tk.Frame(self.root, bg=THEME["bg_panel"],
-                                          highlightthickness=1, highlightbackground=THEME["border"])
         self.translation_label = tk.Label(
-            self.translation_frame, text="-", font=(FONT_FAMILY, FONT_SIZE_TRANSLATION),
-            fg=THEME["text"], bg=THEME["bg_panel"], wraplength=520, justify=tk.LEFT)
-        self.translation_label.pack(anchor=tk.W, padx=12, pady=(8, 8))
+            self.hero_frame, text="-", font=(FONT_FAMILY, FONT_SIZE_TRANSLATION),
+            fg=THEME["text_dim"], bg=THEME["bg_card"], wraplength=560,
+            justify=tk.CENTER)
         # Right-click the translation to copy it (independently of the phrase).
         self._bind_copy_menu(self.translation_label)
-        # The translation frame is not packed yet - refresh_translation_ui()
-        # decides based on config.TRANSLATION_LANGUAGE.
         self.refresh_translation_ui()
+
+        # Bottom padding of the phrase block, then a 1px divider above the
+        # score row (the card's only internal separator, as in the mockup).
+        tk.Frame(self.hero_frame, height=14, bg=THEME["bg_card"]).pack(fill=tk.X)
+        tk.Frame(self.hero_frame, height=1, bg=THEME["border"]).pack(fill=tk.X)
+
+        # Score row: [SCORE column] [WORK ON badges] [face]. Filled by
+        # show_feedback; _reset_score_row shows the empty state ("--" and
+        # "record to get a score") until the first take.
+        score_row = tk.Frame(self.hero_frame, bg=THEME["bg_card"])
+        score_row.pack(fill=tk.X, padx=18, pady=(10, 12))
+
+        score_col = tk.Frame(score_row, bg=THEME["bg_card"])
+        score_col.pack(side=tk.LEFT)
+        tk.Label(score_col, text="SCORE", font=(FONT_FAMILY, FONT_SIZE_CAPTION, "bold"),
+                 fg=THEME["text_dim"], bg=THEME["bg_card"]).pack()
+        self.score_num_label = tk.Label(
+            score_col, text="--", font=(FONT_FAMILY, FONT_SIZE_SCORE, "bold"),
+            fg=THEME["text_dim"], bg=THEME["bg_card"])
+        self.score_num_label.pack()
+        self.score_verdict_label = tk.Label(
+            score_col, text="record to get a score",
+            font=(FONT_FAMILY, FONT_SIZE_CAPTION),
+            fg=THEME["text_dim"], bg=THEME["bg_card"])
+        self.score_verdict_label.pack()
+
+        # WORK ON: caption + a row of flat phoneme badges (top problem sounds).
+        # The badges are rebuilt per result (_set_badges); clicking one will
+        # speak an example word - wired in the sounds-feedback stage.
+        workon_col = tk.Frame(score_row, bg=THEME["bg_card"])
+        workon_col.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(20, 8))
+        self.workon_caption = tk.Label(
+            workon_col, text="", font=(FONT_FAMILY, FONT_SIZE_CAPTION, "bold"),
+            fg=THEME["warn"], bg=THEME["bg_card"])
+        self.workon_caption.pack(anchor=tk.W)
+        self.badges_frame = tk.Frame(workon_col, bg=THEME["bg_card"])
+        self.badges_frame.pack(anchor=tk.W, pady=(4, 0))
+
+        # The face lives in the score row now (verdict indicator + talking
+        # mouth), not in the prosody block. Same single FaceWidget instance the
+        # controller drives via face_play_levels/face_rest; ~78px as mocked up.
+        self.face = FaceWidget(score_row, size=78, bg=THEME["bg_card"],
+                               face_color=THEME["face"], face_outline=THEME["border"],
+                               eye_color=THEME["eyes"], mouth_color=THEME["mouth"])
+        self.face.set_expression(":)")  # waiting state
+        # Not packed yet: toggle_face() applies the persisted "Face" setting
+        # once its checkbox variable exists (created with the prosody header
+        # below, which still owns the toggle until the prosody-stage rework).
 
         # 5b. Prosody panel - pitch (F0) and energy sparklines, you vs reference.
         prosody_frame = tk.Frame(self.root, bg=THEME["bg_main"])
@@ -373,8 +458,10 @@ class TrainerView:
         prosody_header.pack(fill=tk.X)
         tk.Label(prosody_header, text="Prosody", font=(FONT_FAMILY, 9, "bold"),
                  fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
-        # "Face" toggles the articulation panel on the right. Packed first among
-        # the right-aligned items so it sits at the far right, after the legend.
+        # "Face" toggles the articulation face (now living in the hero card's
+        # score row; the checkbox stays here until the prosody-stage rework).
+        # Packed first among the right-aligned items so it sits at the far
+        # right, after the legend.
         self.show_face = tk.BooleanVar(value=config.SHOW_FACE)
         tk.Checkbutton(prosody_header, text="Face", variable=self.show_face,
                        command=self._cb.on_show_face_toggled,
@@ -397,7 +484,7 @@ class TrainerView:
             prosody_frame, "Pitch - intonation (semitones vs your median)", self.show_f0)
         self.f0_check.pack(anchor=tk.W)
 
-        # Body row: charts on the left (flexible width), face panel on the right.
+        # Body row: the charts (the face moved to the hero card's score row).
         prosody_body = tk.Frame(prosody_frame, bg=THEME["bg_main"])
         prosody_body.pack(fill=tk.X)
 
@@ -416,32 +503,6 @@ class TrainerView:
                                    highlightthickness=1, highlightbackground=THEME["border"])
         self.en_canvas.pack(fill=tk.X)
 
-        # Face panel: a bordered box (matching the charts) spanning the row
-        # height, with the articulation face centred inside. The face fill uses
-        # the brightest theme colour and its features the panel colour, so it
-        # reads as a white face on dark themes and a dark face on light ones.
-        self.face_frame = tk.Frame(prosody_body, width=105, height=100,
-                                   bg=THEME["bg_panel"],
-                                   highlightthickness=0)
-        # Fix the panel width at 105px: turn off geometry propagation so the
-        # FaceWidget inside cannot stretch the frame to its own requested width.
-        # The 100px height is a *minimum*: with fill=Y the panel still grows to
-        # match a taller charts row, but when both charts are hidden the row
-        # would otherwise collapse to a checkbox's height and shrink the face to
-        # nothing, so this floor keeps the face a usable size on its own.
-        # The face stays circular/centred for whatever box it gets.
-        self.face_frame.pack_propagate(False)
-        self.face = FaceWidget(self.face_frame, size=110, bg=THEME["bg_panel"],
-                               face_color=THEME["face"], face_outline=THEME["border"],
-                               eye_color=THEME["eyes"], mouth_color=THEME["mouth"])
-        # Let the charts column decide the row height: a tiny requested height
-        # stops the face from inflating the row, while fill=BOTH makes it fill
-        # whatever height the panel gets. Its responsive rebuild keeps the face
-        # circular and centred, so the panel bottom lines up with the charts.
-        self.face.configure(height=1)
-        self.face.pack(expand=True, fill=tk.BOTH, padx=10, pady=6)
-        self.face.set_expression(":)")  # waiting state
-
         # Reading hint: horizontal axis is time (stretched to equal width for both),
         # so the goal is matching the *shape* of the reference, not exact overlap.
         tk.Label(prosody_frame,
@@ -453,8 +514,9 @@ class TrainerView:
         self.f0_canvas.bind("<Configure>", lambda e: self._redraw_prosody())
         self.en_canvas.bind("<Configure>", lambda e: self._redraw_prosody())
 
-        # Both canvases and the face panel are packed above by default; hide
-        # whichever the persisted checkbox state says is off.
+        # Late-apply the persisted visibility settings: hide whichever chart is
+        # off, and pack the face (built unpacked in the hero card's score row)
+        # if the "Face" setting is on.
         self.toggle_prosody_charts()
         self.toggle_face()
 
@@ -673,19 +735,110 @@ class TrainerView:
         self.translation_label.config(text=text.strip() if text and text.strip() else "-")
 
     # ------------------------------------------------------------------
+    # Hero card: phrase text and score row
+    # ------------------------------------------------------------------
+    def set_phrase(self, text: str):
+        """Replace the hero phrase (centered, no tags) and refit its height.
+
+        Every phrase starts untagged; the "miss" underlines are applied per
+        analysis result (the words-feedback stage maps them from the engine's
+        per-word breakdown).
+        """
+        self.phrase_text.configure(state=tk.NORMAL)
+        self.phrase_text.delete("1.0", tk.END)
+        self.phrase_text.insert("1.0", text or "-", ("center",))
+        self.phrase_text.configure(state=tk.DISABLED)
+        self._fit_phrase_height()
+
+    def _fit_phrase_height(self):
+        """Size the phrase Text (in lines) to its wrapped content.
+
+        A tk.Text does not auto-grow like a Label: its height is a fixed line
+        count, so it is recomputed after every set_phrase and on width changes
+        (the <Configure> binding). No-op before the widget is laid out.
+        """
+        if self.phrase_text.winfo_width() <= 1:
+            return
+        # "update" makes Tk compute the line metrics first, so the display-line
+        # count is accurate right after an insert; without it the answer can
+        # lag one layout pass behind.
+        lines = self.phrase_text.count("1.0", "end", "update", "displaylines")
+        # Tkinter's Text.count may return the value tuple-wrapped.
+        if isinstance(lines, tuple):
+            lines = lines[0]
+        self.phrase_text.configure(height=max(1, int(lines or 1)))
+
+    def _on_miss_word_clicked(self, event):
+        """Speak the clicked underlined word slowly (via the controller).
+
+        The word is taken from the exact "miss" tag range under the click, so
+        in-word punctuation (apostrophes etc.) cannot split it the way a plain
+        wordstart/wordend probe would.
+        """
+        index = self.phrase_text.index(f"@{event.x},{event.y}")
+        tag_range = self.phrase_text.tag_prevrange("miss", f"{index}+1c")
+        if not tag_range:
+            return
+        word = self.phrase_text.get(*tag_range).strip(".,!?;:\"'()").strip()
+        # Return focus to the window so the spacebar record toggle keeps
+        # working (main.py's global click handler skips Text widgets).
+        self.root.focus_set()
+        if word:
+            self._cb.on_word_clicked(word)
+
+    def _set_score_row(self, number: str, verdict: str, color: str):
+        """Fill the SCORE column: the big number and its verdict, both in the
+        already-resolved verdict color (never green for a "needs work")."""
+        self.score_num_label.configure(text=number, fg=color)
+        self.score_verdict_label.configure(text=verdict, fg=color)
+
+    def _set_badges(self, phonemes: list[str]):
+        """Rebuild the WORK ON badges from the top problem phonemes.
+
+        An empty list clears the row and hides the caption (the empty state and
+        clean takes show no badges). Clicking a badge will speak an example
+        word - wired in the sounds-feedback stage; until then the buttons are
+        display-only.
+        """
+        for child in self.badges_frame.winfo_children():
+            child.destroy()
+        self.workon_caption.configure(text="WORK ON" if phonemes else "")
+        for phoneme in phonemes:
+            tk.Button(self.badges_frame, text=f"/{phoneme}/",
+                      font=(FONT_FAMILY, FONT_SIZE_BODY),
+                      bg=THEME["bg_accent"], fg=THEME["text_accent"],
+                      activebackground=THEME["bg_button"],
+                      activeforeground=THEME["text_button"],
+                      bd=0, padx=10, pady=2, cursor="hand2",
+                      highlightthickness=1,
+                      highlightbackground=THEME["accent"]).pack(side=tk.LEFT,
+                                                                padx=(0, 6))
+
+    def _reset_score_row(self):
+        """Empty state: no take scored yet (or a new recording just started)."""
+        self.score_num_label.configure(text="--", fg=THEME["text_dim"])
+        self.score_verdict_label.configure(text="record to get a score",
+                                           fg=THEME["text_dim"])
+        self._set_badges([])
+
+    # ------------------------------------------------------------------
     # Copy-to-clipboard (right-click menu on the phrase / translation)
     # ------------------------------------------------------------------
-    def _bind_copy_menu(self, label: tk.Label):
-        """Attach a right-click 'Copy' menu that copies ``label``'s own text.
+    def _bind_copy_menu(self, widget, getter: Optional[Callable[[], str]] = None):
+        """Attach a right-click 'Copy' menu that copies the widget's text.
 
-        Phrase and translation get their own binding, so each is copied
-        independently of the other.
+        ``getter`` returns the text to copy; it defaults to the widget's own
+        "text" option (a Label). The phrase tk.Text passes an explicit getter
+        (its whole content), since a Text has no such option. Phrase and
+        translation get their own binding, so each is copied independently.
         """
-        label.bind("<Button-3>", lambda event: self._show_copy_menu(event, label))
+        if getter is None:
+            getter = lambda: widget.cget("text")
+        widget.bind("<Button-3>", lambda event: self._show_copy_menu(event, getter))
 
-    def _show_copy_menu(self, event, label: tk.Label):
-        """Pop up a one-item 'Copy' menu for the clicked label, if it has text."""
-        text = label.cget("text").strip()
+    def _show_copy_menu(self, event, getter: Callable[[], str]):
+        """Pop up a one-item 'Copy' menu for the clicked widget, if it has text."""
+        text = getter().strip()
         # Nothing useful to copy from an empty card or the "-" placeholder.
         if not text or text == "-":
             return
@@ -710,15 +863,14 @@ class TrainerView:
         effects.
         """
         show = bool(config.TRANSLATION_LANGUAGE)
-        packed = self.translation_frame.winfo_manager() == "pack"
+        packed = self.translation_label.winfo_manager() == "pack"
         if show and not packed:
-            # Insert directly under the phrase card with no gap (both pads 0) so
-            # the phrase and its translation touch and read as one pair; their
-            # 1px borders meet to form a single divider line between them.
-            self.translation_frame.pack(side=tk.TOP, fill=tk.X, padx=20,
-                                        pady=(0, 10), after=self.phrase_frame)
+            # Inside the hero card, right under the phrase (no separator - the
+            # dimmer, smaller type is the whole distinction).
+            self.translation_label.pack(fill=tk.X, padx=26, pady=(8, 0),
+                                        after=self.phrase_text)
         elif not show and packed:
-            self.translation_frame.pack_forget()
+            self.translation_label.pack_forget()
 
     # ------------------------------------------------------------------
     # Write accessors for the checkbox settings the main window still owns
@@ -801,7 +953,7 @@ class TrainerView:
         language (empty when translation is off or unavailable); it is shown in
         the panel under the phrase card when a language is active.
         """
-        self.phrase_label.config(text=phrase)
+        self.set_phrase(phrase)
         self.set_translation(translation)
         self.update_status("Listen to the reference...", THEME["reference"])
         self.draw_mic_button("speaking")
@@ -988,6 +1140,8 @@ class TrainerView:
         separately by the caller (enter_recording -> "Recording...").
         """
         self.stats_label.configure(text="Score: - (-)", fg=THEME["text_dim"])
+        # Hero-card score row back to its empty state ("--", no badges).
+        self._reset_score_row()
         self._last_prosody = None
         self.f0_canvas.delete("all")
         self.en_canvas.delete("all")
@@ -1103,13 +1257,15 @@ class TrainerView:
             self.en_canvas.pack_forget()
 
     def toggle_face(self):
-        """Show/hide the face panel; the charts column reflows to the free width."""
+        """Show/hide the face in the hero card's score row (the "Face" setting)."""
         self.root.focus_set()
-        shown = self.face_frame.winfo_manager() == "pack"
+        shown = self.face.winfo_manager() == "pack"
         if self.show_face.get() and not shown:
-            self.face_frame.pack(side=tk.RIGHT, fill=tk.Y, padx=(8, 0))
+            # The only side=RIGHT child of the score row, so packing order
+            # relative to the other columns does not matter.
+            self.face.pack(side=tk.RIGHT, padx=(8, 0))
         elif not self.show_face.get() and shown:
-            self.face_frame.pack_forget()
+            self.face.pack_forget()
 
     def _redraw_prosody(self):
         """Redraw both prosody canvases from the cached result (e.g. after resize)."""
@@ -1155,6 +1311,11 @@ class TrainerView:
             quality, quality_color = self._quality_label(result.score)
         # The face follows the same quality band, so a passed take always smiles.
         self.face.set_expression(self._quality_expression(quality_color))
+        # Hero card: the big score digit and its verdict share the resolved
+        # quality color (never green for a "needs work"), and the WORK ON row
+        # shows the top-3 problem sounds.
+        self._set_score_row(f"{display_score:.0f}", quality.lower(), quality_color)
+        self._set_badges([entry["phoneme"] for entry in result.weak_phonemes[:3]])
         self.feedback_display.configure(state=tk.NORMAL)
         # The numeric score moved out of this panel: the raw score/bucket now lives
         # in the status bar and the qualitative label. This panel keeps only the
@@ -1245,6 +1406,9 @@ class TrainerView:
         would go, so this mode never pretends the take was judged.
         """
         self.face.set_expression("neutral")
+        # Hero card: neutral "scoring off" read-out - no number, no badges.
+        self._set_score_row("--", "scoring off", THEME["text_dim"])
+        self._set_badges([])
         self.feedback_display.configure(state=tk.NORMAL)
         # Same result-separator convention as show_feedback (see the comment there).
         if self.feedback_display.get("1.0", "end-1c"):

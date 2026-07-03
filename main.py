@@ -270,6 +270,7 @@ class PronunciationTrainerGUI:
             play_reference=self.play_reference,
             play_reference_slow=self.play_reference_slow,
             on_generate_phrase=self.on_generate_phrase,
+            on_word_clicked=self.on_word_clicked,
         ))
         self.bind_events()
 
@@ -928,8 +929,18 @@ class PronunciationTrainerGUI:
         self.root.focus_set()
 
     def _typing_in_text_field(self) -> bool:
-        """True when a text-input widget owns focus - spacebar should type, not record."""
-        return isinstance(self.root.focus_get(), (tk.Entry, tk.Text))
+        """True when a text-input widget owns focus - spacebar should type, not record.
+
+        Disabled Text widgets do not count: nothing can be typed into them, yet
+        on Windows Tk focuses a Text on click even when it is disabled (so a
+        selection can be shown). Without this exception, clicking the read-only
+        hero phrase or the feedback panel would silently kill the space/arrow
+        hotkeys until something else took focus.
+        """
+        widget = self.root.focus_get()
+        if isinstance(widget, tk.Text):
+            return str(widget.cget("state")) != tk.DISABLED
+        return isinstance(widget, tk.Entry)
 
     def on_keyboard_press(self, event):
         # Holding a record key (space or Down) makes Tk fire KeyPress repeatedly
@@ -1231,11 +1242,51 @@ class PronunciationTrainerGUI:
         """Replay the reference at the configured speed (Reference button)."""
         self._play_reference_at(self._selected_speed())
 
+    def _slow_speed(self) -> float:
+        """The turtle playback speed: one step below the Settings value."""
+        return max(config.REFERENCE_SPEED - config.REFERENCE_SLOW_DELTA,
+                   config.REFERENCE_SLOW_MIN)
+
     def play_reference_slow(self):
         """Replay the reference one step slower than normal (the turtle button)."""
-        slow = max(config.REFERENCE_SPEED - config.REFERENCE_SLOW_DELTA,
-                   config.REFERENCE_SLOW_MIN)
-        self._play_reference_at(slow)
+        self._play_reference_at(self._slow_speed())
+
+    def on_word_clicked(self, word: str):
+        """Speak one phrase word slowly (click on an underlined hero-card word).
+
+        Synthesizes just that word and plays it at the turtle speed, via the
+        same lowered-sample-rate slowing as the slow-reference button. Gated
+        like the other playbacks: never into an open microphone or while an
+        analysis playback is in flight.
+        """
+        word = word.strip()
+        if not word or not self.app_ready or self.is_generating:
+            return
+        if self.recorder.is_active():
+            return  # never play into an open microphone
+        with self.processing_lock:
+            if self.is_processing_audio:
+                return
+        self.stop_playback()  # silence any current playback first
+        # The stop event is installed here on the main thread (see
+        # _new_playback_event); the worker only receives it.
+        stop_event = self._new_playback_event()
+        self.view.playing_status(f"Playing '{word}' slowly...")
+        speed = self._slow_speed()
+
+        def _worker():
+            try:
+                audio = self.tts_mgr.synthesize(word, voice=self.current_voice)
+                if audio is None or audio.size == 0:
+                    return
+                self._play_with_face(audio, int(KOKORO_SAMPLE_RATE * speed),
+                                     stop_event)
+            except Exception:
+                logging.exception("Word playback error:")
+            finally:
+                self.root.after(0, self._playback_finished, stop_event)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _play_reference_at(self, speed: float):
         """Play the current reference audio at *speed* (1.0 = normal)."""
