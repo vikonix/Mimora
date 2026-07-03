@@ -213,6 +213,15 @@ class PronunciationTrainerGUI:
         # the phrase generator when a translation language is selected; kept
         # beside current_phrase so the two are always shown together.
         self.current_translation: str = ""
+        # Session tally shown in the status bar. "Phrases: N" counts the distinct
+        # phrases practiced this run (a set of phrase texts); "Avg" is the running
+        # mean over *every* scored attempt this run (repeats of one phrase each
+        # add to the average). The two therefore count different things: unique
+        # phrases vs total attempts. Empty/zero at construction == reset on app
+        # start (no explicit reset action).
+        self._session_phrases: set[str] = set()
+        self._session_score_sum: float = 0.0
+        self._session_attempts: int = 0
         # Kokoro voice the current reference was synthesized with (logged with
         # every analysis sample - the acoustic calibration is voice-specific).
         self.current_voice: str = config.KOKORO_VOICE
@@ -271,6 +280,7 @@ class PronunciationTrainerGUI:
             play_reference_slow=self.play_reference_slow,
             on_generate_phrase=self.on_generate_phrase,
             on_word_clicked=self.on_word_clicked,
+            on_take_scored=self.on_take_scored,
         ))
         self.bind_events()
 
@@ -1150,7 +1160,7 @@ class PronunciationTrainerGUI:
             result.prosody = self._compute_prosody_safe(self.reference_audio,
                                                          KOKORO_SAMPLE_RATE)
             self.root.after(0, self.view.show_feedback, result, self.current_phrase,
-                            self._has_user_recording())
+                            self._has_user_recording(), True)  # is_self_test
         except Exception:
             logging.exception("Reference self-test error:")
             self.root.after(0, self.view.append_error_msg, "Reference test failed.")
@@ -1286,6 +1296,23 @@ class PronunciationTrainerGUI:
                 self.root.after(0, self._playback_finished, stop_event)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def on_take_scored(self, phrase: str, score: float):
+        """Record a scored take into the session tally and refresh the status bar.
+
+        Called by the view once a take has a user-facing score. Every attempt
+        feeds the running average; the phrase text is added to a set so the count
+        reflects distinct phrases. The status bar then shows the unique-phrase
+        count and the mean over all attempts this run.
+        """
+        phrase = (phrase or "").strip()
+        if not phrase:
+            return
+        self._session_phrases.add(phrase)
+        self._session_score_sum += score
+        self._session_attempts += 1
+        average = self._session_score_sum / self._session_attempts
+        self.view.update_session_stats(len(self._session_phrases), average)
 
     def _play_reference_at(self, speed: float):
         """Play the current reference audio at *speed* (1.0 = normal)."""

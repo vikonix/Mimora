@@ -84,6 +84,10 @@ class ViewCallbacks:
     # Click on an underlined ("miss") word inside the hero phrase: the
     # controller synthesizes that single word and plays it slowly.
     on_word_clicked: Callable[[str], None]
+    # A take was scored: the view reports the phrase and its user-facing score so
+    # the controller can keep the session tally (unique phrases, running average)
+    # that the status bar shows. Only called for actually-scored takes.
+    on_take_scored: Callable[[str, float], None]
 
 # Phrase-length selector labels. The label maps to generate_phrase's ``length``
 # mode: LENGTH_FULL → "full" sentence, LENGTH_FEW_WORDS → "fragment".
@@ -254,10 +258,27 @@ class TrainerView:
                                      font=(FONT_FAMILY, 9), fg=THEME["ready"], bg=THEME["bg_panel"])
         self.status_label.pack(side=tk.LEFT, padx=15, pady=4)
 
+        # Session tally (right side): the number of distinct phrases practiced
+        # this run and the mean of their latest scores. The per-take score itself
+        # moved to the hero card (see _set_score_row), so this line no longer
+        # duplicates it. Driven by update_session_stats from the controller.
         self.stats_label = tk.Label(self.status_bar,
-                                    text="Score: - (-)",
+                                    text="Phrases: 0 · Avg: -",
                                     font=(FONT_FAMILY, 9), fg=THEME["text_dim"], bg=THEME["bg_panel"])
         self.stats_label.pack(side=tk.RIGHT, padx=15, pady=4)
+
+        # 2a. Tip line - a single static hint sitting directly above the status
+        # bar. Packed side=BOTTOM after the status bar so it lands just above it,
+        # regardless of the TOP-packed content built later. It restates the two
+        # least discoverable actions (space-to-record, Reference-replays), the
+        # role the removed instruction line used to fill.
+        self.tip_label = tk.Label(
+            self.root,
+            text='Tip: hold SPACE or click the mic to record. '
+                 '"Reference ▶" replays the example.',
+            font=(FONT_FAMILY, FONT_SIZE_CAPTION), fg=THEME["text_muted"],
+            bg=THEME["bg_main"], anchor=tk.W)
+        self.tip_label.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(0, 4))
 
         # 3. Control panel (v2c step 4): one row holding every phrase-level
         # action, each in its own column with an 8pt caption beneath. Left to
@@ -371,6 +392,16 @@ class TrainerView:
             activebackground=THEME["bg_accent_active"], activeforeground=THEME["text_bright"],
             bd=0, width=10, padx=8, pady=1, cursor="hand2")
         self._clear_btn.pack(side=tk.LEFT, padx=(6, 0))
+
+        # Collapsed-state preview: when the editor is hidden, this shows the first
+        # part of the current text (grey, italic, quoted) so the panel still hints
+        # at its content without taking the editor's vertical space - the same
+        # affordance the mockup's collapsed <summary> line provides. Only visible
+        # while collapsed; toggle_practice_text swaps it against the editor and the
+        # Paste/Clear buttons, and refreshes its text on each collapse.
+        self._practice_preview = tk.Label(
+            text_header, text="", font=(FONT_FAMILY, 9, "italic"),
+            fg=THEME["text_muted"], bg=THEME["bg_main"], anchor=tk.W)
 
         self.source_text = scrolledtext.ScrolledText(
             source_frame, bg=THEME["bg_panel"], fg=THEME["text"], insertbackground=THEME["text_bright"],
@@ -685,6 +716,9 @@ class TrainerView:
         """Replace the practice-text panel contents."""
         self.source_text.delete("1.0", tk.END)
         self.source_text.insert("1.0", text)
+        # Keep the collapsed preview in sync when text is loaded while hidden.
+        if self.practice_collapsed.get():
+            self._update_practice_preview()
 
     def _paste_practice_text(self):
         """Insert clipboard text into the practice field (the 'Paste' button).
@@ -734,13 +768,35 @@ class TrainerView:
             self.source_text.pack_forget()
             self._paste_btn.pack_forget()
             self._clear_btn.pack_forget()
+            # Swap the editor row for the one-line text preview next to the caption.
+            self._update_practice_preview()
+            self._practice_preview.pack(side=tk.LEFT, padx=(10, 0))
         elif not collapsed and not shown:
             # Restore the build order: the editor is the last child of
             # source_frame, and the buttons pack after the caption (LEFT packing
             # preserves their order).
+            self._practice_preview.pack_forget()
             self.source_text.pack(fill=tk.X, pady=4)
             self._paste_btn.pack(side=tk.LEFT, padx=(10, 0))
             self._clear_btn.pack(side=tk.LEFT, padx=(6, 0))
+
+    def _update_practice_preview(self):
+        """Refresh the collapsed-state preview from the current editor content.
+
+        Shows the first ~60 characters of the practice text on a single line
+        (newlines and runs of whitespace collapsed to single spaces), quoted, with
+        an ellipsis when truncated. Empty text falls back to a neutral placeholder.
+        """
+        raw = self.source_text.get("1.0", "end-1c")
+        collapsed_ws = " ".join(raw.split())
+        if not collapsed_ws:
+            self._practice_preview.config(text="(empty)")
+            return
+        limit = 60
+        shown = collapsed_ws[:limit].rstrip()
+        if len(collapsed_ws) > limit:
+            shown += "..."
+        self._practice_preview.config(text=f'"{shown}"')
 
     def set_practice_collapsed(self, flag: bool):
         self.practice_collapsed.set(bool(flag))
@@ -1158,33 +1214,29 @@ class TrainerView:
         # without change; the dead calls are cleaned up in the step 8 pass.
         pass
 
-    def update_score_stats(self, score: float, bucket: int = -1,
-                           color: Optional[str] = None):
-        """Show the user-facing score and its 0-5 bucket: ``Score: 92 (4)``.
+    def update_session_stats(self, count: int, average: float):
+        """Show the session tally in the status bar: ``Phrases: 4 · Avg: 78``.
 
-        ``score`` is the engine's user-facing number (the phoneme engine's
-        calibrated percent, the acoustic engine's raw 0-100). ``bucket`` is the
-        0-5 grade, shown as a dash when absent (``bucket == -1``). ``color`` is
-        the already-resolved quality colour so this read-out matches the status
-        line and face exactly; when omitted it falls back to the raw-score band.
+        ``count`` is the number of distinct phrases practiced this run and
+        ``average`` the mean over every scored attempt this run (both supplied by
+        the controller, which owns the session data). The average is rounded to a
+        whole number to match the mockup.
         """
-        bucket_text = str(bucket) if bucket >= 0 else "-"
-        if color is None:
-            _, color = self._quality_label(score)
-        self.stats_label.configure(text=f"Score: {score:.0f} ({bucket_text})", fg=color)
+        self.stats_label.configure(text=f"Phrases: {count} · Avg: {average:.0f}",
+                                   fg=THEME["text_dim"])
 
     def clear_previous_result(self):
         """Reset the per-take indicators before a new recording starts.
 
-        Resets the Score read-out in the status bar to its placeholder, erases
-        both prosody charts and resets the face to its neutral waiting smile, so
-        a stale single-value indicator can never be mistaken for the take in
-        progress. The feedback panel is deliberately NOT cleared here: it is a
-        running history of every attempt, appended to by show_feedback /
-        append_error_msg and kept across takes. The status *line* is set
-        separately by the caller (enter_recording -> "Recording...").
+        Resets the hero-card score row to its empty state, erases both prosody
+        charts and resets the face to its neutral waiting smile, so a stale
+        single-value indicator can never be mistaken for the take in progress.
+        The session tally in the status bar is deliberately NOT touched here: it
+        accumulates across the whole run. The feedback panel is likewise NOT
+        cleared: it is a running history of every attempt, appended to by
+        show_feedback / append_error_msg and kept across takes. The status *line*
+        is set separately by the caller (enter_recording -> "Recording...").
         """
-        self.stats_label.configure(text="Score: - (-)", fg=THEME["text_dim"])
         # Hero-card score row back to its empty state ("--", no badges).
         self._reset_score_row()
         self._last_prosody = None
@@ -1334,7 +1386,7 @@ class TrainerView:
     # Feedback rendering
     # ------------------------------------------------------------------
     def show_feedback(self, result: "PronunciationResult", current_phrase,
-                      has_recording: bool = True):
+                      has_recording: bool = True, is_self_test: bool = False):
         # An unscored result (the "none" engine) has no verdict to present:
         # score/passed carry no meaning, so render the neutral read-out instead
         # of a quality label that would pretend the take was judged.
@@ -1426,7 +1478,13 @@ class TrainerView:
         self.root.update_idletasks()  # ensure the canvases have a real width/height
         self._redraw_prosody()
 
-        self.update_score_stats(display_score, bucket, quality_color)
+        # The number itself now lives in the hero card (set above via
+        # _set_score_row); report the scored take to the controller so it can
+        # update the session tally shown in the status bar. The reference
+        # self-test reaches here without a real recording - it is a pipeline
+        # sanity check, not a practice attempt, so it must not touch the tally.
+        if not is_self_test:
+            self._cb.on_take_scored(current_phrase, display_score)
 
         # Re-enable everything disabled while recording: the reference replay,
         # the self-test and new-phrase generation. "My recording" is enabled only
@@ -1472,8 +1530,8 @@ class TrainerView:
         self.root.update_idletasks()  # ensure the canvases have a real width/height
         self._redraw_prosody()
 
-        # Neutral score placeholder (same style clear_previous_result uses).
-        self.stats_label.configure(text="Score: - (-)", fg=THEME["text_dim"])
+        # Unscored takes ("none" engine) do not contribute to the session tally,
+        # so the status bar's Phrases/Avg line is left untouched here.
 
         self._set_actions(generate=True, reference=True, user=has_recording, test=True)
         self.draw_mic_button("idle")
