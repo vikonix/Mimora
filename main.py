@@ -286,6 +286,7 @@ class PronunciationTrainerGUI:
             play_reference_slow=self.play_reference_slow,
             on_generate_phrase=self.on_generate_phrase,
             on_word_clicked=self.on_word_clicked,
+            on_sound_example=self.on_sound_example,
             on_take_scored=self.on_take_scored,
             on_history_entry=self.on_history_entry,
         ))
@@ -1286,13 +1287,14 @@ class PronunciationTrainerGUI:
         """Replay the reference one step slower than normal (the turtle button)."""
         self._play_reference_at(self._slow_speed())
 
-    def on_word_clicked(self, word: str):
-        """Speak one phrase word slowly (click on an underlined hero-card word).
+    def _speak_word_at(self, word: str, speed: float, status: str):
+        """Synthesize a single word and play it at ``speed``.
 
-        Synthesizes just that word and plays it at the turtle speed, via the
-        same lowered-sample-rate slowing as the slow-reference button. Gated
-        like the other playbacks: never into an open microphone or while an
-        analysis playback is in flight.
+        Shared by the two single-word playbacks - the underlined hero-card word
+        and the phoneme-example badge - which differ only in speed and status
+        line. ``status`` is the already-formatted status-bar text. Gated like the
+        other playbacks: never into an open microphone or while an analysis
+        playback is in flight.
         """
         word = word.strip()
         if not word or not self.app_ready or self.is_generating:
@@ -1306,8 +1308,7 @@ class PronunciationTrainerGUI:
         # The stop event is installed here on the main thread (see
         # _new_playback_event); the worker only receives it.
         stop_event = self._new_playback_event()
-        self.view.playing_status(f"Playing '{word}' slowly...")
-        speed = self._slow_speed()
+        self.view.playing_status(status)
 
         def _worker():
             try:
@@ -1322,6 +1323,24 @@ class PronunciationTrainerGUI:
                 self.root.after(0, self._playback_finished, stop_event)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def on_word_clicked(self, word: str):
+        """Speak one phrase word slowly (click on an underlined hero-card word).
+
+        Synthesizes just that word and plays it at the turtle speed, via the
+        same lowered-sample-rate slowing as the slow-reference button.
+        """
+        self._speak_word_at(word, self._slow_speed(),
+                            f"Playing '{word.strip()}' slowly...")
+
+    def on_sound_example(self, word: str):
+        """Speak a phoneme's example word at normal speed (WORK ON badge click).
+
+        The example word (e.g. "put" for /ʊ/) is a natural rendering of the
+        target sound, so it plays at 1.0x rather than the slowed single-word
+        replay used for the underlined phrase words.
+        """
+        self._speak_word_at(word, 1.0, f"Playing example '{word.strip()}'...")
 
     def on_take_scored(self, phrase: str, score: float):
         """Record a scored take into the session tally and refresh the status bar.

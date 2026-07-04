@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Callable, Optional
 
 from mimora import config, prosody_utils
 from mimora.face_widget import FaceWidget
+from mimora.phoneme_examples import example_for
 
 # Resolved UI color palette (semantic name -> hex), selected by the
 # "color_theme" setting in settings.json; see config.py.
@@ -84,6 +85,9 @@ class ViewCallbacks:
     # Click on an underlined ("miss") word inside the hero phrase: the
     # controller synthesizes that single word and plays it slowly.
     on_word_clicked: Callable[[str], None]
+    # Click on a "WORK ON" phoneme badge: the controller synthesizes the
+    # phoneme's example word (e.g. "put" for /ʊ/) and plays it at normal speed.
+    on_sound_example: Callable[[str], None]
     # A take was scored: the view reports the phrase and its user-facing score so
     # the controller can keep the session tally (unique phrases, running average)
     # that the status bar shows. Only called for actually-scored takes.
@@ -117,6 +121,43 @@ FONT_SIZE_SCORE = 26         # big verdict score in the score row (added in the
 FONT_SIZE_TRANSLATION = 11   # translation line under the phrase
 FONT_SIZE_BODY = 10          # normal body text
 FONT_SIZE_CAPTION = 8        # sublabels, captions, legends
+
+
+class _Tooltip:
+    """A minimal hover tooltip for a Tk widget (Tk has no native ``title=``).
+
+    Shows a small borderless ``Toplevel`` with ``text`` just below the widget on
+    ``<Enter>`` and hides it on ``<Leave>`` or click. One instance per widget;
+    the popup is created lazily and destroyed on hide, so no stray windows leak.
+    """
+
+    def __init__(self, widget, text: str):
+        self._widget = widget
+        self._text = text
+        self._tip = None
+        widget.bind("<Enter>", self._show, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _show(self, _event=None):
+        if self._tip or not self._text:
+            return
+        # Position just under the widget's bottom-left corner.
+        x = self._widget.winfo_rootx()
+        y = self._widget.winfo_rooty() + self._widget.winfo_height() + 4
+        self._tip = tk.Toplevel(self._widget)
+        self._tip.wm_overrideredirect(True)   # no title bar / border
+        self._tip.wm_geometry(f"+{x}+{y}")
+        tk.Label(self._tip, text=self._text, justify=tk.LEFT,
+                 font=(FONT_FAMILY, FONT_SIZE_CAPTION),
+                 bg=THEME["bg_panel"], fg=THEME["text"],
+                 highlightthickness=1, highlightbackground=THEME["border"],
+                 padx=6, pady=3).pack()
+
+    def _hide(self, _event=None):
+        if self._tip is not None:
+            self._tip.destroy()
+            self._tip = None
 
 
 class TrainerView:
@@ -530,6 +571,15 @@ class TrainerView:
         self.workon_caption.pack(anchor=tk.W)
         self.badges_frame = tk.Frame(workon_col, bg=THEME["bg_card"])
         self.badges_frame.pack(anchor=tk.W, pady=(4, 0))
+        # Hint under the badges (mockup): how to use the two interactive feedback
+        # affordances. Packed only while a scored take is on the card (see
+        # _set_hint), so the empty/unscored states stay quiet.
+        self.hint_label = tk.Label(
+            workon_col,
+            text="Click an underlined word to hear it slowly; "
+                 "click a sound for an example.",
+            font=(FONT_FAMILY, FONT_SIZE_CAPTION), fg=THEME["text_muted"],
+            bg=THEME["bg_card"], justify=tk.LEFT, wraplength=320)
 
         # The face lives in the score row now (verdict indicator + talking
         # mouth), not in the prosody block. Same single FaceWidget instance the
@@ -888,6 +938,41 @@ class TrainerView:
             lines = lines[0]
         self.phrase_text.configure(height=max(1, int(lines or 1)))
 
+    def _mark_miss_words(self, reference_words: list) -> int:
+        """Re-render the hero phrase, underlining the mispronounced words.
+
+        Rebuilds the phrase from the engine's per-word breakdown so the "miss"
+        tag lands on exactly the target tokens the engine judged: a word is a
+        miss when its three-level ``level`` is "bad" (the phoneme engine) or,
+        without a level, when ``correct`` is False (the acoustic engine) - "ok"
+        words stay unmarked. With no breakdown the phrase is left as set (no
+        underlines). The Text is disabled again afterwards so it never steals the
+        spacebar record toggle. Returns the number of underlined words, so the
+        caller can decide whether the "click an underlined word" hint applies.
+        """
+        if not reference_words:
+            return 0
+        misses = 0
+        self.phrase_text.configure(state=tk.NORMAL)
+        self.phrase_text.delete("1.0", tk.END)
+        last = len(reference_words) - 1
+        for i, word in enumerate(reference_words):
+            token = word.get("word", "")
+            level = word.get("level")
+            if level in ("good", "ok", "bad"):
+                is_miss = level == "bad"
+            else:
+                is_miss = not word.get("correct", True)
+            if is_miss:
+                misses += 1
+            self.phrase_text.insert(tk.END, token,
+                                    ("center", "miss") if is_miss else ("center",))
+            if i < last:
+                self.phrase_text.insert(tk.END, " ", ("center",))
+        self.phrase_text.configure(state=tk.DISABLED)
+        self._fit_phrase_height()
+        return misses
+
     def _on_miss_word_clicked(self, event):
         """Speak the clicked underlined word slowly (via the controller).
 
@@ -916,23 +1001,44 @@ class TrainerView:
         """Rebuild the WORK ON badges from the top problem phonemes.
 
         An empty list clears the row and hides the caption (the empty state and
-        clean takes show no badges). Clicking a badge will speak an example
-        word - wired in the sounds-feedback stage; until then the buttons are
-        display-only.
+        clean takes show no badges). Each badge whose phoneme has a known example
+        word gets a hover tooltip ("as in 'put'") and speaks that example at
+        normal speed on click (via ``on_sound_example``). An unknown phoneme
+        stays a plain, non-playing badge.
         """
         for child in self.badges_frame.winfo_children():
             child.destroy()
         self.workon_caption.configure(text="WORK ON" if phonemes else "")
         for phoneme in phonemes:
-            tk.Button(self.badges_frame, text=f"/{phoneme}/",
-                      font=(FONT_FAMILY, FONT_SIZE_BODY),
-                      bg=THEME["bg_accent"], fg=THEME["text_accent"],
-                      activebackground=THEME["bg_button"],
-                      activeforeground=THEME["text_button"],
-                      bd=0, padx=10, pady=2, cursor="hand2",
-                      highlightthickness=1,
-                      highlightbackground=THEME["accent"]).pack(side=tk.LEFT,
-                                                                padx=(0, 6))
+            example = example_for(phoneme)
+            badge = tk.Button(self.badges_frame, text=f"/{phoneme}/",
+                              font=(FONT_FAMILY, FONT_SIZE_BODY),
+                              bg=THEME["bg_accent"], fg=THEME["text_accent"],
+                              activebackground=THEME["bg_button"],
+                              activeforeground=THEME["text_button"],
+                              bd=0, padx=10, pady=2, cursor="hand2",
+                              highlightthickness=1,
+                              highlightbackground=THEME["accent"])
+            badge.pack(side=tk.LEFT, padx=(0, 6))
+            if example:
+                # Bind the current example per button via a default argument so
+                # every badge keeps its own word (not the loop's last one).
+                badge.configure(
+                    command=lambda w=example: self._cb.on_sound_example(w))
+                _Tooltip(badge, f"as in '{example}'")
+            else:
+                badge.configure(cursor="arrow")   # nothing to play or name
+
+    def _set_hint(self, show: bool):
+        """Show or hide the interactive-feedback hint under the badges.
+
+        Shown only while a scored take is on the card, where both affordances it
+        describes (underlined words, sound badges) actually exist.
+        """
+        if show:
+            self.hint_label.pack(anchor=tk.W, pady=(6, 0))
+        else:
+            self.hint_label.pack_forget()
 
     def _reset_score_row(self):
         """Empty state: no take scored yet (or a new recording just started)."""
@@ -940,6 +1046,10 @@ class TrainerView:
         self.score_verdict_label.configure(text="record to get a score",
                                            fg=THEME["text_dim"])
         self._set_badges([])
+        self._set_hint(False)
+        # Drop any underlines from the previous take (the phrase itself stays;
+        # a new phrase is replaced wholesale by set_phrase).
+        self.phrase_text.tag_remove("miss", "1.0", tk.END)
 
     # ------------------------------------------------------------------
     # Copy-to-clipboard (right-click menu on the phrase / translation)
@@ -1067,6 +1177,11 @@ class TrainerView:
         language (empty when translation is off or unavailable); it is shown in
         the panel under the phrase card when a language is active.
         """
+        # Clear the previous phrase's result first: its score, verdict, WORK ON
+        # badges, hint, word underlines, prosody charts and face must not linger
+        # under the new phrase. (Recording start clears these too; a new phrase is
+        # the other entry point where the old result becomes stale.)
+        self.clear_previous_result()
         self.set_phrase(phrase)
         self.set_translation(translation)
         self.update_status("Listen to the reference...", THEME["reference"])
@@ -1595,7 +1710,13 @@ class TrainerView:
         # quality color (never green for a "needs work"), and the WORK ON row
         # shows the top-3 problem sounds.
         self._set_score_row(f"{display_score:.0f}", quality.lower(), quality_color)
-        self._set_badges([entry["phoneme"] for entry in result.weak_phonemes[:3]])
+        badges = [entry["phoneme"] for entry in result.weak_phonemes[:3]]
+        self._set_badges(badges)
+        # Underline the mispronounced words directly in the phrase; show the
+        # how-to hint only when at least one interactive affordance exists (an
+        # underlined word or a sound badge), so a clean take stays uncluttered.
+        misses = self._mark_miss_words(result.reference_words)
+        self._set_hint(bool(misses) or bool(badges))
         # The Phrase/Work-on breakdown is no longer written to a running text
         # panel: it now lives in the attempt-history list, emitted below once per
         # take (see on_history_entry). The hero card already carries the score,
@@ -1648,9 +1769,11 @@ class TrainerView:
         attempt history, so this mode never pretends the take was judged.
         """
         self.face.set_expression("neutral")
-        # Hero card: neutral "scoring off" read-out - no number, no badges.
+        # Hero card: neutral "scoring off" read-out - no number, no badges, no
+        # word underlines and no how-to hint (nothing was judged to act on).
         self._set_score_row("--", "scoring off", THEME["text_dim"])
         self._set_badges([])
+        self._set_hint(False)
         # A neutral history row (no score, no trend). The reference self-test is a
         # pipeline check, not a practice take, so it stays out of the history for
         # the same reason it stays out of the session tally.
