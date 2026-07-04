@@ -241,11 +241,12 @@ SILENCE_THRESHOLD = _num("silence_threshold", 0.01, minimum=0.0)
 # are opt-in for debugging rather than always-on.
 SAVE_RECORDINGS = _bool("save_recordings", False)
 
-# Model warm-up at startup ("warm_up"): when true (the default) every loaded
-# model runs one dummy pass right after loading, so the first real take pays no
-# first-call latency. false skips those passes to shorten startup on slow
-# machines - the cost simply moves to the first take (and, for the phoneme
-# engine, to the first panphon/espeak use), it is never avoided twice.
+# Model warm-up at startup ("warm_up"): when true every loaded model runs one
+# dummy pass right after loading, so the first real take pays no first-call
+# latency. Off by default: the passes lengthen startup, and on slow machines
+# the wait up front hurts more than a slower first take - the cost simply
+# moves to the first take (and, for the phoneme engine, to the first
+# panphon/espeak use), it is never paid twice.
 WARM_UP = _bool("warm_up", False)
 
 # Hardware Acceleration setup - the value detected by hardware detection wins;
@@ -418,7 +419,7 @@ if REFERENCE_SPEED not in REFERENCE_SPEED_CHOICES:
           file=sys.stderr)
     REFERENCE_SPEED = 1.0
 
-# The one-tap slow replay (the "turtle" button next to Reference) plays one
+# The one-tap slow replay (the "Slow ▶" button next to Reference) plays one
 # step slower than the normal reference: REFERENCE_SPEED - REFERENCE_SLOW_DELTA.
 # Relative rather than fixed, so it always feels "a bit slower" whatever the
 # configured speed. Floored by REFERENCE_SLOW_MIN so a very low setting cannot

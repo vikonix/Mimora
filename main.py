@@ -634,12 +634,16 @@ class PronunciationTrainerGUI:
         # Keep the worker-visible flag in sync (read by _compute_prosody_safe
         # on analysis threads; written only here, on the Tk main thread).
         self._prosody_wanted = self.view.get_show_prosody()
+        # Keep config current too: it is the live source of truth the reset
+        # diffing (_default_differs_from_live) compares against.
+        config.SHOW_PROSODY = self.view.get_show_prosody()
         self._persist_setting("show_prosody", self.view.get_show_prosody())
         self._sync_settings_window("show_prosody", self.view.get_show_prosody())
 
     def on_show_face_toggled(self):
         """Apply the face checkbox (show/hide the panel) and persist it."""
         self.view.toggle_face()
+        config.SHOW_FACE = self.view.get_show_face()
         self._persist_setting("show_face", self.view.get_show_face())
         self._sync_settings_window("show_face", self.view.get_show_face())
 
@@ -647,6 +651,7 @@ class PronunciationTrainerGUI:
         """Apply the practice-text collapse toggle and persist it."""
         self.view.toggle_practice_text()
         collapsed = self.view.get_practice_collapsed()
+        config.PRACTICE_TEXT_COLLAPSED = collapsed
         self._persist_setting("practice_text_collapsed", collapsed)
         self._sync_settings_window("practice_text_collapsed", collapsed)
 
@@ -665,6 +670,25 @@ class PronunciationTrainerGUI:
         "silence_threshold": ("SILENCE_THRESHOLD", float),
         "phrase_gen_window_sentences": ("PHRASE_GEN_WINDOW_SENTENCES", int),
         "phrase_gen_window_repeats": ("PHRASE_GEN_WINDOW_REPEATS", int),
+    }
+
+    # settings.json key -> config attribute holding the value the running app
+    # currently uses, for the handler-driven settings on_setting_changed
+    # applies live (the handlers keep these attributes current). Together with
+    # _LIVE_CONFIG_ATTRS this lets the "Default" reset skip no-op dispatches -
+    # see _default_differs_from_live. Restart-only keys are absent on purpose:
+    # their dispatch would be persist-only, and the reset has already removed
+    # the persisted overrides.
+    _SETTING_LIVE_ATTRS = {
+        "user_name": "USER_NAME",
+        "voice": "KOKORO_VOICE",
+        "phrase_length": "PHRASE_LENGTH",
+        "translation_language": "TRANSLATION_LANGUAGE",
+        "reference_speed": "REFERENCE_SPEED",
+        "show_face": "SHOW_FACE",
+        "show_prosody": "SHOW_PROSODY",
+        "practice_text_collapsed": "PRACTICE_TEXT_COLLAPSED",
+        "practice_text_file": "PRACTICE_TEXT_FILE",
     }
 
     def on_settings_clicked(self):
@@ -761,10 +785,38 @@ class PronunciationTrainerGUI:
         self._suppress_persist = True
         try:
             for key, value in config.default_user_settings().items():
-                self.on_setting_changed(key, value)
+                # Dispatch only actual changes: re-applying an already-default
+                # voice or phrase length would needlessly regenerate the
+                # current phrase (their handlers regenerate on every call).
+                if self._default_differs_from_live(key, value):
+                    self.on_setting_changed(key, value)
         finally:
             self._suppress_persist = False
         return True
+
+    def _default_differs_from_live(self, key: str, value) -> bool:
+        """True when applying default *value* for *key* would change anything.
+
+        The comparison target is the config attribute the running app reads
+        (the handlers and _LIVE_CONFIG_ATTRS keep those current). Restart-only
+        keys always answer False: their reset dispatch would be persist-only,
+        and on_reset_settings already removed the overrides from the file.
+        Numbers compare as floats (an int/float mismatch is not a change) and
+        the practice-text path compares normalized, mirroring
+        SettingsWindow._differs_from_runtime.
+        """
+        live = self._LIVE_CONFIG_ATTRS.get(key)
+        attr = live[0] if live is not None else self._SETTING_LIVE_ATTRS.get(key)
+        if attr is None:
+            return False
+        current = getattr(config, attr)
+        if key == "practice_text_file":
+            return (os.path.normcase(os.path.normpath(str(current)))
+                    != os.path.normcase(os.path.normpath(str(value))))
+        if isinstance(value, (int, float)) and not isinstance(value, bool) \
+                and isinstance(current, (int, float)):
+            return float(current) != float(value)
+        return current != value
 
     def on_preview_voice(self, voice: str):
         """Speak the preview phrase with *voice* (settings-window Listen button).
@@ -1279,18 +1331,18 @@ class PronunciationTrainerGUI:
         self._play_reference_at(self._selected_speed())
 
     def _slow_speed(self) -> float:
-        """The turtle playback speed: one step below the Settings value."""
+        """The slow-replay speed: one step below the Settings value."""
         return max(config.REFERENCE_SPEED - config.REFERENCE_SLOW_DELTA,
                    config.REFERENCE_SLOW_MIN)
 
     def play_reference_slow(self):
-        """Replay the reference one step slower than normal (the turtle button)."""
+        """Replay the reference one step slower than normal (the Slow ▶ button)."""
         self._play_reference_at(self._slow_speed())
 
     def _speak_word_at(self, word: str, speed: float, status: str):
         """Synthesize a single word and play it at ``speed``.
 
-        Shared by the two single-word playbacks - the underlined hero-card word
+        Shared by the two single-word playbacks - a clicked hero-card word
         and the phoneme-example badge - which differ only in speed and status
         line. ``status`` is the already-formatted status-bar text. Gated like the
         other playbacks: never into an open microphone or while an analysis
@@ -1325,10 +1377,10 @@ class PronunciationTrainerGUI:
         threading.Thread(target=_worker, daemon=True).start()
 
     def on_word_clicked(self, word: str):
-        """Speak one phrase word slowly (click on an underlined hero-card word).
+        """Speak one phrase word slowly (click on any hero-card word).
 
-        Synthesizes just that word and plays it at the turtle speed, via the
-        same lowered-sample-rate slowing as the slow-reference button.
+        Synthesizes just that word and plays it at the slow-replay speed, via
+        the same lowered-sample-rate slowing as the Slow ▶ reference button.
         """
         self._speak_word_at(word, self._slow_speed(),
                             f"Playing '{word.strip()}' slowly...")
@@ -1338,7 +1390,7 @@ class PronunciationTrainerGUI:
 
         The example word (e.g. "put" for /ʊ/) is a natural rendering of the
         target sound, so it plays at 1.0x rather than the slowed single-word
-        replay used for the underlined phrase words.
+        replay used for the clicked phrase words.
         """
         self._speak_word_at(word, 1.0, f"Playing example '{word.strip()}'...")
 

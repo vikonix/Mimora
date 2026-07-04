@@ -84,10 +84,15 @@ class FieldValueTests(unittest.TestCase):
     """get_value / choices consistency against the real config module."""
 
     def test_get_value_returns_something(self):
+        # Text fields may legitimately be empty ("" is a valid user_name) but
+        # must still be strings; every other kind must produce a real value.
         for field in all_fields():
             value = field.get_value()
-            self.assertIsNotNone(value if field.kind != "text" else "",
-                                 f"{field.key!r} returned None")
+            if field.kind == "text":
+                self.assertIsInstance(value, str,
+                                      f"{field.key!r} returned a non-string")
+            else:
+                self.assertIsNotNone(value, f"{field.key!r} returned None")
 
     def test_choice_fields_have_choices_containing_current_value(self):
         for field in all_fields():

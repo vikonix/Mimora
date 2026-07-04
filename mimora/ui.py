@@ -82,8 +82,9 @@ class ViewCallbacks:
     play_reference: Callable[[], None]
     play_reference_slow: Callable[[], None]
     on_generate_phrase: Callable[[], None]
-    # Click on an underlined ("miss") word inside the hero phrase: the
-    # controller synthesizes that single word and plays it slowly.
+    # Click on any word inside the hero phrase (mispronounced ones are
+    # underlined): the controller synthesizes that single word and plays it
+    # slowly.
     on_word_clicked: Callable[[str], None]
     # Click on a "WORK ON" phoneme badge: the controller synthesizes the
     # phoneme's example word (e.g. "put" for /ʊ/) and plays it at normal speed.
@@ -121,6 +122,31 @@ FONT_SIZE_SCORE = 26         # big verdict score in the score row (added in the
 FONT_SIZE_TRANSLATION = 11   # translation line under the phrase
 FONT_SIZE_BODY = 10          # normal body text
 FONT_SIZE_CAPTION = 8        # sublabels, captions, legends
+
+# The wheel-event sequences a scrollable widget must listen to: <MouseWheel>
+# covers Windows and macOS; X11 (Linux) delivers Button-4/Button-5 instead.
+WHEEL_EVENTS = ("<MouseWheel>", "<Button-4>", "<Button-5>")
+
+
+def wheel_scroll_units(event) -> int:
+    """Mouse-wheel event -> ``yview_scroll`` units, cross-platform.
+
+    Windows reports ``event.delta`` in multiples of 120 per notch; macOS
+    reports small per-event deltas (typically 1..3); X11 sends Button-4/5
+    events whose ``delta`` stays 0, so the button number decides. Negative
+    units scroll up, matching Tk's ``yview_scroll`` convention.
+    """
+    num = getattr(event, "num", 0)
+    if num == 4:
+        return -1
+    if num == 5:
+        return 1
+    delta = getattr(event, "delta", 0)
+    if delta == 0:
+        return 0
+    if abs(delta) >= 120:          # Windows: n * 120 per notch
+        return -int(delta / 120)
+    return -1 if delta > 0 else 1  # macOS: small per-event deltas
 
 
 class _Tooltip:
@@ -307,9 +333,10 @@ class TrainerView:
         self.status_label.pack(side=tk.LEFT, padx=15, pady=4)
 
         # Session tally (right side): the number of distinct phrases practiced
-        # this run and the mean of their latest scores. The per-take score itself
-        # moved to the hero card (see _set_score_row), so this line no longer
-        # duplicates it. Driven by update_session_stats from the controller.
+        # this run and the mean over every scored attempt this run (repeats of
+        # one phrase each add to the average - see main.py on_take_scored). The
+        # per-take score itself moved to the hero card (see _set_score_row), so
+        # this line no longer duplicates it. Driven by update_session_stats.
         self.stats_label = tk.Label(self.status_bar,
                                     text="Phrases: 0 · Avg: -",
                                     font=(FONT_FAMILY, 9), fg=THEME["text_dim"], bg=THEME["bg_panel"])
@@ -704,8 +731,9 @@ class TrainerView:
         # on every row widget, rather than via a global bind_all toggled on
         # Enter/Leave: the latter flickers off whenever the pointer crosses into a
         # child row, so the wheel would stop working over the rows themselves.
-        self.history_canvas.bind("<MouseWheel>", self._on_history_mousewheel)
-        self.history_frame.bind("<MouseWheel>", self._on_history_mousewheel)
+        for sequence in WHEEL_EVENTS:
+            self.history_canvas.bind(sequence, self._on_history_mousewheel)
+            self.history_frame.bind(sequence, self._on_history_mousewheel)
 
         # Empty-state hint shown until the first attempt lands.
         self._history_placeholder = tk.Label(
@@ -974,7 +1002,7 @@ class TrainerView:
         words stay unmarked. With no breakdown the phrase is left as set (no
         underlines). The Text is disabled again afterwards so it never steals the
         spacebar record toggle. Returns the number of underlined words, so the
-        caller can decide whether the "click an underlined word" hint applies.
+        caller can decide whether the interactive-feedback hint applies.
         """
         if not reference_words:
             return 0
@@ -1079,8 +1107,8 @@ class TrainerView:
     def _set_hint(self, show: bool):
         """Show or hide the interactive-feedback hint under the badges.
 
-        Shown only while a scored take is on the card, where both affordances it
-        describes (underlined words, sound badges) actually exist.
+        Shown only while a scored take is on the card and at least one of the
+        affordances it describes (underlined words, sound badges) exists.
         """
         if show:
             self.hint_label.pack(anchor=tk.W, pady=(6, 0))
@@ -1207,7 +1235,6 @@ class TrainerView:
         """Models loaded, no phrase yet: only New phrase is available."""
         self.draw_mic_button("idle")
         self.update_status("Ready", THEME["ready"])
-        self.update_instruction("Edit the text, then click 'New phrase' to begin.")
         self._set_actions(generate=True)
 
     def enter_generating(self):
@@ -1215,7 +1242,6 @@ class TrainerView:
         self._set_actions(generate=False, reference=False, user=False, test=False)
         self.draw_mic_button("processing")
         self.update_status("Generating phrase (LLM)...", THEME["info"])
-        self.update_instruction("Generating a new phrase...")
 
     def enter_reference_playing(self, phrase: str, translation: str = ""):
         """A fresh phrase is shown and its reference is being played.
@@ -1233,13 +1259,11 @@ class TrainerView:
         self.set_translation(translation)
         self.update_status("Listen to the reference...", THEME["reference"])
         self.draw_mic_button("speaking")
-        self.update_instruction("Listening to the example...")
 
     def enter_phrase_ready(self):
         """Reference done: the user can record, replay or self-test."""
         self.draw_mic_button("idle")
         self.update_status("Your turn", THEME["ready"])
-        self.update_instruction("Press SPACE or click the mic, then repeat the phrase.")
         self._set_actions(generate=True, reference=True, test=True)
 
     def generation_failed(self, message: str):
@@ -1247,14 +1271,13 @@ class TrainerView:
         self.append_error_msg(message)
         self.draw_mic_button("idle")
         self.update_status("Ready", THEME["ready"])
-        self.update_instruction("Click 'New phrase' to try again.")
         self._set_actions(generate=True)
 
     def enter_recording(self):
         """Microphone is open: lock out playback so it cannot bleed into the take."""
         # Reset only the single-value indicators (charts, score read-out, face)
-        # the moment the mic opens. The feedback panel is left intact: it is a
-        # running history of all attempts and must not be wiped on each take.
+        # the moment the mic opens. The attempt history is left intact: it is a
+        # running record of all attempts and must not be wiped on each take.
         self.clear_previous_result()
         self._set_actions(generate=False, reference=False, user=False, test=False)
         # Paint the level indicator straight away (at zero) instead of the
@@ -1264,7 +1287,6 @@ class TrainerView:
         # a minimal level disc, so the look is identical from the first frame.
         self.set_record_level(0.0)
         self.update_status("Recording...", THEME["bad"])
-        self.update_instruction("Speak now - recording stops automatically (press again to stop).")
 
     def enter_analyzing(self, status: str = "Analyzing pronunciation..."):
         """Analysis is running (also used for the reference self-test)."""
@@ -1283,9 +1305,6 @@ class TrainerView:
         self._set_actions(generate=True)
         if has_phrase:
             self._set_actions(reference=True, test=True)
-            self.update_instruction("Press SPACE or click the mic to repeat the phrase.")
-        else:
-            self.update_instruction("Click 'New phrase' to begin.")
         if has_recording:
             self._set_actions(user=True)
 
@@ -1386,8 +1405,10 @@ class TrainerView:
     # Attempt history (scrollable list; model owned by the controller)
     # ------------------------------------------------------------------
     def _on_history_mousewheel(self, event):
-        """Scroll the history list with the wheel."""
-        self.history_canvas.yview_scroll(-int(event.delta / 120), "units")
+        """Scroll the history list with the wheel (see wheel_scroll_units)."""
+        units = wheel_scroll_units(event)
+        if units:
+            self.history_canvas.yview_scroll(units, "units")
 
     def _bind_history_wheel(self, widget):
         """Bind wheel scrolling on ``widget`` and all its descendants.
@@ -1396,7 +1417,8 @@ class TrainerView:
         one; otherwise it would only scroll when the pointer sat on the bare
         canvas between rows.
         """
-        widget.bind("<MouseWheel>", self._on_history_mousewheel)
+        for sequence in WHEEL_EVENTS:
+            widget.bind(sequence, self._on_history_mousewheel)
         for child in widget.winfo_children():
             self._bind_history_wheel(child)
 
@@ -1559,14 +1581,6 @@ class TrainerView:
     def update_status(self, text: str, color: str = THEME["text_dim"]):
         self.status_label.configure(text=text, fg=color)
 
-    def update_instruction(self, text: str):
-        # No-op since v2c step 4: the standalone instruction line was removed.
-        # Its guidance now lives in the per-control captions of the bottom panel,
-        # the Tip line and the status bar. Kept as a harmless stub so the many
-        # enter_* state methods (and the LLM-startup path) can keep calling it
-        # without change; the dead calls are cleaned up in the step 8 pass.
-        pass
-
     def update_session_stats(self, count: int, average: float):
         """Show the session tally in the status bar: ``Phrases: 4 · Avg: 78``.
 
@@ -1585,10 +1599,11 @@ class TrainerView:
         charts and resets the face to its neutral waiting smile, so a stale
         single-value indicator can never be mistaken for the take in progress.
         The session tally in the status bar is deliberately NOT touched here: it
-        accumulates across the whole run. The feedback panel is likewise NOT
-        cleared: it is a running history of every attempt, appended to by
-        show_feedback / append_error_msg and kept across takes. The status *line*
-        is set separately by the caller (enter_recording -> "Recording...").
+        accumulates across the whole run. The attempt-history list is likewise
+        NOT cleared: it is a running, controller-owned record of every attempt,
+        fed by show_feedback / append_error_msg and kept across takes. The
+        status *line* is set separately by the caller (enter_recording ->
+        "Recording...").
         """
         # Hero-card score row back to its empty state ("--", no badges).
         self._reset_score_row()
@@ -1801,10 +1816,6 @@ class TrainerView:
         self.draw_mic_button("idle")
 
         self.update_status(quality, quality_color)
-        if result.passed:
-            self.update_instruction("Nice! Click 'New phrase' to continue, or repeat to refine.")
-        else:
-            self.update_instruction("Try again: press SPACE or click the mic to repeat. ▶ Reference replays the example.")
 
     def _show_unscored_feedback(self, result: "PronunciationResult", current_phrase,
                                 has_recording: bool, is_self_test: bool = False):
@@ -1842,5 +1853,3 @@ class TrainerView:
         self.draw_mic_button("idle")
 
         self.update_status("Recorded (scoring off)", THEME["text_dim"])
-        self.update_instruction("Compare by ear: ▶ Reference and ▶ My recording, "
-                                "then repeat or click 'New phrase' to continue.")

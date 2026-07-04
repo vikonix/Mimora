@@ -17,7 +17,9 @@ restart-only fields were touched so it can offer a restart on close.
 
 Values are committed immediately on change (comboboxes/checkboxes) or when
 editing finishes (entries, on FocusOut/Return) - there is no OK/Cancel buffer,
-matching how the main-window selectors already persist their settings.
+matching how the main-window toggles already persist their settings. The
+Cancel button instead replays the window-opening values back through the same
+commit path (see _cancel).
 """
 
 import logging
@@ -28,9 +30,10 @@ from dataclasses import dataclass
 from typing import Callable, Optional
 
 from mimora import config
-# Reuse the main view's resolved palette and platform font so the settings
-# window matches the app theme exactly (ui.py builds both from config).
-from mimora.ui import FONT_FAMILY, THEME
+# Reuse the main view's resolved palette, platform font and wheel-event
+# helpers so the settings window matches the app theme exactly and scrolls
+# on every platform (ui.py builds/hosts all of these).
+from mimora.ui import FONT_FAMILY, THEME, WHEEL_EVENTS, wheel_scroll_units
 
 
 @dataclass(frozen=True)
@@ -130,8 +133,9 @@ def build_sections() -> tuple:
                   lambda: config.user_setting("reference_speed",
                                               config.REFERENCE_SPEED),
                   choices=lambda: config.REFERENCE_SPEED_CHOICES,
-                  help="Normal reference playback speed. The slow-replay "
-                       "button next to Reference always plays 0.1x slower."),
+                  help="Normal reference playback speed. The Slow ▶ "
+                       "button next to Reference plays 0.1 below this "
+                       "(e.g. 0.9 -> 0.8)."),
             Field("practice_text_file", "Practice text file", "path",
                   lambda: config.user_setting("practice_text_file",
                                               config.PRACTICE_TEXT_FILE),
@@ -291,7 +295,10 @@ class SettingsWindow:
         self.top.protocol("WM_DELETE_WINDOW", self._on_close)
         # One binding on the Toplevel serves every child (widget bindtags
         # include their toplevel), so the wheel scrolls anywhere in the window.
-        self.top.bind("<MouseWheel>", self._on_mousewheel)
+        # All WHEEL_EVENTS are bound: <MouseWheel> for Windows/macOS,
+        # Button-4/5 for X11 (see ui.wheel_scroll_units).
+        for sequence in WHEEL_EVENTS:
+            self.top.bind(sequence, self._on_mousewheel)
 
     # ------------------------------------------------------------------
     # Public API (used by the controller)
@@ -580,9 +587,16 @@ class SettingsWindow:
 
     def _on_choice_selected(self, field: Field, var):
         # Drop focus so the main window's space-to-record hotkey keeps working
-        # after the dialog closes (mirrors the main-window selectors).
+        # after the dialog closes (mirrors the main-window toggles).
         self.top.focus_set()
-        value = var.get()
+        # A Combobox var is always a string; map it back to the original
+        # choice object so non-string choices (reference_speed's floats) are
+        # emitted and committed with their real type. Without this, re-picking
+        # the current value would look like a change ("0.9" != 0.9) and the
+        # controller would receive strings it has to coerce.
+        raw = var.get()
+        value = next((choice for choice in field.choices()
+                      if str(choice) == raw), raw)
         self._emit(field, value)
         if field.key == "english_accent":
             self._apply_accent_change(value)
@@ -605,16 +619,25 @@ class SettingsWindow:
         self._emit(self._fields["voice"], default_voice)
         self._sync_preview_state()
 
+    # Footer hint shown while the preview button is disabled; kept as a
+    # constant so _sync_preview_state can recognize (and clear) its own text.
+    _PREVIEW_HINT = "Voice preview needs a restart into the new accent first."
+
     def _sync_preview_state(self):
-        """Preview works only for voices of the accent the app is running with."""
+        """Preview works only for voices of the accent the app is running with.
+
+        While disabled, a neutral footer hint explains why (kind="info", not an
+        error - nothing went wrong); it is cleared as soon as the preview is
+        possible again, so switching the accent back does not leave it stale.
+        """
         accent = self._vars["english_accent"].get() \
             if "english_accent" in self._vars else config.ENGLISH_ACCENT
         state = tk.NORMAL if accent == config.ENGLISH_ACCENT else tk.DISABLED
         self._preview_btn.config(state=state)
         if state == tk.DISABLED:
-            self._show_status(
-                "Voice preview needs a restart into the new accent first.",
-                error=True)
+            self._show_status(self._PREVIEW_HINT, kind="info")
+        elif self._status_label.cget("text") == self._PREVIEW_HINT:
+            self._status_label.config(text="")
 
     def _preview_voice(self):
         voice = self._vars["voice"].get()
@@ -630,11 +653,17 @@ class SettingsWindow:
         # number: parse, range-check, and normalize the display.
         try:
             number = float(raw.replace(",", "."))
-            if field.integer:
-                number = int(number)
         except ValueError:
             self._reject_entry(field, f"{field.label}: not a number.")
             return
+        if field.integer:
+            # Reject a fractional value instead of silently truncating it:
+            # the user would otherwise see 5.7 turn into 5 with no explanation.
+            if number != int(number):
+                self._reject_entry(field,
+                                   f"{field.label}: must be a whole number.")
+                return
+            number = int(number)
         if field.minimum is not None and number < field.minimum:
             self._reject_entry(field,
                                f"{field.label}: must be at least {field.minimum:g}.")
@@ -650,7 +679,7 @@ class SettingsWindow:
         """Revert an invalid Entry to its last committed value and explain."""
         self._vars[field.key].set(
             self._display_value(field, self._committed[field.key]))
-        self._show_status(message, error=True)
+        self._show_status(message, kind="error")
 
     def _browse_path(self, field: Field):
         current = str(self._committed.get(field.key) or "")
@@ -707,8 +736,8 @@ class SettingsWindow:
                 parent=self.top):
             return
         if not self._cb.on_reset_settings():
-            self._show_status("Reset failed - see the feedback log.",
-                              error=True)
+            self._show_status("Reset failed - see the error in the main window.",
+                              kind="error")
             return
         # Repaint the rows from the known defaults (set_value never re-emits;
         # the controller has already applied them). Keys without a fixed
@@ -729,10 +758,11 @@ class SettingsWindow:
         self._refresh_restart_pending()
         self._show_status("Settings were reset to their defaults.")
 
-    def _show_status(self, message: str, *, error: bool = False):
-        """One-line footer status: red for problems, green for confirmations."""
-        self._status_label.config(text=message,
-                                  fg=THEME["bad"] if error else THEME["good"])
+    def _show_status(self, message: str, *, kind: str = "ok"):
+        """One-line footer status: red errors, green confirmations, dim hints."""
+        colors = {"error": THEME["bad"], "ok": THEME["good"],
+                  "info": THEME["text_dim"]}
+        self._status_label.config(text=message, fg=colors[kind])
 
     # ------------------------------------------------------------------
     # Restart handling / closing
@@ -810,5 +840,7 @@ class SettingsWindow:
         self.top.destroy()
 
     def _on_mousewheel(self, event):
-        """Scroll the settings column with the mouse wheel (Windows units)."""
-        self._canvas.yview_scroll(-int(event.delta / 120), "units")
+        """Scroll the settings column with the wheel (see ui.wheel_scroll_units)."""
+        units = wheel_scroll_units(event)
+        if units:
+            self._canvas.yview_scroll(units, "units")

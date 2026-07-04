@@ -93,6 +93,27 @@ def user_bool(user_data: dict, key: str, default: bool) -> bool:
     return value
 
 
+def _rewrite_would_lose_content(path: Path, data: dict) -> bool:
+    """True when *data* came back empty although *path* holds real content.
+
+    read_json returns {} both for a missing file (nothing to lose) and for an
+    unreadable or corrupt one. Rewriting in the second case would replace the
+    user's hand-edited file - the "_" comment keys and any unknown keys
+    included - with a near-empty object, destroying content that fixing a
+    syntax error would still recover. An absent, empty, or empty-object file
+    is safe to rewrite: there is nothing in it to lose.
+    """
+    if data:
+        return False
+    try:
+        raw = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True  # existing but unreadable: do not risk overwriting it
+    return raw not in ("", "{}")
+
+
 def save_setting(path: Path, key: str, value, memory_dict: dict) -> bool:
     """Write one setting back to *path*, keeping every other key.
 
@@ -102,6 +123,10 @@ def save_setting(path: Path, key: str, value, memory_dict: dict) -> bool:
     raised - saving a preference must not crash the app. Returns True on success.
     """
     data = read_json(path)
+    if _rewrite_would_lose_content(path, data):
+        print(f"[config] {path.name} could not be parsed; {key} not saved "
+              f"(fix the file's JSON syntax first)", file=sys.stderr)
+        return False
     data[key] = value
     try:
         with open(path, "w", encoding="utf-8") as fh:
@@ -125,6 +150,10 @@ def reset_settings(path: Path, keys, memory_dict: dict) -> bool:
     updated too. Failures are reported, never raised. Returns True on success.
     """
     data = read_json(path)
+    if _rewrite_would_lose_content(path, data):
+        print(f"[config] {path.name} could not be parsed; settings not reset "
+              f"(fix the file's JSON syntax first)", file=sys.stderr)
+        return False
     for key in keys:
         data.pop(key, None)
     try:
