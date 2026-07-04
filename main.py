@@ -228,7 +228,6 @@ class PronunciationTrainerGUI:
         # and error messages - oldest first. The controller owns it so the trend
         # arrow (this take vs the previous attempt of the same phrase) can be
         # computed from the retained entries.
-        # TODO: temporarily capped at 5 for layout debugging; restore to 10.
         self._history: deque = deque(maxlen=10)
         # Kokoro voice the current reference was synthesized with (logged with
         # every analysis sample - the acoustic calibration is voice-specific).
@@ -1359,13 +1358,20 @@ class PronunciationTrainerGUI:
         self.view.render_history(list(self._history))
 
     def _history_trend(self, phrase: str, score: float) -> Optional[str]:
-        """Trend of ``score`` vs the previous attempt of ``phrase`` in the history."""
+        """Trend of ``score`` vs the previous attempt of ``phrase`` in the history.
+
+        Compared on the *displayed* (rounded) score, not the raw float, so the
+        arrow always agrees with the two chip numbers the user sees: 82 vs 82
+        reads as "same" (a dash), never a stray up/down from a sub-point
+        difference like 82.4 vs 81.6.
+        """
+        current = round(score)
         for past in reversed(self._history):
             if past.get("kind") == "attempt" and past.get("phrase") == phrase:
-                previous = past.get("score", 0.0)
-                if score > previous:
+                previous = round(past.get("score", 0.0))
+                if current > previous:
                     return "up"
-                if score < previous:
+                if current < previous:
                     return "down"
                 return "same"
         return None
