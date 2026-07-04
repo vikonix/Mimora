@@ -283,12 +283,12 @@ class TrainerView:
         # brand + language shown prominently, with the descriptor as a smaller
         # subtitle. The language reads from config.TARGET_LANGUAGE so the title
         # stays the single source of truth (replacing the old language chip).
-        tk.Label(header_frame, text=f"MIMORA. {config.TARGET_LANGUAGE}",
+        tk.Label(header_frame, text=f"MIMORA · {config.TARGET_LANGUAGE}",
                  font=(FONT_FAMILY, 14, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
 
-        tk.Label(header_frame, text="Pronunciation Trainer",
+        tk.Label(header_frame, text="- Pronunciation Trainer",
                  font=(FONT_FAMILY, 10, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(
-                     side=tk.LEFT, padx=(8, 0), pady=(6, 0))
+                     side=tk.LEFT, padx=(0, 0), pady=(6, 0))
 
         # Settings gear at the right edge of the header. Opens the settings
         # window (see main.py on_settings_clicked).
@@ -330,7 +330,7 @@ class TrainerView:
 
         # 3. Control panel (v2c step 4): one row holding every phrase-level
         # action, each in its own column with an 8pt caption beneath. Left to
-        # right: Reference (+ slow-replay turtle), the mic, My recording, Next
+        # right: Reference (+ slow-replay button), the mic, My recording, Next
         # phrase. The old single instruction line is gone - its guidance now
         # lives in these per-control captions, the Tip line and the status bar.
         #
@@ -356,8 +356,8 @@ class TrainerView:
         controls_row = tk.Frame(control_frame, bg=THEME["bg_main"])
         controls_row.pack()
 
-        # -- Reference column: the replay button paired with the slow (0.7x)
-        #    turtle. Both are gated together by _set_actions(reference=...); the
+        # -- Reference column: the replay button paired with the "Slow ▶"
+        #    replay. Both are gated together by _set_actions(reference=...); the
         #    exact slow speed lives in Settings. --
         ref_col = self._control_column(controls_row, "Listen to the example")
         ref_pair = tk.Frame(ref_col, bg=THEME["bg_main"])
@@ -367,7 +367,7 @@ class TrainerView:
             width=action_btn_width, padx=action_btn_padx)
         self.ref_btn.pack(side=tk.LEFT, padx=(0, 4))
         self.ref_btn.config(state=tk.DISABLED)
-        self.slow_btn = self._make_button(ref_pair, "🐢", self._cb.play_reference_slow,
+        self.slow_btn = self._make_button(ref_pair, "Slow ▶", self._cb.play_reference_slow,
                                           padx=action_btn_padx)
         self.slow_btn.pack(side=tk.LEFT)
         self.slow_btn.config(state=tk.DISABLED)

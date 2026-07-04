@@ -141,7 +141,7 @@ class PronunciationTrainerGUI:
 
         # Core Tkinter setup
         self.root = tk.Tk()
-        self.root.title(f"Mimora. {config.TARGET_LANGUAGE} - Pronunciation Trainer v{__version__}")
+        self.root.title(f"Mimora · {config.TARGET_LANGUAGE} - Pronunciation Trainer v{__version__}")
 
         # Fixed width; the window spans the full usable screen height. We query the
         # Windows desktop work area (screen minus the taskbar) so the window fits
