@@ -279,21 +279,24 @@ class TrainerView:
         header_frame = tk.Frame(self.root, bg=THEME["bg_main"], height=60)
         header_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=10)
 
-        tk.Label(header_frame, text="MIMORA • Pronunciation Trainer",
+        # Title carries the fixed training language (no dynamic language picker):
+        # brand + language shown prominently, with the descriptor as a smaller
+        # subtitle. The language reads from config.TARGET_LANGUAGE so the title
+        # stays the single source of truth (replacing the old language chip).
+        tk.Label(header_frame, text=f"MIMORA. {config.TARGET_LANGUAGE}",
                  font=(FONT_FAMILY, 14, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
 
-        # Settings gear at the right edge of the header; the language chip sits
-        # just left of it. Opens the settings window (see main.py
-        # on_settings_clicked).
+        tk.Label(header_frame, text="Pronunciation Trainer",
+                 font=(FONT_FAMILY, 10, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(
+                     side=tk.LEFT, padx=(8, 0), pady=(6, 0))
+
+        # Settings gear at the right edge of the header. Opens the settings
+        # window (see main.py on_settings_clicked).
         tk.Button(header_frame, text="⚙", command=self._cb.on_settings_clicked,
                   font=(FONT_FAMILY, 12), bg=THEME["bg_main"], fg=THEME["text_dim"],
                   activebackground=THEME["bg_accent_active"],
                   activeforeground=THEME["text_bright"],
                   bd=0, padx=6, pady=0, cursor="hand2").pack(side=tk.RIGHT)
-
-        tk.Label(header_frame, text=config.TARGET_LANGUAGE,
-                 font=(FONT_FAMILY, 9, "bold"), fg=THEME["text_dim"], bg=THEME["bg_panel"],
-                 padx=10, pady=4, bd=0).pack(side=tk.RIGHT, padx=(0, 8))
 
         # 2. Status bar (absolute bottom)
         self.status_bar = tk.Frame(self.root, bg=THEME["bg_panel"], height=30)

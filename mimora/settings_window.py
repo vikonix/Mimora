@@ -496,14 +496,27 @@ class SettingsWindow:
         footer = tk.Frame(self.top, bg=THEME["bg_panel"])
         footer.pack(side=tk.BOTTOM, fill=tk.X)
 
+        # Hints stack on their own rows above the button row, so a long hint
+        # (e.g. the restart notice) never competes with the buttons for
+        # horizontal space and cannot shrink the "Restart now" button.
         self._status_label = tk.Label(footer, text="", font=(FONT_FAMILY, 8),
                                       fg=THEME["bad"], bg=THEME["bg_panel"],
-                                      wraplength=self._WIDTH - 120,
+                                      wraplength=self._WIDTH - 24,
                                       justify=tk.LEFT)
         self._status_label.pack(side=tk.TOP, anchor=tk.W, padx=12, pady=(6, 0))
 
+        self._restart_label = tk.Label(footer, text="", font=(FONT_FAMILY, 8),
+                                       fg=THEME["warn"], bg=THEME["bg_panel"],
+                                       wraplength=self._WIDTH - 24,
+                                       justify=tk.LEFT)
+        self._restart_label.pack(side=tk.TOP, anchor=tk.W, padx=12, pady=(2, 0))
+
+        # Button row: full-width strip below the hint rows.
+        button_row = tk.Frame(footer, bg=THEME["bg_panel"])
+        button_row.pack(side=tk.TOP, fill=tk.X)
+
         # "Default" resets everything to the built-in defaults (confirmed).
-        tk.Button(footer, text="Default", command=self._reset_defaults,
+        tk.Button(button_row, text="Default", command=self._reset_defaults,
                   font=(FONT_FAMILY, 9), bg=THEME["bg_accent"],
                   fg=THEME["text_accent"],
                   activebackground=THEME["bg_accent_active"],
@@ -511,13 +524,7 @@ class SettingsWindow:
                   bd=0, padx=14, pady=4, cursor="hand2").pack(
             side=tk.LEFT, padx=(12, 0), pady=6)
 
-        self._restart_label = tk.Label(footer, text="", font=(FONT_FAMILY, 8),
-                                       fg=THEME["warn"], bg=THEME["bg_panel"],
-                                       wraplength=self._WIDTH - 280,
-                                       justify=tk.LEFT)
-        self._restart_label.pack(side=tk.LEFT, padx=8, pady=6)
-
-        tk.Button(footer, text="Close", command=self._on_close,
+        tk.Button(button_row, text="Close", command=self._on_close,
                   font=(FONT_FAMILY, 9, "bold"), bg=THEME["bg_button"],
                   fg=THEME["text_button"],
                   activebackground=THEME["bg_button_active"],
@@ -526,7 +533,7 @@ class SettingsWindow:
             side=tk.RIGHT, padx=12, pady=6)
 
         # "Cancel" undoes everything changed in this window session and closes.
-        tk.Button(footer, text="Cancel", command=self._cancel,
+        tk.Button(button_row, text="Cancel", command=self._cancel,
                   font=(FONT_FAMILY, 9), bg=THEME["bg_accent"],
                   fg=THEME["text_accent"],
                   activebackground=THEME["bg_accent_active"],
@@ -539,7 +546,7 @@ class SettingsWindow:
         # blending into it. A warn/orange fill was avoided: it fails contrast in
         # the dark theme (light orange fill under white text).
         self._restart_btn = tk.Button(
-            footer, text="Restart now", command=self._restart_now,
+            button_row, text="Restart now", command=self._restart_now,
             font=(FONT_FAMILY, 9, "bold"), bg=THEME["bg_button"],
             fg=THEME["text_button"],
             activebackground=THEME["bg_button_active"],
