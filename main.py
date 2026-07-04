@@ -16,8 +16,10 @@ the whole app. Run this module to start the trainer:
     python main.py
 """
 
+import subprocess
 import time
 import threading
+from collections import deque
 from typing import Optional
 import os
 import sys
@@ -61,7 +63,7 @@ print("starting ...", flush=True)
 import warnings
 import logging
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import ttk
 from pathlib import Path
 import numpy as np
 
@@ -94,6 +96,11 @@ from mimora.recorder import (
 # directly, so switching is a single settings.json flip.
 from mimora import engine
 from mimora.ui import TrainerView, ViewCallbacks, LENGTH_FEW_WORDS
+from mimora.settings_window import (
+    PREVIEW_PHRASE,
+    SettingsCallbacks,
+    SettingsWindow,
+)
 
 # Configure comprehensive events logging (console + file). force=True replaces
 # any handlers auto-installed by logging calls during the imports above (e.g.
@@ -134,7 +141,7 @@ class PronunciationTrainerGUI:
 
         # Core Tkinter setup
         self.root = tk.Tk()
-        self.root.title(f"Mimora - Pronunciation Trainer v{__version__}")
+        self.root.title(f"Mimora · {config.TARGET_LANGUAGE} - Pronunciation Trainer v{__version__}")
 
         # Fixed width; the window spans the full usable screen height. We query the
         # Windows desktop work area (screen minus the taskbar) so the window fits
@@ -207,6 +214,21 @@ class PronunciationTrainerGUI:
         # the phrase generator when a translation language is selected; kept
         # beside current_phrase so the two are always shown together.
         self.current_translation: str = ""
+        # Session tally shown in the status bar. "Phrases: N" counts the distinct
+        # phrases practiced this run (a set of phrase texts); "Avg" is the running
+        # mean over *every* scored attempt this run (repeats of one phrase each
+        # add to the average). The two therefore count different things: unique
+        # phrases vs total attempts. Empty/zero at construction == reset on app
+        # start (no explicit reset action).
+        self._session_phrases: set[str] = set()
+        self._session_score_sum: float = 0.0
+        self._session_attempts: int = 0
+        # Bounded attempt history shown in the scrollable list (view.render_history).
+        # Holds the last N entries - scored takes, unscored ("none" engine) takes
+        # and error messages - oldest first. The controller owns it so the trend
+        # arrow (this take vs the previous attempt of the same phrase) can be
+        # computed from the retained entries.
+        self._history: deque = deque(maxlen=10)
         # Kokoro voice the current reference was synthesized with (logged with
         # every analysis sample - the acoustic calibration is voice-specific).
         self.current_voice: str = config.KOKORO_VOICE
@@ -215,12 +237,11 @@ class PronunciationTrainerGUI:
         # Last user name written to settings.json; lets on_user_name_changed
         # skip the file write when the field loses focus without an edit.
         self._saved_user_name: str = config.USER_NAME
-        # Whether any prosody chart is visible, mirrored from the checkboxes so
-        # analysis workers can skip the (expensive) prosody computation without
-        # touching Tk widgets. Written only on the Tk main thread (here and in
-        # on_prosody_charts_toggled); workers only read it.
-        self._prosody_wanted: bool = (config.SHOW_PITCH_CHART
-                                      or config.SHOW_ENERGY_CHART)
+        # Whether the prosody block is expanded, mirrored from the show_prosody
+        # flag so analysis workers can skip the (expensive) prosody computation
+        # while it is collapsed without touching Tk widgets. Written only on the
+        # Tk main thread (here and in on_prosody_toggled); workers only read it.
+        self._prosody_wanted: bool = config.SHOW_PROSODY
 
         # Initialize core modular sub-managers
         self.tts_mgr = TTSManager()
@@ -245,27 +266,62 @@ class PronunciationTrainerGUI:
         # Compose the view: it builds and owns the widgets, and forwards widget
         # callbacks back to this controller through an explicit ViewCallbacks
         # bundle (the view never holds the controller itself).
+        # Settings window (mimora/settings_window.py); at most one instance,
+        # created on demand by on_settings_clicked. _suppress_persist is set
+        # only while on_reset_settings re-applies the defaults (see
+        # _persist_setting); written and read on the Tk main thread only.
+        self._settings_window: Optional[SettingsWindow] = None
+        self._suppress_persist = False
+
         self.view = TrainerView(self.root, ViewCallbacks(
-            on_open_practice_text=self.on_open_practice_text,
-            quit_app=self.quit_app,
+            on_settings_clicked=self.on_settings_clicked,
+            on_practice_collapsed_toggled=self.on_practice_collapsed_toggled,
             on_gui_btn_press=self.on_gui_btn_press,
             on_gui_btn_release=self.on_gui_btn_release,
-            on_user_name_changed=self.on_user_name_changed,
-            on_length_changed=self.on_length_changed,
-            on_translation_language_changed=self.on_translation_language_changed,
-            on_voice_changed=self.on_voice_changed,
-            on_speed_changed=self.on_speed_changed,
             on_show_face_toggled=self.on_show_face_toggled,
-            on_prosody_charts_toggled=self.on_prosody_charts_toggled,
+            on_prosody_toggled=self.on_prosody_toggled,
             on_test_reference=self.on_test_reference,
             play_user_recording=self.play_user_recording,
             play_reference=self.play_reference,
+            play_reference_slow=self.play_reference_slow,
             on_generate_phrase=self.on_generate_phrase,
+            on_word_clicked=self.on_word_clicked,
+            on_sound_example=self.on_sound_example,
+            on_take_scored=self.on_take_scored,
+            on_history_entry=self.on_history_entry,
         ))
         self.bind_events()
 
+        # Bring the freshly launched window to the foreground and put keyboard
+        # focus on it, so the space-to-record hotkey works without a first click.
+        # This matters most after a settings restart: the replacement process is
+        # launched detached (see restart_app), and Windows does not auto-focus a
+        # detached process's window, so the record keys stayed dead until the
+        # user clicked the window. Scheduled on the loop (focus is only reliable
+        # once the window is realized).
+        self.root.after(0, self._grab_initial_focus)
+
         # Load all models in the background to keep the UI responsive.
         threading.Thread(target=self.load_components, daemon=True).start()
+
+    def _grab_initial_focus(self):
+        """Foreground the window and give it keyboard focus (startup/restart).
+
+        The record hotkeys are bound to the toplevel and fire only while it holds
+        keyboard focus. A brief topmost flip defeats the Windows foreground lock
+        that otherwise keeps a detached, self-launched window in the background,
+        then releases it so the window is not pinned above everything. Focus goes
+        to the window itself (not the practice-text box), so space records rather
+        than typing a space.
+        """
+        try:
+            self.root.deiconify()
+            self.root.lift()
+            self.root.attributes("-topmost", True)
+            self.root.after(200, lambda: self.root.attributes("-topmost", False))
+            self.root.focus_force()
+        except tk.TclError:
+            pass  # window torn down before the callback ran
 
     def bind_events(self):
         # Record keys: the spacebar and the Down arrow both toggle capture,
@@ -357,7 +413,6 @@ class PronunciationTrainerGUI:
                 if not self.llm_server.start(self.llm_mgr):
                     self.root.after(0, self.view.append_error_msg, "Error: LLM server failed to start. Check model path and GPU memory.")
                     self.root.after(0, self.view.server_failed)
-                    self.root.after(0, self.view.update_instruction, "LLM server failed to start. Check the log and restart.")
                     return
                 self.root.after(0, self.view.append_system_msg, "LLM server is ready.")
             else:
@@ -399,24 +454,16 @@ class PronunciationTrainerGUI:
 
         self.view.set_practice_text(text.strip())
 
-    def on_open_practice_text(self):
-        """Pick a practice text file via File → Open Practice Text… (main thread).
+    def _load_practice_file(self, path: str):
+        """Load *path* into the source panel and persist it (main thread).
 
-        The chosen file is loaded into the source panel right away and the path
-        is persisted to settings.json ("practice_text_file"), so the same file
-        is loaded again on the next launch.
+        Called by the settings window's practice-file picker: the file is
+        applied immediately and stored in settings.json. A relative *path*
+        (the stored settings.json form) is resolved against the project root,
+        matching the loader convention.
         """
-        path = filedialog.askopenfilename(
-            parent=self.root,
-            title="Open Practice Text",
-            initialdir=os.path.dirname(config.PRACTICE_TEXT_FILE),
-            filetypes=[("Text files", "*.txt"), ("All files", "*.*")],
-        )
-        # Return focus to the window so the spacebar record toggle keeps working.
-        self.root.focus_set()
-        if not path:
-            return  # dialog cancelled
-
+        if not os.path.isabs(path):
+            path = str(config.BASE_DIR / path)
         try:
             with open(path, "r", encoding="utf-8") as f:
                 text = f.read().strip()
@@ -440,6 +487,10 @@ class PronunciationTrainerGUI:
         except ValueError:
             saved = path  # outside the project - keep the absolute path
         self._persist_setting("practice_text_file", saved)
+        # Keep the runtime view current for load_practice_text and the file
+        # dialog's initialdir; the settings window reads the persisted value.
+        config.PRACTICE_TEXT_FILE = str(path)
+        self._sync_settings_window("practice_text_file", saved)
 
     def make_app_ready(self):
         self.app_ready = True
@@ -494,10 +545,20 @@ class PronunciationTrainerGUI:
         except AttributeError:
             return ""
 
-    def _persist_setting(self, key: str, value):
-        """Save one UI setting to settings.json, reporting failure in the UI."""
-        if not config.save_user_setting(key, value):
-            self.view.append_error_msg(f"Could not save {key} to settings.json.")
+    def _persist_setting(self, key: str, value) -> bool:
+        """Save one UI setting to settings.json, reporting failure in the UI.
+
+        No-op while _suppress_persist is set (the "Default" reset just removed
+        every override from settings.json; the handlers re-run to apply the
+        default values live and must not write them back as overrides).
+        Returns True on success (or when suppressed).
+        """
+        if self._suppress_persist:
+            return True
+        if config.save_user_setting(key, value):
+            return True
+        self.view.append_error_msg(f"Could not save {key} to settings.json.")
+        return False
 
     def on_voice_changed(self, event=None):
         """Regenerate the phrase with the newly chosen voice.
@@ -508,44 +569,34 @@ class PronunciationTrainerGUI:
         """
         logging.info(f"Reference voice changed to {self._selected_voice()}.")
         self._persist_setting("voice", self._selected_voice())
+        self._sync_settings_window("voice", self._selected_voice())
         # Return focus to the window so the spacebar record toggle keeps working.
         self.root.focus_set()
         if self.app_ready and not self.is_generating:
             self.on_generate_phrase()
 
     def _selected_length(self) -> str:
-        """Map the length selector label to generate_phrase's mode ('full'/'fragment')."""
+        """Map the phrase-length setting to generate_phrase's mode ('full'/'fragment')."""
         try:
             return "fragment" if self.view.get_length_label() == LENGTH_FEW_WORDS else "full"
         except AttributeError:
             return "full"
 
-    def on_speed_changed(self, event=None):
-        """Replay the reference at the newly selected speed so it is heard right away."""
-        logging.info(f"Reference speed changed to {self.view.get_speed_label()!r}.")
-        self._persist_setting("reference_speed", self._selected_speed())
-        # Return focus to the window so the spacebar record toggle keeps working.
-        self.root.focus_set()
-        # Replay only when the Reference button is also allowed (a phrase is
-        # ready and nothing is recording/analyzing).
-        if self.view.is_reference_enabled():
-            self.play_reference()
-
     def on_user_name_changed(self, event=None):
-        """Persist the user name to settings.json once editing finishes (FocusOut)."""
+        """Persist the user name after it changes in the Settings window."""
         name = self.view.get_user_name()
         if name == self._saved_user_name:
             return  # unchanged - don't rewrite the file
-        if config.save_user_setting("user_name", name):
+        if self._persist_setting("user_name", name):
             self._saved_user_name = name
             logging.info(f"User name saved: {name!r}.")
-        else:
-            self.view.append_error_msg("Could not save the user name to settings.json.")
+            self._sync_settings_window("user_name", name)
 
     def on_length_changed(self, event=None):
         """Regenerate the phrase when the desired length changes."""
         logging.info(f"Phrase length changed to {self.view.get_length_label()!r}.")
         self._persist_setting("phrase_length", self._selected_length())
+        self._sync_settings_window("phrase_length", self._selected_length())
         # Reconcile the translation panel and selector. Fragments are translated
         # too, so the length mode does not affect them; this is a consistency
         # refresh, not a mode switch.
@@ -566,6 +617,7 @@ class PronunciationTrainerGUI:
         language = self.view.get_translation_language()
         logging.info(f"Translation language changed to {language!r}.")
         self._persist_setting("translation_language", language)
+        self._sync_settings_window("translation_language", language)
         # The cached translation belonged to the previous language, so drop it and
         # blank the panel to "-"; the next generated phrase fills it for the new
         # language (translations are applied to the next phrase, like voice/length).
@@ -576,24 +628,232 @@ class PronunciationTrainerGUI:
         # (a focused combobox would otherwise capture the spacebar).
         self.root.focus_set()
 
-    def on_prosody_charts_toggled(self):
-        """Apply a prosody-chart checkbox change and persist both flags.
-
-        Saving both keys on either toggle keeps this trivially simple; the
-        extra write of an unchanged value is harmless.
-        """
-        self.view.toggle_prosody_charts()
+    def on_prosody_toggled(self):
+        """Apply the prosody collapse toggle and persist the show_prosody flag."""
+        self.view.toggle_prosody()
         # Keep the worker-visible flag in sync (read by _compute_prosody_safe
         # on analysis threads; written only here, on the Tk main thread).
-        self._prosody_wanted = (self.view.get_show_pitch()
-                                or self.view.get_show_energy())
-        self._persist_setting("show_pitch_chart", self.view.get_show_pitch())
-        self._persist_setting("show_energy_chart", self.view.get_show_energy())
+        self._prosody_wanted = self.view.get_show_prosody()
+        # Keep config current too: it is the live source of truth the reset
+        # diffing (_default_differs_from_live) compares against.
+        config.SHOW_PROSODY = self.view.get_show_prosody()
+        self._persist_setting("show_prosody", self.view.get_show_prosody())
+        self._sync_settings_window("show_prosody", self.view.get_show_prosody())
 
     def on_show_face_toggled(self):
         """Apply the face checkbox (show/hide the panel) and persist it."""
         self.view.toggle_face()
+        config.SHOW_FACE = self.view.get_show_face()
         self._persist_setting("show_face", self.view.get_show_face())
+        self._sync_settings_window("show_face", self.view.get_show_face())
+
+    def on_practice_collapsed_toggled(self):
+        """Apply the practice-text collapse toggle and persist it."""
+        self.view.toggle_practice_text()
+        collapsed = self.view.get_practice_collapsed()
+        config.PRACTICE_TEXT_COLLAPSED = collapsed
+        self._persist_setting("practice_text_collapsed", collapsed)
+        self._sync_settings_window("practice_text_collapsed", collapsed)
+
+    # ------------------------------------------------------------------
+    # Settings window (mimora/settings_window.py)
+    # ------------------------------------------------------------------
+    # settings.json key -> (config attribute, cast) for settings that the
+    # runtime re-reads from the config module on every use (recorder loop,
+    # phrase generator, recording dumps). Updating the attribute applies the
+    # change immediately; everything else in _RESTART-marked fields waits for
+    # a restart because it was bound at startup.
+    _LIVE_CONFIG_ATTRS = {
+        "save_recordings": ("SAVE_RECORDINGS", bool),
+        "max_record_seconds": ("MAX_RECORD_SECONDS", float),
+        "silence_timeout": ("SILENCE_TIMEOUT", float),
+        "silence_threshold": ("SILENCE_THRESHOLD", float),
+        "phrase_gen_window_sentences": ("PHRASE_GEN_WINDOW_SENTENCES", int),
+        "phrase_gen_window_repeats": ("PHRASE_GEN_WINDOW_REPEATS", int),
+    }
+
+    # settings.json key -> config attribute holding the value the running app
+    # currently uses, for the handler-driven settings on_setting_changed
+    # applies live (the handlers keep these attributes current). Together with
+    # _LIVE_CONFIG_ATTRS this lets the "Default" reset skip no-op dispatches -
+    # see _default_differs_from_live. Restart-only keys are absent on purpose:
+    # their dispatch would be persist-only, and the reset has already removed
+    # the persisted overrides.
+    _SETTING_LIVE_ATTRS = {
+        "user_name": "USER_NAME",
+        "voice": "KOKORO_VOICE",
+        "phrase_length": "PHRASE_LENGTH",
+        "translation_language": "TRANSLATION_LANGUAGE",
+        "reference_speed": "REFERENCE_SPEED",
+        "show_face": "SHOW_FACE",
+        "show_prosody": "SHOW_PROSODY",
+        "practice_text_collapsed": "PRACTICE_TEXT_COLLAPSED",
+        "practice_text_file": "PRACTICE_TEXT_FILE",
+    }
+
+    def on_settings_clicked(self):
+        """Open the settings window, or raise the one already open."""
+        if self._settings_window is not None and self._settings_window.exists():
+            self._settings_window.lift()
+            return
+        self._settings_window = SettingsWindow(self.root, SettingsCallbacks(
+            on_setting_changed=self.on_setting_changed,
+            on_preview_voice=self.on_preview_voice,
+            on_restart_requested=self.restart_app,
+            on_reset_settings=self.on_reset_settings,
+        ))
+
+    def _sync_settings_window(self, key: str, value):
+        """Mirror a main-window setting change into the settings window.
+
+        No-op when the window is closed. set_value never re-emits, so a change
+        that originated in the settings window cannot loop back through here.
+        """
+        window = self._settings_window
+        if window is not None and window.exists():
+            window.set_value(key, value)
+
+    def on_setting_changed(self, key: str, value):
+        """Apply one settings-window change (Tk main thread).
+
+        The settings window is the sole editor for the phrase-loop settings
+        (voice, phrase length, translation language, reference speed, user
+        name): each is written to config (the live source of truth) and then
+        applied through the matching handler, which persists it and refreshes
+        or regenerates as needed. The prosody collapse toggle also has an
+        on-main control, and the face is settings-only now; both route through
+        their handler so the view and settings stay in sync. Keys the runtime
+        re-reads are persisted and applied via _LIVE_CONFIG_ATTRS; restart-only
+        keys are just persisted (the window shows the pending-restart hint).
+        """
+        if key == "user_name":
+            config.USER_NAME = value
+            self.on_user_name_changed()
+        elif key == "voice":
+            if value in config.KOKORO_VOICES:
+                config.KOKORO_VOICE = value
+                self.on_voice_changed()
+            else:
+                # A voice of the other (not yet active) accent: valid only
+                # after restarting into that accent, so only persist it.
+                self._persist_setting("voice", value)
+        elif key == "phrase_length":
+            config.PHRASE_LENGTH = value
+            self.on_length_changed()
+        elif key == "translation_language":
+            config.TRANSLATION_LANGUAGE = value
+            self.on_translation_language_changed()
+        elif key == "show_face":
+            self.view.set_show_face(value)
+            self.on_show_face_toggled()
+        elif key == "practice_text_collapsed":
+            self.view.set_practice_collapsed(value)
+            self.on_practice_collapsed_toggled()
+        elif key == "show_prosody":
+            self.view.set_show_prosody(value)
+            self.on_prosody_toggled()
+        elif key == "reference_speed":
+            # Apply live so the next Reference playback uses it; no replay here
+            # (the change originates in the separate Settings window, so there
+            # is nothing on-screen to demo against).
+            config.REFERENCE_SPEED = float(value)
+            self._persist_setting(key, float(value))
+        elif key == "practice_text_file":
+            self._load_practice_file(value)
+        else:
+            self._persist_setting(key, value)
+            live = self._LIVE_CONFIG_ATTRS.get(key)
+            if live is not None:
+                attr, cast = live
+                setattr(config, attr, cast(value))
+                logging.info(f"Applied live setting config.{attr} = {value!r}.")
+
+    def on_reset_settings(self) -> bool:
+        """Reset every user setting to its default ("Default" button).
+
+        Two steps, matching the chosen semantics: first every override is
+        removed from settings.json (defaults live in the code, so an empty
+        file IS the default state), then the known default values are pushed
+        through the normal on_setting_changed dispatch to take effect live -
+        with persistence suppressed, so the applied defaults are not written
+        straight back as overrides. Returns True on success.
+        """
+        if not config.reset_user_settings():
+            self.view.append_error_msg("Could not reset settings.json.")
+            return False
+        logging.info("Settings reset to defaults; applying live values.")
+        self._suppress_persist = True
+        try:
+            for key, value in config.default_user_settings().items():
+                # Dispatch only actual changes: re-applying an already-default
+                # voice or phrase length would needlessly regenerate the
+                # current phrase (their handlers regenerate on every call).
+                if self._default_differs_from_live(key, value):
+                    self.on_setting_changed(key, value)
+        finally:
+            self._suppress_persist = False
+        return True
+
+    def _default_differs_from_live(self, key: str, value) -> bool:
+        """True when applying default *value* for *key* would change anything.
+
+        The comparison target is the config attribute the running app reads
+        (the handlers and _LIVE_CONFIG_ATTRS keep those current). Restart-only
+        keys always answer False: their reset dispatch would be persist-only,
+        and on_reset_settings already removed the overrides from the file.
+        Numbers compare as floats (an int/float mismatch is not a change) and
+        the practice-text path compares normalized, mirroring
+        SettingsWindow._differs_from_runtime.
+        """
+        live = self._LIVE_CONFIG_ATTRS.get(key)
+        attr = live[0] if live is not None else self._SETTING_LIVE_ATTRS.get(key)
+        if attr is None:
+            return False
+        current = getattr(config, attr)
+        if key == "practice_text_file":
+            return (os.path.normcase(os.path.normpath(str(current)))
+                    != os.path.normcase(os.path.normpath(str(value))))
+        if isinstance(value, (int, float)) and not isinstance(value, bool) \
+                and isinstance(current, (int, float)):
+            return float(current) != float(value)
+        return current != value
+
+    def on_preview_voice(self, voice: str):
+        """Speak the preview phrase with *voice* (settings-window Listen button).
+
+        Gated like the other playback actions: never into an open microphone,
+        never during generation or analysis. Only voices of the active accent
+        can be previewed (the Kokoro pipeline speaks one accent per run); the
+        settings window disables the button otherwise, this check is the
+        thread-safe backstop.
+        """
+        if not self.app_ready or self.is_generating:
+            return
+        if voice not in config.KOKORO_VOICES:
+            return
+        if self.recorder.is_active():
+            return
+        with self.processing_lock:
+            if self.is_processing_audio:
+                return
+        self.stop_playback()
+        stop_event = self._new_playback_event()
+        self.view.playing_status(f"Previewing {voice}...")
+        threading.Thread(target=self._preview_voice_worker,
+                         args=(voice, stop_event), daemon=True).start()
+
+    def _preview_voice_worker(self, voice: str, stop_event: threading.Event):
+        """Synthesize and play the preview phrase. (Background thread.)"""
+        try:
+            audio = self.tts_mgr.synthesize(PREVIEW_PHRASE, voice=voice)
+            if audio.size > 0:
+                self._play_with_face(audio, KOKORO_SAMPLE_RATE, stop_event)
+        except Exception:
+            logging.exception("Voice preview error:")
+            self.root.after(0, self.view.append_error_msg,
+                            f"Could not preview voice {voice}.")
+        finally:
+            self.root.after(0, self._playback_finished, stop_event)
 
     def on_generate_phrase(self):
         if not self.app_ready or self.is_generating:
@@ -757,8 +1017,18 @@ class PronunciationTrainerGUI:
         self.root.focus_set()
 
     def _typing_in_text_field(self) -> bool:
-        """True when a text-input widget owns focus - spacebar should type, not record."""
-        return isinstance(self.root.focus_get(), (tk.Entry, tk.Text))
+        """True when a text-input widget owns focus - spacebar should type, not record.
+
+        Disabled Text widgets do not count: nothing can be typed into them, yet
+        on Windows Tk focuses a Text on click even when it is disabled (so a
+        selection can be shown). Without this exception, clicking the read-only
+        hero phrase or the feedback panel would silently kill the space/arrow
+        hotkeys until something else took focus.
+        """
+        widget = self.root.focus_get()
+        if isinstance(widget, tk.Text):
+            return str(widget.cget("state")) != tk.DISABLED
+        return isinstance(widget, tk.Entry)
 
     def on_keyboard_press(self, event):
         # Holding a record key (space or Down) makes Tk fire KeyPress repeatedly
@@ -969,7 +1239,7 @@ class PronunciationTrainerGUI:
             result.prosody = self._compute_prosody_safe(self.reference_audio,
                                                          KOKORO_SAMPLE_RATE)
             self.root.after(0, self.view.show_feedback, result, self.current_phrase,
-                            self._has_user_recording())
+                            self._has_user_recording(), True)  # is_self_test
         except Exception:
             logging.exception("Reference self-test error:")
             self.root.after(0, self.view.append_error_msg, "Reference test failed.")
@@ -1053,22 +1323,137 @@ class PronunciationTrainerGUI:
     # Playback (reference / own recording)
     # ------------------------------------------------------------------
     def _selected_speed(self) -> float:
-        """Parse the reference-speed selector (e.g. '0.9×') into a float.
-
-        Falls back to normal speed (1.0) if the value is missing or malformed.
-        """
-        try:
-            return float(self.view.get_speed_label().rstrip("×"))
-        except (ValueError, AttributeError):
-            return 1.0
+        """The reference-playback speed to use, from the Settings value."""
+        return config.REFERENCE_SPEED
 
     def play_reference(self):
+        """Replay the reference at the configured speed (Reference button)."""
+        self._play_reference_at(self._selected_speed())
+
+    def _slow_speed(self) -> float:
+        """The slow-replay speed: one step below the Settings value."""
+        return max(config.REFERENCE_SPEED - config.REFERENCE_SLOW_DELTA,
+                   config.REFERENCE_SLOW_MIN)
+
+    def play_reference_slow(self):
+        """Replay the reference one step slower than normal (the Slow ▶ button)."""
+        self._play_reference_at(self._slow_speed())
+
+    def _speak_word_at(self, word: str, speed: float, status: str):
+        """Synthesize a single word and play it at ``speed``.
+
+        Shared by the two single-word playbacks - a clicked hero-card word
+        and the phoneme-example badge - which differ only in speed and status
+        line. ``status`` is the already-formatted status-bar text. Gated like the
+        other playbacks: never into an open microphone or while an analysis
+        playback is in flight.
+        """
+        word = word.strip()
+        if not word or not self.app_ready or self.is_generating:
+            return
+        if self.recorder.is_active():
+            return  # never play into an open microphone
+        with self.processing_lock:
+            if self.is_processing_audio:
+                return
+        self.stop_playback()  # silence any current playback first
+        # The stop event is installed here on the main thread (see
+        # _new_playback_event); the worker only receives it.
+        stop_event = self._new_playback_event()
+        self.view.playing_status(status)
+
+        def _worker():
+            try:
+                audio = self.tts_mgr.synthesize(word, voice=self.current_voice)
+                if audio is None or audio.size == 0:
+                    return
+                self._play_with_face(audio, int(KOKORO_SAMPLE_RATE * speed),
+                                     stop_event)
+            except Exception:
+                logging.exception("Word playback error:")
+            finally:
+                self.root.after(0, self._playback_finished, stop_event)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def on_word_clicked(self, word: str):
+        """Speak one phrase word slowly (click on any hero-card word).
+
+        Synthesizes just that word and plays it at the slow-replay speed, via
+        the same lowered-sample-rate slowing as the Slow ▶ reference button.
+        """
+        self._speak_word_at(word, self._slow_speed(),
+                            f"Playing '{word.strip()}' slowly...")
+
+    def on_sound_example(self, word: str):
+        """Speak a phoneme's example word at normal speed (WORK ON badge click).
+
+        The example word (e.g. "put" for /ʊ/) is a natural rendering of the
+        target sound, so it plays at 1.0x rather than the slowed single-word
+        replay used for the clicked phrase words.
+        """
+        self._speak_word_at(word, 1.0, f"Playing example '{word.strip()}'...")
+
+    def on_take_scored(self, phrase: str, score: float):
+        """Record a scored take into the session tally and refresh the status bar.
+
+        Called by the view once a take has a user-facing score. Every attempt
+        feeds the running average; the phrase text is added to a set so the count
+        reflects distinct phrases. The status bar then shows the unique-phrase
+        count and the mean over all attempts this run.
+        """
+        phrase = (phrase or "").strip()
+        if not phrase:
+            return
+        self._session_phrases.add(phrase)
+        self._session_score_sum += score
+        self._session_attempts += 1
+        average = self._session_score_sum / self._session_attempts
+        self.view.update_session_stats(len(self._session_phrases), average)
+
+    def on_history_entry(self, record: dict):
+        """Append an entry to the bounded attempt history and re-render the list.
+
+        ``record`` comes from the view with a ``kind`` of "attempt", "unscored" or
+        "error". For a scored take, the trend arrow is derived here by comparing
+        the new score with the most recent earlier attempt of the *same* phrase:
+        "up" if higher, "down" if lower, "same" if equal, and left unset (a dim
+        dash) when there is no earlier attempt to compare against. Errors and
+        unscored takes carry no trend. The deque is capped at 10, so old entries
+        drop off the top; the view then rebuilds every row from the full list.
+        """
+        if record.get("kind") == "attempt":
+            record["trend"] = self._history_trend(record.get("phrase", ""),
+                                                  record.get("score", 0.0))
+        self._history.append(record)
+        self.view.render_history(list(self._history))
+
+    def _history_trend(self, phrase: str, score: float) -> Optional[str]:
+        """Trend of ``score`` vs the previous attempt of ``phrase`` in the history.
+
+        Compared on the *displayed* (rounded) score, not the raw float, so the
+        arrow always agrees with the two chip numbers the user sees: 82 vs 82
+        reads as "same" (a dash), never a stray up/down from a sub-point
+        difference like 82.4 vs 81.6.
+        """
+        current = round(score)
+        for past in reversed(self._history):
+            if past.get("kind") == "attempt" and past.get("phrase") == phrase:
+                previous = round(past.get("score", 0.0))
+                if current > previous:
+                    return "up"
+                if current < previous:
+                    return "down"
+                return "same"
+        return None
+
+    def _play_reference_at(self, speed: float):
+        """Play the current reference audio at *speed* (1.0 = normal)."""
         if self.reference_audio is None or self.reference_audio.size == 0:
             return
         # Slowing is done by lowering the effective sample rate: playing 24 kHz
         # audio at, say, 12 kHz (0.5×) makes it twice as long. This is the simple
         # resampling approach - it also shifts the pitch down, no extra deps.
-        speed = self._selected_speed()
         effective_sr = int(KOKORO_SAMPLE_RATE * speed)
         status = "Playing reference..." if speed == 1.0 else f"Playing reference ({speed:g}×)..."
         self._play_async(self.reference_audio, effective_sr, status)
@@ -1175,38 +1560,39 @@ class PronunciationTrainerGUI:
     # ------------------------------------------------------------------
     # Shutdown
     # ------------------------------------------------------------------
-    def quit_app(self):
-        if self._closing:
-            return  # Escape and the window-close button can both land here
-        self._closing = True
-        logging.info("Shutting down Mimora...")
+    def _shutdown_runtime(self):
+        """Release the external resources before the process goes away.
+
+        Shared by quit_app and restart_app. Stops playback, ends a recording
+        in progress (so the capture thread exits its loop and closes the input
+        stream), and kills the local LLM server subprocess - the hard exit
+        below does NOT terminate children, so without this the llama_cpp
+        server would leak, keep holding VRAM, and (on restart) still occupy
+        the server port the new process needs.
+        """
         self.shutdown_event.set()
         self.stop_playback()
-
-        # Stop a recording in progress so the capture thread exits its loop and
-        # closes the input stream before the process goes away.
         self.recorder.stop()
         self.recorder.join()
-
-        # Kill the local LLM server subprocess now: os._exit (below) does NOT
-        # terminate children, so without this the llama_cpp server would leak
-        # and keep holding VRAM after we exit.
         self.llm_server.shutdown()
 
-        # Hard-exit immediately on the main thread instead of via root.destroy()
-        # + the interpreter's normal finalization. With CUDA + PyTorch loaded,
-        # the native CUDA context is torn down while still live and crashes
-        # inside the C extensions, surfacing as Windows exit code 0xC0000409
-        # (STATUS_STACK_BUFFER_OVERRUN) with no Python traceback.
-        #
-        # os._exit is NOT enough on Windows: it maps to ExitProcess, which still
-        # runs DLL_PROCESS_DETACH for every loaded DLL - and the CUDA runtime's
-        # detach is exactly what crashes. TerminateProcess ends the process at
-        # the OS level without running any DLL detach handlers, so that crash
-        # never runs. The external resources that actually need releasing - the
-        # mic stream and the LLM subprocess - were handled just above; logs are
-        # flushed here first. os._exit is the fallback for non-Windows.
-        logging.info("quit_app: cleanup done, hard-exiting now.")
+    def _hard_exit(self):
+        """End the process immediately, bypassing interpreter finalization.
+
+        Hard-exit on the main thread instead of via root.destroy() + the
+        interpreter's normal finalization. With CUDA + PyTorch loaded, the
+        native CUDA context is torn down while still live and crashes inside
+        the C extensions, surfacing as Windows exit code 0xC0000409
+        (STATUS_STACK_BUFFER_OVERRUN) with no Python traceback.
+
+        os._exit is NOT enough on Windows: it maps to ExitProcess, which still
+        runs DLL_PROCESS_DETACH for every loaded DLL - and the CUDA runtime's
+        detach is exactly what crashes. TerminateProcess ends the process at
+        the OS level without running any DLL detach handlers, so that crash
+        never runs. The external resources that actually need releasing were
+        handled by _shutdown_runtime; logs are flushed here first. os._exit is
+        the fallback for non-Windows.
+        """
         logging.shutdown()
         if sys.platform == "win32":
             import ctypes
@@ -1223,6 +1609,74 @@ class PronunciationTrainerGUI:
             kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
             kernel32.TerminateProcess(kernel32.GetCurrentProcess(), 0)
         os._exit(0)
+
+    def quit_app(self):
+        if self._closing:
+            return  # Escape and the window-close button can both land here
+        self._closing = True
+        logging.info("Shutting down Mimora...")
+        self._shutdown_runtime()
+        logging.info("quit_app: cleanup done, hard-exiting now.")
+        self._hard_exit()
+
+    def restart_app(self):
+        """Relaunch the app in a new process (settings-window restart).
+
+        Applies restart-only settings without the user quitting and starting
+        the app by hand: the same cleanup as quit_app runs first (crucially
+        freeing the LLM server port for the new process), then a detached
+        replacement process is spawned and this one hard-exits.
+        subprocess.Popen is used instead of os.execv: on Windows execv detaches
+        the console under some launchers and mangles arguments with spaces.
+
+        The replacement must not share the dying parent's console/stdio: when
+        launched from an IDE, the IDE closes those pipes as soon as the parent
+        exits and the child's first print would crash with [Errno 22] (the
+        same failure mode the module-top comment describes for os.execv). So
+        stdio is pointed at DEVNULL - the app logs to logs/main.log anyway -
+        and on Windows the child is detached from the console and, when the
+        launcher allows it, broken out of the IDE's job object so "stop" in
+        the IDE cannot kill the restarted app.
+        """
+        if self._closing:
+            return
+        self._closing = True
+        logging.info("Restarting Mimora to apply changed settings...")
+        self._shutdown_runtime()
+        try:
+            command = [sys.executable] + sys.argv
+            logging.info(f"Relaunching: {command}")
+            popen_kwargs = {
+                "cwd": os.getcwd(),
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+            }
+            if sys.platform == "win32":
+                flags = (subprocess.DETACHED_PROCESS
+                         | subprocess.CREATE_NEW_PROCESS_GROUP)
+                try:
+                    # Escape the launcher's job object (IDEs kill the whole
+                    # tree on stop). Denied by some jobs - retry without.
+                    subprocess.Popen(
+                        command,
+                        creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB,
+                        **popen_kwargs)
+                except OSError:
+                    logging.info("Job breakaway denied; relaunching attached "
+                                 "to the current job.")
+                    subprocess.Popen(command, creationflags=flags,
+                                     **popen_kwargs)
+            else:
+                # POSIX: a new session detaches from the controlling terminal.
+                subprocess.Popen(command, start_new_session=True,
+                                 **popen_kwargs)
+        except OSError:
+            # The old process must still exit cleanly - the user can relaunch
+            # by hand, which is exactly what a failed restart degrades to.
+            logging.exception("Relaunch failed; exiting without a new process:")
+        logging.info("restart_app: cleanup done, hard-exiting now.")
+        self._hard_exit()
 
     def run(self):
         self.root.mainloop()

@@ -57,6 +57,16 @@ _STOPWORDS = frozenset(
     "some any all each every one two when what where which who how why".split()
 )
 
+# Leading conversational preambles the model sometimes prepends before the
+# actual phrase, e.g. "Here's a short sentence to practice pronunciation: ...".
+# Matched only when the text before the first colon carries a lead-in keyword,
+# so a phrase that legitimately contains a colon is left intact. The {0,100}
+# bounds keep the match to a short lead-in rather than a whole sentence.
+_PREAMBLE_RE = re.compile(
+    r"^[^:]{0,100}?\b(?:here(?:'s| is)|sentence|phrase|fragment|"
+    r"practice|pronunciation|sure|okay|ok)\b[^:]{0,100}?:\s*",
+    re.IGNORECASE)
+
 
 class LLMManager:
     def __init__(self, model: Optional[str] = None):
@@ -239,6 +249,12 @@ class LLMManager:
         text = text.strip().strip('"\'«»“”‘’').strip()
         # Drop a leading list marker like "1." or "- " if the model adds one.
         text = re.sub(r"^\s*(?:\d+[.)]|[-*])\s*", "", text)
+        # Drop a leading conversational preamble ("Here's a sentence ...: <phrase>")
+        # only when real content remains after the colon, so the guard never
+        # empties an otherwise valid phrase.
+        preamble = _PREAMBLE_RE.match(text)
+        if preamble and text[preamble.end():].strip():
+            text = text[preamble.end():].strip()
         text = " ".join(text.split()).strip()
         if fragment:
             text = text.rstrip(".!?").strip()

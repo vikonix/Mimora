@@ -2,6 +2,9 @@
 
 **A local, offline pronunciation trainer.** Mimora says a phrase out loud, you repeat it, and it scores how close you were - highlighting the words to work on. Practice the same phrase until you pass, then move on to the next one. Everything runs on your machine: speech synthesis, speech recognition, phrase generation, and acoustic analysis.
 
+<!-- TODO: re-enable after recording new images of the redesigned UI
+     (the old pre-redesign images were removed from docs/):
+
 <p align="center">
   <img src="docs/mimora1.gif" width="400"
        alt="Mimora demo: one full practice loop - new phrase, speak, score, highlighted words, replay">
@@ -10,6 +13,7 @@
 | Dark theme | Light theme |
 |:---:|:---:|
 | ![Mimora pronunciation trainer, dark theme](docs/mimora-dark2.png) | ![Mimora pronunciation trainer, light theme](docs/mimora-light2.png) |
+-->
 
 *Themes are configurable in `config/themes/`.*
 
@@ -61,7 +65,7 @@ Work on:    colder
 - 🎙️ **One-press recording** - press once, speak, and it stops by itself when you go quiet (peak normalization, silence-based auto-stop).
 - 🗣️ **One consistent reference voice** - prompts and the scored reference are spoken by the same Kokoro voice, so you always compare against the same target (no second TTS).
 - 🧠 **Practice your own material** - paste a paragraph, song, or sentences into the *practice text* panel and the local LLM turns it into an endless stream of phrases to drill.
-- ⚙️ **Practice controls** - pick the Kokoro **voice** and playback **speed**, choose the **phrase length** (full phrase or a few words), and set the **translation language** for the side-by-side panel. A **user name** selects the per-user scoring calibration.
+- ⚙️ **Settings window** (the gear button) - pick the Kokoro **voice** and playback **speed**, choose the **phrase length** (full phrase or a few words), and set the **translation language** shown under the phrase. A **user name** selects the per-user scoring calibration.
 - 📊 **Objective scoring with two interchangeable engines**, selected by `ENGINE` in `mimora/config.py`. The default **phoneme** engine scores espeak reference phonemes against a wav2vec2 phoneme recognizer (feature-weighted edit distance, mapped to a calibrated 0-5 grade). The **acoustic** engine combines per-step cosine DTW over Wav2Vec2 embeddings (40%) with phoneme (30%) and word (30%) error rates. Both are length-invariant and calibratable to your voice (`python pronunciation/<engine>/calibrate.py`).
 - 🔁 **Replay reference vs. your recording** to hear the difference.
 - 😀 **Articulation face** - a schematic mouth opens and closes with the speech as a reference or your recording plays, and shows a smiley reflecting your score while idle.
@@ -210,10 +214,10 @@ python main.py
 On first launch the app loads the TTS and pronunciation (Wav2Vec2) models and starts the LLM server. If you ran `install.py` (or already launched once), the models are cached and this is just a load that takes a moment; if any model is still missing, it is downloaded first (several GB), which takes a while. Once it shows **Ready**:
 
 1. Edit the **Practice text** panel (or keep the default).
-2. Click **🎲 New phrase** - Mimora generates a phrase and speaks it.
+2. Click **Next phrase ▶** - Mimora generates a phrase and speaks it.
 3. **Press `SPACE`** (or click the mic button) and repeat the phrase; the take auto-stops on silence (press `SPACE` / click the mic again to stop manually).
-4. Read your **score** and the words to improve in the feedback panel.
-5. Use **▶ Reference** / **▶ My recording** to compare, then repeat or generate the next phrase.
+4. Read your **score** and verdict on the phrase card: mispronounced words are underlined (click any word to hear it slowly) and the **WORK ON** badges name the sounds to fix (click one for an example word). Earlier takes stay in the attempt history below.
+5. Use **Reference ▶** (or **Slow ▶**) / **My recording ▶** to compare, then repeat or generate the next phrase.
 
 The **first few phrases run noticeably slowly** - the models are still warming up
 and loading their data into memory on their first call. This is normal; speed
