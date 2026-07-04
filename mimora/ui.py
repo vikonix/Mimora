@@ -657,18 +657,20 @@ class TrainerView:
         # it as a whole, so the individual children are packed once here.
         self.prosody_body = tk.Frame(prosody_frame, bg=THEME["bg_main"])
 
-        # Legend lives inside the body (only meaningful when charts are visible),
-        # not in the always-shown header.
-        legend_row = tk.Frame(self.prosody_body, bg=THEME["bg_main"])
-        legend_row.pack(fill=tk.X, pady=(4, 2))
-        tk.Label(legend_row, text="● you", font=(FONT_FAMILY, 8),
-                 fg=THEME["info"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
-        tk.Label(legend_row, text="● reference", font=(FONT_FAMILY, 8),
-                 fg=THEME["reference"], bg=THEME["bg_main"]).pack(side=tk.LEFT, padx=(8, 0))
-
-        # Pitch chart: plain title label above its canvas (no longer a checkbox).
-        tk.Label(self.prosody_body, text="Pitch - intonation (semitones vs your median)",
-                 font=(FONT_FAMILY, 8), fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(anchor=tk.W)
+        # Pitch chart: plain title label above its canvas (no longer a
+        # checkbox), sharing its row with the line legend at the right edge.
+        # The legend lives inside the body (only meaningful when the charts
+        # are visible), and this row saves it a line of vertical space.
+        pitch_title_row = tk.Frame(self.prosody_body, bg=THEME["bg_main"])
+        pitch_title_row.pack(fill=tk.X, pady=(4, 0))
+        tk.Label(pitch_title_row, text="Pitch - intonation (semitones vs your median)",
+                 font=(FONT_FAMILY, 8), fg=THEME["text_dim"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
+        # Packed right-to-left: "reference" first so "you" lands left of it,
+        # keeping the reading order "● you ● reference".
+        tk.Label(pitch_title_row, text="● reference", font=(FONT_FAMILY, 8),
+                 fg=THEME["reference"], bg=THEME["bg_main"]).pack(side=tk.RIGHT)
+        tk.Label(pitch_title_row, text="● you", font=(FONT_FAMILY, 8),
+                 fg=THEME["info"], bg=THEME["bg_main"]).pack(side=tk.RIGHT, padx=(0, 8))
         self.f0_canvas = tk.Canvas(self.prosody_body, height=46, bg=THEME["bg_panel"],
                                    highlightthickness=1, highlightbackground=THEME["border"])
         self.f0_canvas.pack(fill=tk.X, pady=(0, 4))
