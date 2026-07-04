@@ -473,9 +473,10 @@ class TrainerView:
         self.hero_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(8, 10))
 
         # Phrase: a read-only tk.Text (not a Label) so individual words can carry
-        # tags - the "miss" underline for problem words and its click-to-hear
-        # binding. Disabled + takefocus=0 keeps it from swallowing the spacebar
-        # record toggle (main.py gates hotkeys on a focused Text widget).
+        # tags - every word is clickable to hear it slowly (the "word" tag) and
+        # the mispronounced ones also get the "miss" underline. Disabled +
+        # takefocus=0 keeps it from swallowing the spacebar record toggle
+        # (main.py gates hotkeys on a focused Text widget).
         self.phrase_text = tk.Text(
             self.hero_frame, font=(FONT_FAMILY, FONT_SIZE_PHRASE, "bold"),
             fg=THEME["phrase"], bg=THEME["bg_card"], wrap=tk.WORD, bd=0,
@@ -495,18 +496,22 @@ class TrainerView:
         except tk.TclError:
             self.phrase_text.tag_configure("miss", underline=True,
                                            foreground=THEME["bad"])
-        self.phrase_text.tag_bind("miss", "<Button-1>", self._on_miss_word_clicked)
-        # Hover affordance: hand cursor + highlight while over any miss word.
-        # Tag options are per-tag (not per-range), so hovering one miss word
-        # highlights them all - acceptable for the few misses a phrase has.
-        self.phrase_text.tag_bind(
-            "miss", "<Enter>", lambda e: (self.phrase_text.configure(cursor="hand2"),
-                                          self.phrase_text.tag_configure(
-                                              "miss", background=THEME["bg_accent_active"])))
-        self.phrase_text.tag_bind(
-            "miss", "<Leave>", lambda e: (self.phrase_text.configure(cursor="arrow"),
-                                          self.phrase_text.tag_configure(
-                                              "miss", background="")))
+        # Every word carries the "word" tag: click any word (not only the
+        # mispronounced ones) to hear it spoken slowly. "hover" highlights the
+        # single word under the pointer - applied to just that range by
+        # _on_phrase_motion, because tag options are per-tag and a shared
+        # background could not target one word without lighting up the rest.
+        self.phrase_text.tag_configure("hover", background=THEME["bg_accent_active"])
+        self.phrase_text.tag_bind("word", "<Button-1>", self._on_phrase_word_clicked)
+        self.phrase_text.bind("<Motion>", self._on_phrase_motion)
+        self.phrase_text.bind("<Leave>", self._clear_phrase_hover)
+        # Native mouse selection stays enabled on purpose: dragging (or a double-
+        # click) selects part of the phrase so it can be copied - the blue
+        # partial-word highlight is that selection, not a bug. If it ever needs to
+        # be suppressed (e.g. it interferes with the click-to-hear affordance),
+        # block the selection-forming events without touching the single click:
+        #     for seq in ("<B1-Motion>", "<Double-Button-1>", "<Triple-Button-1>"):
+        #         self.phrase_text.bind(seq, lambda e: "break")
         # The Text is disabled between set_phrase calls; its height follows the
         # wrapped content (recomputed on every set_phrase and on resize).
         self.phrase_text.configure(state=tk.DISABLED)
@@ -576,7 +581,7 @@ class TrainerView:
         # _set_hint), so the empty/unscored states stay quiet.
         self.hint_label = tk.Label(
             workon_col,
-            text="Click an underlined word to hear it slowly; "
+            text="Click any word to hear it slowly; "
                  "click a sound for an example.",
             font=(FONT_FAMILY, FONT_SIZE_CAPTION), fg=THEME["text_muted"],
             bg=THEME["bg_card"], justify=tk.LEFT, wraplength=320)
@@ -908,15 +913,33 @@ class TrainerView:
     # Hero card: phrase text and score row
     # ------------------------------------------------------------------
     def set_phrase(self, text: str):
-        """Replace the hero phrase (centered, no tags) and refit its height.
+        """Replace the hero phrase and refit its height (every word clickable).
 
-        Every phrase starts untagged; the "miss" underlines are applied per
-        analysis result (the words-feedback stage maps them from the engine's
-        per-word breakdown).
+        The phrase is split into words so each carries the "word" tag and can be
+        clicked to hear it spoken; no word is a miss yet. The "miss" underlines
+        are added later per analysis result (see _mark_miss_words).
+        """
+        words = (text or "-").split() or ["-"]
+        self._render_phrase([(word, False) for word in words])
+
+    def _render_phrase(self, tokens: list):
+        """Render the hero phrase from ``(word, is_miss)`` pairs.
+
+        Each word gets the "word" tag (clickable to hear it) and is centered; a
+        miss word additionally gets the "miss" underline. The single spaces
+        between words carry only "center", so gaps are neither clickable nor
+        highlighted. The Text is disabled afterwards so it never steals the
+        spacebar record toggle, and any stale hover highlight is dropped first.
         """
         self.phrase_text.configure(state=tk.NORMAL)
+        self.phrase_text.tag_remove("hover", "1.0", tk.END)
         self.phrase_text.delete("1.0", tk.END)
-        self.phrase_text.insert("1.0", text or "-", ("center",))
+        last = len(tokens) - 1
+        for i, (word, is_miss) in enumerate(tokens):
+            tags = ("center", "word", "miss") if is_miss else ("center", "word")
+            self.phrase_text.insert(tk.END, word, tags)
+            if i < last:
+                self.phrase_text.insert(tk.END, " ", ("center",))
         self.phrase_text.configure(state=tk.DISABLED)
         self._fit_phrase_height()
 
@@ -952,12 +975,9 @@ class TrainerView:
         """
         if not reference_words:
             return 0
+        tokens = []
         misses = 0
-        self.phrase_text.configure(state=tk.NORMAL)
-        self.phrase_text.delete("1.0", tk.END)
-        last = len(reference_words) - 1
-        for i, word in enumerate(reference_words):
-            token = word.get("word", "")
+        for word in reference_words:
             level = word.get("level")
             if level in ("good", "ok", "bad"):
                 is_miss = level == "bad"
@@ -965,31 +985,55 @@ class TrainerView:
                 is_miss = not word.get("correct", True)
             if is_miss:
                 misses += 1
-            self.phrase_text.insert(tk.END, token,
-                                    ("center", "miss") if is_miss else ("center",))
-            if i < last:
-                self.phrase_text.insert(tk.END, " ", ("center",))
-        self.phrase_text.configure(state=tk.DISABLED)
-        self._fit_phrase_height()
+            tokens.append((word.get("word", ""), is_miss))
+        self._render_phrase(tokens)
         return misses
 
-    def _on_miss_word_clicked(self, event):
-        """Speak the clicked underlined word slowly (via the controller).
+    def _phrase_word_at(self, event) -> str:
+        """The cleaned phrase word under the pointer, or "" over a gap.
 
-        The word is taken from the exact "miss" tag range under the click, so
-        in-word punctuation (apostrophes etc.) cannot split it the way a plain
-        wordstart/wordend probe would.
+        Reads the exact "word" tag range at the event position (so in-word
+        punctuation like apostrophes is not split the way a plain
+        wordstart/wordend probe would) and strips surrounding punctuation.
+        Returns "" when the pointer is on whitespace or outside any word.
         """
         index = self.phrase_text.index(f"@{event.x},{event.y}")
-        tag_range = self.phrase_text.tag_prevrange("miss", f"{index}+1c")
+        if "word" not in self.phrase_text.tag_names(index):
+            return ""
+        tag_range = self.phrase_text.tag_prevrange("word", f"{index}+1c")
         if not tag_range:
-            return
-        word = self.phrase_text.get(*tag_range).strip(".,!?;:\"'()").strip()
+            return ""
+        return self.phrase_text.get(*tag_range).strip(".,!?;:\"'()").strip()
+
+    def _on_phrase_word_clicked(self, event):
+        """Speak the clicked phrase word slowly (any word, via the controller)."""
+        word = self._phrase_word_at(event)
         # Return focus to the window so the spacebar record toggle keeps
         # working (main.py's global click handler skips Text widgets).
         self.root.focus_set()
         if word:
             self._cb.on_word_clicked(word)
+
+    def _on_phrase_motion(self, event):
+        """Highlight the word under the pointer and show it is clickable.
+
+        Moves the single-range "hover" highlight onto the word at the pointer
+        and switches the cursor to a hand over words / an arrow over the gaps.
+        """
+        index = self.phrase_text.index(f"@{event.x},{event.y}")
+        self.phrase_text.tag_remove("hover", "1.0", tk.END)
+        if "word" in self.phrase_text.tag_names(index):
+            tag_range = self.phrase_text.tag_prevrange("word", f"{index}+1c")
+            if tag_range:
+                self.phrase_text.tag_add("hover", *tag_range)
+            self.phrase_text.configure(cursor="hand2")
+        else:
+            self.phrase_text.configure(cursor="arrow")
+
+    def _clear_phrase_hover(self, _event=None):
+        """Drop the hover highlight and restore the arrow cursor (pointer left)."""
+        self.phrase_text.tag_remove("hover", "1.0", tk.END)
+        self.phrase_text.configure(cursor="arrow")
 
     def _set_score_row(self, number: str, verdict: str, color: str):
         """Fill the SCORE column: the big number and its verdict, both in the
