@@ -88,6 +88,10 @@ class ViewCallbacks:
     # the controller can keep the session tally (unique phrases, running average)
     # that the status bar shows. Only called for actually-scored takes.
     on_take_scored: Callable[[str, float], None]
+    # A new entry for the attempt history: a scored/unscored take or an error
+    # message. The controller owns the bounded history (last 10), computes the
+    # per-phrase trend and hands the full list back via view.render_history.
+    on_history_entry: Callable[[dict], None]
 
 # Phrase-length selector labels. The label maps to generate_phrase's ``length``
 # mode: LENGTH_FULL → "full" sentence, LENGTH_FEW_WORDS → "fragment".
@@ -481,6 +485,11 @@ class TrainerView:
             self.hero_frame, text="-", font=(FONT_FAMILY, FONT_SIZE_TRANSLATION),
             fg=THEME["text_dim"], bg=THEME["bg_card"], wraplength=560,
             justify=tk.CENTER)
+        # Wrap the translation to the label's real width so a long translation
+        # wraps onto more lines instead of being clipped on both sides. A fixed
+        # wraplength did not track the card width, so once the card was narrower
+        # than that value the centred line overflowed and got cut off.
+        self.translation_label.bind("<Configure>", self._wrap_translation)
         # Right-click the translation to copy it (independently of the phrase).
         self._bind_copy_menu(self.translation_label)
         self.refresh_translation_ui()
@@ -608,34 +617,44 @@ class TrainerView:
         # still has no visible button - it stays reachable via the 't' hotkey,
         # gated by self._test_enabled (see is_test_enabled / _set_actions).
 
-        # 7. Feedback log (fills remaining space). Packed AFTER the control panel
-        # so its expand=True only consumes space left over above the button row.
-        feedback_frame = tk.Frame(self.root, bg=THEME["bg_main"])
-        feedback_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=20, pady=(8, 16))
+        # 7. Attempt history (fills remaining space). Packed AFTER the control
+        # panel so its expand=True only consumes space left over above the button
+        # row. A scrollable Canvas hosts one inner frame of per-attempt rows
+        # (mirrors the SettingsWindow scroll pattern): the inner frame is kept as
+        # wide as the canvas and the scrollregion as tall as the content. Rows are
+        # rebuilt by render_history from the controller-owned history list.
+        history_outer = tk.Frame(self.root, bg=THEME["bg_main"])
+        history_outer.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=20, pady=(8, 16))
 
-        self.feedback_display = scrolledtext.ScrolledText(
-            feedback_frame, bg=THEME["bg_panel"], fg=THEME["text"], insertbackground=THEME["text_bright"],
-            font=(FONT_FAMILY, 11), wrap=tk.WORD, bd=0,
-            highlightthickness=1, highlightbackground=THEME["border"], highlightcolor=THEME["accent"],
-            padx=15, pady=15, spacing2=4, spacing3=8)
-        self.feedback_display.pack(fill=tk.BOTH, expand=True)
-        self.feedback_display.configure(state=tk.DISABLED)
+        self.history_canvas = tk.Canvas(
+            history_outer, bg=THEME["bg_panel"], highlightthickness=1,
+            highlightbackground=THEME["border"], bd=0)
+        history_scroll = tk.Scrollbar(history_outer, orient=tk.VERTICAL,
+                                      command=self.history_canvas.yview)
+        self.history_canvas.configure(yscrollcommand=history_scroll.set)
+        history_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        self.history_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        self.feedback_display.tag_configure("system", foreground=THEME["text_muted"], font=(FONT_FAMILY, 10, "italic"))
-        self.feedback_display.tag_configure("good", foreground=THEME["good"], font=(FONT_FAMILY, 11, "bold"))
-        self.feedback_display.tag_configure("bad", foreground=THEME["bad"], font=(FONT_FAMILY, 11, "bold"))
-        # "ok" == acceptable word in the three-level phoneme highlight: light grey,
-        # sitting between green (good) and red (bad).
-        self.feedback_display.tag_configure("ok", foreground=THEME["text_dim"], font=(FONT_FAMILY, 11, "bold"))
-        self.feedback_display.tag_configure("label", foreground=THEME["text_dim"], font=(FONT_FAMILY, 10))
-        self.feedback_display.tag_configure("text", foreground=THEME["text_emph"], font=(FONT_FAMILY, 11))
-        # Monospace tag for phoneme strings so they align and read clearly.
-        self.feedback_display.tag_configure("mono", foreground=THEME["text_dim"], font=("Consolas", 10))
-        # Amber tag for "no word errors but score still low" guidance.
-        self.feedback_display.tag_configure("warn", foreground=THEME["warn"], font=(FONT_FAMILY, 11))
-        # Red tag for error messages (append_error_msg); non-bold so the score
-        # line ("bad" tag) still stands out above errors.
-        self.feedback_display.tag_configure("error", foreground=THEME["bad"], font=(FONT_FAMILY, 10))
+        self.history_frame = tk.Frame(self.history_canvas, bg=THEME["bg_panel"])
+        self._history_window = self.history_canvas.create_window(
+            (0, 0), window=self.history_frame, anchor="nw")
+        self.history_frame.bind("<Configure>", lambda e: self.history_canvas.configure(
+            scrollregion=self.history_canvas.bbox("all")))
+        self.history_canvas.bind("<Configure>", lambda e: self.history_canvas.itemconfigure(
+            self._history_window, width=e.width))
+        # Wheel scrolling is bound directly on the canvas and (in render_history)
+        # on every row widget, rather than via a global bind_all toggled on
+        # Enter/Leave: the latter flickers off whenever the pointer crosses into a
+        # child row, so the wheel would stop working over the rows themselves.
+        self.history_canvas.bind("<MouseWheel>", self._on_history_mousewheel)
+        self.history_frame.bind("<MouseWheel>", self._on_history_mousewheel)
+
+        # Empty-state hint shown until the first attempt lands.
+        self._history_placeholder = tk.Label(
+            self.history_frame, text="Your attempts will appear here.",
+            font=(FONT_FAMILY, 10, "italic"), fg=THEME["text_muted"],
+            bg=THEME["bg_panel"], anchor="w")
+        self._history_placeholder.pack(fill=tk.X, padx=12, pady=12)
 
     # Mic button geometry, shared by draw_mic_button and set_record_level.
     _MIC_CENTER = 50
@@ -823,6 +842,17 @@ class TrainerView:
         language was switched - the translation arrives with the next phrase).
         """
         self.translation_label.config(text=text.strip() if text and text.strip() else "-")
+
+    def _wrap_translation(self, event):
+        """Keep the translation wraplength equal to the label's current width.
+
+        Guarded against the feedback loop where changing wraplength alters the
+        label's height, which fires <Configure> again: only the width matters
+        here and it does not change on a height-only event, so re-setting the
+        same value is skipped.
+        """
+        if int(self.translation_label.cget("wraplength")) != event.width:
+            self.translation_label.config(wraplength=max(1, event.width))
 
     # ------------------------------------------------------------------
     # Hero card: phrase text and score row
@@ -1180,16 +1210,189 @@ class TrainerView:
         logging.info(f"[System] {text}")
 
     def append_error_msg(self, text: str):
-        """Show an error in the feedback panel (in red) and log it.
+        """Show an error as a red row in the attempt history and log it.
 
         Errors like "Audio is too short" or "LM Studio is offline" must reach
-        the user, not only the log file.
+        the user, not only the log file. They share the bounded history list with
+        the takes: the controller owns the storage, so this just forwards the
+        entry and the render follows from render_history.
         """
         logging.warning(f"[Error] {text}")
-        self.feedback_display.configure(state=tk.NORMAL)
-        self.feedback_display.insert(tk.END, f"{text}\n", "error")
-        self.feedback_display.configure(state=tk.DISABLED)
-        self.feedback_display.see(tk.END)
+        self._cb.on_history_entry({"kind": "error", "text": text})
+
+    # ------------------------------------------------------------------
+    # Attempt history (scrollable list; model owned by the controller)
+    # ------------------------------------------------------------------
+    def _on_history_mousewheel(self, event):
+        """Scroll the history list with the wheel."""
+        self.history_canvas.yview_scroll(-int(event.delta / 120), "units")
+
+    def _bind_history_wheel(self, widget):
+        """Bind wheel scrolling on ``widget`` and all its descendants.
+
+        Rows and their labels are separate widgets, so the wheel is bound on each
+        one; otherwise it would only scroll when the pointer sat on the bare
+        canvas between rows.
+        """
+        widget.bind("<MouseWheel>", self._on_history_mousewheel)
+        for child in widget.winfo_children():
+            self._bind_history_wheel(child)
+
+    def render_history(self, entries: list):
+        """Rebuild the attempt-history rows from the controller-owned list.
+
+        ``entries`` is the full bounded history (oldest first); each is a dict with
+        a ``kind`` of "attempt", "unscored" or "error". Only the most recent take
+        (attempt/unscored) is expanded by default; errors are flat red rows. The
+        list is small (<= 10), so a full rebuild per update is cheap and keeps the
+        render a pure function of the model.
+        """
+        for child in self.history_frame.winfo_children():
+            child.destroy()
+        if not entries:
+            self._history_placeholder = tk.Label(
+                self.history_frame, text="Your attempts will appear here.",
+                font=(FONT_FAMILY, 10, "italic"), fg=THEME["text_muted"],
+                bg=THEME["bg_panel"], anchor="w")
+            self._history_placeholder.pack(fill=tk.X, padx=12, pady=12)
+            return
+        # Newest first: the most recent take sits at the top, so a short list
+        # fills from the top of the panel instead of leaving it blank above the
+        # single bottom row.
+        ordered = list(reversed(entries))
+        # Expand the latest take (skip leading errors) by default: it is now the
+        # first attempt/unscored entry from the top.
+        expand_index = None
+        for i, entry in enumerate(ordered):
+            if entry.get("kind") in ("attempt", "unscored"):
+                expand_index = i
+                break
+        for i, entry in enumerate(ordered):
+            self._build_history_row(entry, expanded=(i == expand_index))
+        # Wheel scrolling over any part of the freshly built rows.
+        self._bind_history_wheel(self.history_frame)
+        # Keep the newest row (at the top) in view.
+        self.history_canvas.update_idletasks()
+        self.history_canvas.configure(scrollregion=self.history_canvas.bbox("all"))
+        self.history_canvas.yview_moveto(0.0)
+
+    def _build_history_row(self, entry: dict, expanded: bool):
+        """Build one history row: [score chip][trend][phrase] plus a detail area."""
+        kind = entry.get("kind")
+        row = tk.Frame(self.history_frame, bg=THEME["bg_panel"])
+        row.pack(fill=tk.X, padx=8, pady=(4, 0))
+
+        if kind == "error":
+            tk.Label(row, text=entry.get("text", ""), fg=THEME["bad"],
+                     bg=THEME["bg_panel"], font=(FONT_FAMILY, 10), anchor="w",
+                     justify=tk.LEFT, wraplength=520).pack(fill=tk.X, padx=4, pady=2)
+            return
+
+        header = tk.Frame(row, bg=THEME["bg_panel"], cursor="hand2")
+        header.pack(fill=tk.X)
+
+        # Score chip: a 1px outline in the verdict colour with the digit inside.
+        if kind == "attempt":
+            chip_text = f"{entry.get('score', 0):.0f}"
+            chip_color = entry.get("color") or THEME["text_dim"]
+        else:  # unscored ("none" engine): no number, no verdict colour.
+            chip_text, chip_color = "--", THEME["text_dim"]
+        chip = tk.Label(header, text=chip_text, fg=chip_color, bg=THEME["bg_panel"],
+                        font=(FONT_FAMILY, 11, "bold"), padx=8, pady=1,
+                        highlightthickness=1, highlightbackground=chip_color)
+        chip.pack(side=tk.LEFT)
+
+        # Trend arrow vs the previous attempt of the same phrase (controller-set).
+        trend = entry.get("trend")
+        if trend == "up":
+            arrow_text, arrow_color = "▲", THEME["good"]
+        elif trend == "down":
+            arrow_text, arrow_color = "▼", THEME["bad"]
+        else:  # "same", or no earlier attempt to compare against.
+            arrow_text, arrow_color = "–", THEME["text_dim"]
+        tk.Label(header, text=arrow_text, fg=arrow_color, bg=THEME["bg_panel"],
+                 font=(FONT_FAMILY, 11)).pack(side=tk.LEFT, padx=(8, 8))
+
+        tk.Label(header, text=entry.get("phrase") or "-", fg=THEME["text_emph"],
+                 bg=THEME["bg_panel"], font=(FONT_FAMILY, 11), anchor="w",
+                 justify=tk.LEFT).pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        detail = tk.Frame(row, bg=THEME["bg_panel"])
+        detail_text = self._fill_history_detail(detail, entry)
+        if expanded:
+            detail.pack(fill=tk.X, padx=(4, 4), pady=(2, 4))
+            self.root.after_idle(lambda t=detail_text: self._fit_history_text(t))
+
+        # Clicking anywhere on the header toggles the detail below it.
+        def toggle(event=None, d=detail, t=detail_text):
+            if d.winfo_manager() == "pack":
+                d.pack_forget()
+            else:
+                d.pack(fill=tk.X, padx=(4, 4), pady=(2, 4))
+                self.root.after_idle(lambda: self._fit_history_text(t))
+            self.history_canvas.configure(scrollregion=self.history_canvas.bbox("all"))
+
+        for widget in (header, *header.winfo_children()):
+            widget.bind("<Button-1>", toggle)
+
+    def _fill_history_detail(self, parent, entry: dict):
+        """Fill a row's detail with the coloured word breakdown and problem sounds.
+
+        Returns the inner read-only Text so its height can be fitted once visible.
+        """
+        txt = tk.Text(parent, bg=THEME["bg_panel"], fg=THEME["text"], bd=0,
+                      highlightthickness=0, wrap=tk.WORD, height=1, cursor="arrow",
+                      font=(FONT_FAMILY, 10), padx=4, pady=0, spacing3=2)
+        txt.tag_configure("label", foreground=THEME["text_dim"])
+        txt.tag_configure("good", foreground=THEME["good"])
+        txt.tag_configure("ok", foreground=THEME["text_dim"])
+        txt.tag_configure("bad", foreground=THEME["bad"], font=(FONT_FAMILY, 10, "bold"))
+        txt.tag_configure("text", foreground=THEME["text_emph"])
+        txt.tag_configure("mono", foreground=THEME["text_dim"], font=("Consolas", 10))
+
+        if entry.get("kind") == "unscored":
+            txt.insert(tk.END, "Heard: ", "label")
+            txt.insert(tk.END, "scoring is off - compare the takes by ear", "text")
+        else:
+            # "Words": the target phrase coloured by per-word correctness
+            # (good/ok/bad, three-level "level" or the acoustic engine's boolean
+            # "correct"); falls back to the plain phrase if tags are empty.
+            txt.insert(tk.END, "Words: ", "label")
+            ref_words = entry.get("reference_words") or []
+            if ref_words:
+                for word in ref_words:
+                    level = word.get("level")
+                    if level in ("good", "ok", "bad"):
+                        tag = level
+                    else:
+                        tag = "good" if word.get("correct") else "bad"
+                    txt.insert(tk.END, word["word"] + " ", tag)
+            else:
+                txt.insert(tk.END, entry.get("phrase") or "-", "text")
+            phonemes = entry.get("phonemes") or []
+            if phonemes:
+                txt.insert(tk.END, "\nWork on: ", "label")
+                for phoneme in phonemes:
+                    txt.insert(tk.END, f"/{phoneme}/ ", "mono")
+        txt.configure(state=tk.DISABLED)
+        txt.pack(fill=tk.X)
+        return txt
+
+    def _fit_history_text(self, txt):
+        """Size a detail Text to its number of logical lines.
+
+        Height is the logical line count (the coloured "Words" line plus an
+        optional "Work on" line), not the wrapped display-line count: a
+        display-line count measured before the canvas-embedded Text gets its real
+        width balloons (every word wraps onto its own line), which would leave a
+        tall gap under the expanded row and push the older rows to the bottom.
+        Logical lines are width-independent, so the row height stays stable.
+        """
+        if not txt.winfo_exists():
+            return
+        lines = int(txt.index("end-1c").split(".")[0])
+        txt.configure(height=max(1, lines))
+        self.history_canvas.configure(scrollregion=self.history_canvas.bbox("all"))
 
     def update_status(self, text: str, color: str = THEME["text_dim"]):
         self.status_label.configure(text=text, fg=color)
@@ -1370,7 +1573,8 @@ class TrainerView:
         # score/passed carry no meaning, so render the neutral read-out instead
         # of a quality label that would pretend the take was judged.
         if not getattr(result, "scored", True):
-            self._show_unscored_feedback(result, current_phrase, has_recording)
+            self._show_unscored_feedback(result, current_phrase, has_recording,
+                                         is_self_test)
             return
         # One consistent presentation for the whole result, so the score read-out,
         # quality label, face and the passed/try-again line never contradict each
@@ -1392,65 +1596,10 @@ class TrainerView:
         # shows the top-3 problem sounds.
         self._set_score_row(f"{display_score:.0f}", quality.lower(), quality_color)
         self._set_badges([entry["phoneme"] for entry in result.weak_phonemes[:3]])
-        self.feedback_display.configure(state=tk.NORMAL)
-        # The numeric score moved out of this panel: the raw score/bucket now lives
-        # in the status bar and the qualitative label. This panel keeps only the
-        # actionable Phrase/Heard breakdown.
-        # First line: the target phrase, highlighting what was said well (green)
-        # vs mispronounced (red). Driven by the engine-neutral reference_words
-        # tags; falls back to the raw phrase if an engine left them empty.
-        # Separate consecutive results with a blank line, but not before the
-        # first one. Each block leaves its last line unterminated, so the
-        # separator needs two newlines: one to close that line, one for the blank
-        # row. (A single leading "\n" only closed the previous line, which is why
-        # it appeared to fire just once - on the initially empty panel.)
-        if self.feedback_display.get("1.0", "end-1c"):
-            self.feedback_display.insert(tk.END, "\n\n")
-        self.feedback_display.insert(tk.END, "Phrase: ", "label")
-        if result.reference_words:
-            for entry in result.reference_words:
-                # Three-level colour when the engine supplies a "level"
-                # (good/ok/bad); fall back to the boolean "correct" (acoustic engine).
-                level = entry.get("level")
-                if level in ("good", "ok", "bad"):
-                    tag = {"good": "good", "ok": "ok", "bad": "bad"}[level]
-                else:
-                    tag = "good" if entry.get("correct") else "bad"
-                self.feedback_display.insert(tk.END, entry["word"] + " ", tag)
-        else:
-            for token in (current_phrase or "-").split():
-                self.feedback_display.insert(tk.END, token + " ", "text")
-        self.feedback_display.insert(tk.END, "\n")
-
-        # Second line: the few phonemes worth working on, instead of the
-        # full recognised transcription -- the panel now says "what to fix", not
-        # "what was heard". The phoneme engine supplies weak_phonemes (worst
-        # first); the acoustic engine has no per-phone breakdown, so it keeps the
-        # old unit-by-unit "Heard" readout as a meaningful fallback.
-        if result.weak_phonemes:
-            self.feedback_display.insert(tk.END, "Work on: ", "label")
-            for entry in result.weak_phonemes:
-                self.feedback_display.insert(tk.END, f"/{entry['phoneme']}/ ", "bad")
-        elif getattr(result, "bucket", -1) >= 0:
-            # Phoneme engine with no weak phones -> a clean read.
-            self.feedback_display.insert(tk.END, "Work on: ", "label")
-            self.feedback_display.insert(tk.END, "nothing major - nice work ✓", "good")
-        else:
-            # Acoustic engine fallback: the original recognised-units "Heard" line.
-            self.feedback_display.insert(tk.END, "Heard: ", "label")
-            # "matches the target" only when there are no mispronounced words AND the
-            # take passed -- so a low score can no longer sit next to a "matches ✓".
-            if not result.word_diff and result.passed:
-                self.feedback_display.insert(tk.END, "matches the target ✓", "good")
-            elif result.recognized_units:
-                for entry in result.recognized_units:
-                    tag = "good" if entry.get("correct") else "bad"
-                    self.feedback_display.insert(tk.END, entry["unit"] + " ", tag)
-            else:
-                self.feedback_display.insert(tk.END, f"{result.transcription or '-'}", "text")
-
-        self.feedback_display.configure(state=tk.DISABLED)
-        self.feedback_display.see(tk.END)
+        # The Phrase/Work-on breakdown is no longer written to a running text
+        # panel: it now lives in the attempt-history list, emitted below once per
+        # take (see on_history_entry). The hero card already carries the score,
+        # verdict and problem-sound badges for the current take.
 
         # Cache prosody and draw the sparklines (you vs reference).
         self._last_prosody = result.prosody or {}
@@ -1464,6 +1613,17 @@ class TrainerView:
         # sanity check, not a practice attempt, so it must not touch the tally.
         if not is_self_test:
             self._cb.on_take_scored(current_phrase, display_score)
+            # Record the take into the attempt history (controller-owned). The
+            # colour is the resolved verdict colour; the detail keeps the coloured
+            # word breakdown and the top problem sounds shown on the hero card.
+            self._cb.on_history_entry({
+                "kind": "attempt",
+                "phrase": current_phrase or "",
+                "score": display_score,
+                "color": quality_color,
+                "reference_words": result.reference_words,
+                "phonemes": [entry["phoneme"] for entry in result.weak_phonemes[:3]],
+            })
 
         # Re-enable everything disabled while recording: the reference replay,
         # the self-test and new-phrase generation. "My recording" is enabled only
@@ -1479,30 +1639,26 @@ class TrainerView:
             self.update_instruction("Try again: press SPACE or click the mic to repeat. ▶ Reference replays the example.")
 
     def _show_unscored_feedback(self, result: "PronunciationResult", current_phrase,
-                                has_recording: bool):
+                                has_recording: bool, is_self_test: bool = False):
         """Feedback for an unscored take (``result.scored`` is False; "none" engine).
 
-        Keeps everything that does not depend on scoring - the phrase line, the
-        prosody charts (still computed by the host from the raw waveforms) and
-        re-enabling the controls - and shows neutral placeholders where a verdict
-        would go, so this mode never pretends the take was judged.
+        Keeps everything that does not depend on scoring - the prosody charts
+        (still computed by the host from the raw waveforms), the neutral hero-card
+        read-out and re-enabling the controls - and adds a neutral "--" row to the
+        attempt history, so this mode never pretends the take was judged.
         """
         self.face.set_expression("neutral")
         # Hero card: neutral "scoring off" read-out - no number, no badges.
         self._set_score_row("--", "scoring off", THEME["text_dim"])
         self._set_badges([])
-        self.feedback_display.configure(state=tk.NORMAL)
-        # Same result-separator convention as show_feedback (see the comment there).
-        if self.feedback_display.get("1.0", "end-1c"):
-            self.feedback_display.insert(tk.END, "\n\n")
-        self.feedback_display.insert(tk.END, "Phrase: ", "label")
-        for token in (current_phrase or "-").split():
-            self.feedback_display.insert(tk.END, token + " ", "text")
-        self.feedback_display.insert(tk.END, "\n")
-        self.feedback_display.insert(tk.END, "Heard: ", "label")
-        self.feedback_display.insert(tk.END, "scoring is off - compare the takes by ear", "text")
-        self.feedback_display.configure(state=tk.DISABLED)
-        self.feedback_display.see(tk.END)
+        # A neutral history row (no score, no trend). The reference self-test is a
+        # pipeline check, not a practice take, so it stays out of the history for
+        # the same reason it stays out of the session tally.
+        if not is_self_test:
+            self._cb.on_history_entry({
+                "kind": "unscored",
+                "phrase": current_phrase or "",
+            })
 
         # Prosody still works without scoring; cache and draw it as usual.
         self._last_prosody = result.prosody or {}

@@ -19,6 +19,7 @@ the whole app. Run this module to start the trainer:
 import subprocess
 import time
 import threading
+from collections import deque
 from typing import Optional
 import os
 import sys
@@ -222,6 +223,13 @@ class PronunciationTrainerGUI:
         self._session_phrases: set[str] = set()
         self._session_score_sum: float = 0.0
         self._session_attempts: int = 0
+        # Bounded attempt history shown in the scrollable list (view.render_history).
+        # Holds the last N entries - scored takes, unscored ("none" engine) takes
+        # and error messages - oldest first. The controller owns it so the trend
+        # arrow (this take vs the previous attempt of the same phrase) can be
+        # computed from the retained entries.
+        # TODO: temporarily capped at 5 for layout debugging; restore to 10.
+        self._history: deque = deque(maxlen=10)
         # Kokoro voice the current reference was synthesized with (logged with
         # every analysis sample - the acoustic calibration is voice-specific).
         self.current_voice: str = config.KOKORO_VOICE
@@ -280,6 +288,7 @@ class PronunciationTrainerGUI:
             on_generate_phrase=self.on_generate_phrase,
             on_word_clicked=self.on_word_clicked,
             on_take_scored=self.on_take_scored,
+            on_history_entry=self.on_history_entry,
         ))
         self.bind_events()
 
@@ -1331,6 +1340,35 @@ class PronunciationTrainerGUI:
         self._session_attempts += 1
         average = self._session_score_sum / self._session_attempts
         self.view.update_session_stats(len(self._session_phrases), average)
+
+    def on_history_entry(self, record: dict):
+        """Append an entry to the bounded attempt history and re-render the list.
+
+        ``record`` comes from the view with a ``kind`` of "attempt", "unscored" or
+        "error". For a scored take, the trend arrow is derived here by comparing
+        the new score with the most recent earlier attempt of the *same* phrase:
+        "up" if higher, "down" if lower, "same" if equal, and left unset (a dim
+        dash) when there is no earlier attempt to compare against. Errors and
+        unscored takes carry no trend. The deque is capped at 10, so old entries
+        drop off the top; the view then rebuilds every row from the full list.
+        """
+        if record.get("kind") == "attempt":
+            record["trend"] = self._history_trend(record.get("phrase", ""),
+                                                  record.get("score", 0.0))
+        self._history.append(record)
+        self.view.render_history(list(self._history))
+
+    def _history_trend(self, phrase: str, score: float) -> Optional[str]:
+        """Trend of ``score`` vs the previous attempt of ``phrase`` in the history."""
+        for past in reversed(self._history):
+            if past.get("kind") == "attempt" and past.get("phrase") == phrase:
+                previous = past.get("score", 0.0)
+                if score > previous:
+                    return "up"
+                if score < previous:
+                    return "down"
+                return "same"
+        return None
 
     def _play_reference_at(self, speed: float):
         """Play the current reference audio at *speed* (1.0 = normal)."""
