@@ -211,12 +211,12 @@ class TrainerView:
         their control widgets (default ``side=TOP``) into the returned frame
         without worrying about ordering. Columns are top-aligned by the caller
         (``anchor=N``) so short buttons and the taller mic each keep their caption
-        directly beneath them, as in the mockup.
+        directly beneath them.
         """
         col = tk.Frame(parent, bg=THEME["bg_main"])
-        # padx=6 on each side yields a ~12px gap between columns - tighter than
-        # the mockup's 22px so all four columns fit the 600px window.
-        col.pack(side=tk.LEFT, anchor=tk.N, padx=6)
+        # padx=4 on each side yields a ~8px gap between columns, tight enough
+        # that all four columns fit the 600px window.
+        col.pack(side=tk.LEFT, anchor=tk.N, padx=4)
         tk.Label(col, text=caption, font=(FONT_FAMILY, FONT_SIZE_CAPTION),
                  fg=THEME["text_muted"], bg=THEME["bg_main"]).pack(side=tk.BOTTOM, pady=(5, 0))
         return col
@@ -288,7 +288,7 @@ class TrainerView:
         #
         # The widgets are built here, but the frame is packed later - right below
         # the hero card (see the control_frame.pack() call after the hero
-        # section) - so the on-screen order matches the mockup:
+        # section) - so the on-screen order is:
         # header -> practice text -> hero -> controls -> prosody -> history.
         control_frame = tk.Frame(self.root, bg=THEME["bg_main"])
 
@@ -298,10 +298,11 @@ class TrainerView:
         self._test_enabled = False
 
         # Equal-width buttons keep the row balanced regardless of label length;
-        # 14 chars is the width of the longest label ("My recording ▶"). A tight
-        # internal padding keeps all four columns within the 600px window.
-        action_btn_width = 13
-        action_btn_padx = 5
+        # the longest label ("My recording ▶") is 14 chars, so it still sizes
+        # its button to fit rather than the requested 12. A tight internal
+        # padding keeps all four columns within the 600px window.
+        action_btn_width = 12
+        action_btn_padx = 4
 
         # Centered row of control columns (each built by _control_column, which
         # top-aligns them and hangs the caption underneath).
@@ -361,9 +362,9 @@ class TrainerView:
             on_word_clicked=self._cb.on_word_clicked,
             on_sound_example=self._cb.on_sound_example)
 
-        # 5a. Control panel, packed here so it sits directly under the hero card
-        # (mockup order). The frame and its buttons were built in section 3; only
-        # the placement was deferred to this point in the packing order.
+        # 5a. Control panel, packed here so it sits directly under the hero card.
+        # The frame and its buttons were built in section 3; only the placement
+        # was deferred to this point in the packing order.
         control_frame.pack(side=tk.TOP, fill=tk.X, padx=20, pady=(0, 8))
 
         # 5b. Prosody panel - pitch (F0) and energy sparklines under one

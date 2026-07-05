@@ -120,7 +120,7 @@ class HeroCard:
         self.refresh_translation_ui()
 
         # Bottom padding of the phrase block, then a 1px divider above the
-        # score row (the card's only internal separator, as in the mockup).
+        # score row (the card's only internal separator).
         tk.Frame(self.frame, height=14, bg=THEME["bg_card"]).pack(fill=tk.X)
         tk.Frame(self.frame, height=1, bg=THEME["border"]).pack(fill=tk.X)
 
@@ -155,7 +155,7 @@ class HeroCard:
         self.workon_caption.pack(anchor=tk.W)
         self.badges_frame = tk.Frame(workon_col, bg=THEME["bg_card"])
         self.badges_frame.pack(anchor=tk.W, pady=(4, 0))
-        # Hint under the badges (mockup): how to use the two interactive feedback
+        # Hint under the badges: how to use the two interactive feedback
         # affordances. Packed only while a scored take is on the card (see
         # set_hint), so the empty/unscored states stay quiet.
         self.hint_label = tk.Label(

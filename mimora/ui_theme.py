@@ -58,9 +58,9 @@ FONT_FAMILY = _FONT_FAMILIES.get(platform.system(), "DejaVu Sans")  # Linux/othe
 
 # Typographic scale (Tk points). Kept in one place so the redesign pulls from a
 # single ladder instead of scattering magic sizes across widgets. Tk points
-# render larger in pixels than the CSS px in the mockup (Windows ~1.3x), so the
-# 21pt phrase lands near the mockup's 27px hero text.
-FONT_SIZE_PHRASE = 21        # hero practice phrase (mockup ~27px)
+# render larger in pixels than the original design's CSS px (Windows ~1.3x),
+# so the 21pt phrase lands near the original 27px hero text.
+FONT_SIZE_PHRASE = 21        # hero practice phrase (original design ~27px)
 FONT_SIZE_SCORE = 26         # big verdict score in the score row (added in the
                              # hero-card stage; defined here to keep the scale whole)
 FONT_SIZE_TRANSLATION = 11   # translation line under the phrase
