@@ -56,3 +56,6 @@ config/settings.json
 texts/
 
 prototypes-pronunciation/
+
+# Run scripts
+run_mimora.*

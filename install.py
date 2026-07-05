@@ -14,6 +14,8 @@ run Mimora on a fresh machine:
   6. Pre-download the Hugging Face models into model_cache/.
   7. Download the GGUF chat model into models/.
   8. Run tools/detect_hardware.py to write config/hardware_config.json.
+  9. Write run_mimora.bat / run_mimora.sh: one-click launchers that activate
+     the project's virtual environment and run main.py.
 
 Design notes
 ------------
@@ -69,6 +71,8 @@ REQUIREMENTS = PROJECT_ROOT / "requirements.txt"
 MODELS_DIR = PROJECT_ROOT / "models"
 MODEL_CACHE_DIR = PROJECT_ROOT / "model_cache"
 DETECT_HW_SCRIPT = PROJECT_ROOT / "tools" / "detect_hardware.py"
+LAUNCHER_BAT = PROJECT_ROOT / "run_mimora.bat"
+LAUNCHER_SH = PROJECT_ROOT / "run_mimora.sh"
 
 MIN_PYTHON = (3, 11)  # matches requires-python in pyproject.toml
 # Highest Python minor we have verified has prebuilt wheels for every
@@ -521,7 +525,7 @@ def check_virtualenv(log: Logger, args: argparse.Namespace) -> None:
     global site-packages, so we detect a venv/virtualenv/conda env and, when
     absent, make the user confirm before continuing.
     """
-    log.banner("Step 0/8 - Environment check")
+    log.banner("Step 0/9 - Environment check")
     in_venv = (sys.prefix != sys.base_prefix
                or bool(os.environ.get("CONDA_PREFIX")))
     log.log(f"    Interpreter: {sys.executable}")
@@ -570,7 +574,7 @@ def step_check_vcredist(
     message. We do NOT auto-install the redistributable: it needs an elevated GUI
     installer, which is out of scope for this pip-only setup.
     """
-    log.banner("Step 0/8 - Visual C++ runtime (Windows)")
+    log.banner("Step 0/9 - Visual C++ runtime (Windows)")
     if sys.platform != "win32":
         log.log("    Not Windows; the MSVC runtime check does not apply.")
         report.add("VC++ runtime", SKIPPED, "not Windows")
@@ -608,7 +612,7 @@ def step_check_python(
 ) -> None:
     """Gate the interpreter: hard-fail below the minimum, warn above the tested
     maximum (no upper version block - newer Pythons may just lack wheels)."""
-    log.banner("Step 1/8 - Python version")
+    log.banner("Step 1/9 - Python version")
     current = sys.version_info[:2]
     log.log(f"    Running Python {platform.python_version()} ({sys.executable})")
     if current < MIN_PYTHON:
@@ -632,7 +636,7 @@ def step_install_requirements(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Install the project requirements; the root file chains the subprojects."""
-    log.banner("Step 4/8 - Project dependencies")
+    log.banner("Step 4/9 - Project dependencies")
     if not REQUIREMENTS.exists():
         log.log(f"    ERROR: {REQUIREMENTS} not found. Aborting.")
         report.add("pip requirements", FAILED, "requirements.txt missing")
@@ -773,7 +777,7 @@ def step_gpu_llama(
 
 def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
     """Ensure the native espeak-ng binary exists; offer to install it."""
-    log.banner("Step 5/8 - espeak-ng (native binary for phonemizer)")
+    log.banner("Step 5/9 - espeak-ng (native binary for phonemizer)")
     if shutil.which("espeak-ng") or shutil.which("espeak"):
         log.log("    espeak-ng found on PATH.")
         report.add("espeak-ng", DONE, "already present")
@@ -876,7 +880,7 @@ def step_prefetch_models(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the Hugging Face models into model_cache/ (HF_HOME)."""
-    log.banner("Step 6/8 - Pre-download Hugging Face models")
+    log.banner("Step 6/9 - Pre-download Hugging Face models")
 
     # Match mimora/config.py: HF_HOME points at the project's model_cache/.
     MODEL_CACHE_DIR.mkdir(exist_ok=True)
@@ -921,7 +925,7 @@ def step_download_gguf(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the GGUF chat model into models/ if not already present."""
-    log.banner("Step 7/8 - GGUF chat model")
+    log.banner("Step 7/9 - GGUF chat model")
     MODELS_DIR.mkdir(exist_ok=True)
     target = MODELS_DIR / GGUF_FILENAME
 
@@ -961,7 +965,7 @@ def step_detect_hardware(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Run detect_hardware.py last, when torch/llama-cpp are installed."""
-    log.banner("Step 8/8 - Hardware detection (writes hardware_config.json)")
+    log.banner("Step 8/9 - Hardware detection (writes hardware_config.json)")
     if not DETECT_HW_SCRIPT.exists():
         log.log(f"    {DETECT_HW_SCRIPT} not found; skipping.")
         report.add("hardware detection", SKIPPED, "script missing")
@@ -974,6 +978,77 @@ def step_detect_hardware(
         report.add("hardware detection", SKIPPED)
         return
     run_or_fail(cmd, log, report, "hardware detection")
+
+
+def step_create_launchers(
+    log: Logger, confirmer: Confirmer, report: StepReport
+) -> None:
+    """Write the one launcher script this platform needs: run main.py with the
+    venv's own python interpreter (no activate step).
+
+    Run last, once the environment is fully set up, so the script is a
+    one-click way to start Mimora afterwards. Only run_mimora.bat is written on
+    Windows and only run_mimora.sh on Linux/macOS - the installer runs on the
+    machine that will actually launch Mimora, so the other platform's script
+    would never be used there. Calling the venv's python executable by path is
+    equivalent to activating the venv and running `python main.py`, but skips
+    activate.bat / activate's own quirks (Windows execution-policy prompts for
+    the .ps1 variant, needing to `source` the Unix script, etc.) - the
+    interpreter's own site-packages resolution already provides the same
+    isolation. `Scripts\\python.exe` / `bin/python` are the two names
+    guaranteed to exist regardless of whether the venv was made with the
+    stdlib `venv` module or the `virtualenv` package.
+
+    The venv folder name is auto-detected the same way check_virtualenv()
+    hints at it (find_local_venv_name()), so the script still works if the
+    venv was created under a name other than '.venv'.
+    """
+    log.banner("Step 9/9 - Launcher script")
+    venv_name = find_local_venv_name()
+    target = LAUNCHER_BAT if sys.platform == "win32" else LAUNCHER_SH
+
+    installed = target.exists()
+    desc = (f"Write {target.name}: runs main.py with '{venv_name}'s own "
+            f"python interpreter.")
+    if installed:
+        log.log(f"    {target.name} already present (would be refreshed for "
+                f"venv '{venv_name}').")
+    if not confirmer.confirm(desc, installed=installed):
+        report.add("Launcher script", SKIPPED,
+                   "already present" if installed else "")
+        return
+
+    if target is LAUNCHER_BAT:
+        # \r\n line endings: keeps the .bat readable if opened/edited on Windows.
+        contents = "\r\n".join([
+            "@echo off",
+            "REM Launch Mimora with the venv's own python interpreter.",
+            "setlocal",
+            "cd /d \"%~dp0\"",
+            f"\"{venv_name}\\Scripts\\python.exe\" main.py",
+            "pause",
+            "",
+        ])
+        target.write_text(contents, encoding="utf-8")
+    else:
+        contents = "\n".join([
+            "#!/usr/bin/env bash",
+            "# Launch Mimora with the venv's own python interpreter.",
+            "set -e",
+            "cd \"$(dirname \"$0\")\"",
+            f"\"{venv_name}/bin/python\" main.py",
+            "",
+        ])
+        target.write_text(contents, encoding="utf-8", newline="\n")
+        try:
+            # Best-effort +x; the file is still usable via `bash
+            # run_mimora.sh` even if chmod fails (e.g. an unusual filesystem).
+            target.chmod(target.stat().st_mode | 0o111)
+        except OSError:
+            pass
+
+    log.log(f"    Wrote {target.name}")
+    report.add("Launcher script", DONE, target.name)
 
 
 # ---------------------------------------------------------------------------
@@ -998,7 +1073,9 @@ def finish(log: Logger, report: StepReport, *, success: bool) -> None:
     if MANUAL in report.statuses():
         log.log("    Some steps need manual action (see 'needs manual action'")
         log.log("    above) before Mimora will fully work.")
-    log.log("    Next: run `python main.py` to start Mimora.")
+    launcher = LAUNCHER_BAT if sys.platform == "win32" else LAUNCHER_SH
+    log.log(f"    Next: run `python main.py` to start Mimora, or use the "
+            f"generated {launcher.name} launcher.")
 
 
 def parse_args() -> argparse.Namespace:
@@ -1050,7 +1127,7 @@ def main() -> int:
         step_check_python(log, confirmer, report)
 
         # Step 2: GPU detection (informs steps 4a/4b; no packages needed).
-        log.banner("Step 2/8 - GPU / CUDA detection")
+        log.banner("Step 2/9 - GPU / CUDA detection")
         gpu_name, driver_cuda = detect_gpu(log)
         use_gpu = (gpu_name is not None or args.gpu) and not args.cpu
         if args.cpu:
@@ -1068,11 +1145,11 @@ def main() -> int:
         # satisfied (avoids a doomed CPU source-build of llama-cpp-python).
         # torch ships CPU wheels on PyPI, so the CPU path only needs llama here.
         if use_gpu:
-            log.banner("Step 3/8 - GPU (CUDA) builds")
+            log.banner("Step 3/9 - GPU (CUDA) builds")
             step_gpu_torch(log, confirmer, report, driver_cuda)
             step_gpu_llama(log, confirmer, report, driver_cuda)
         else:
-            log.banner("Step 3/8 - CPU builds")
+            log.banner("Step 3/9 - CPU builds")
             report.add("torch (CUDA)", SKIPPED, "CPU-only")
             step_cpu_llama(log, confirmer, report)
 
@@ -1096,6 +1173,10 @@ def main() -> int:
 
         # Step 8: hardware detection (after torch/llama exist).
         step_detect_hardware(log, confirmer, report)
+
+        # Step 9: launcher scripts, written last so they reflect the fully
+        # set-up environment (correct venv folder name).
+        step_create_launchers(log, confirmer, report)
     except InstallError as exc:
         log.log("")
         log.log(f"    ABORTED: step '{exc}' failed - stopping the installer "
