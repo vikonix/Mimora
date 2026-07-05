@@ -16,7 +16,6 @@ the whole app. Run this module to start the trainer:
     python main.py
 """
 
-import subprocess
 import time
 import threading
 from typing import Optional
@@ -73,7 +72,7 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 warnings.filterwarnings("ignore", message="dropout option adds dropout.*")
 warnings.filterwarnings("ignore", message=".*weight_norm.*deprecated.*")
 
-from mimora import config, prosody
+from mimora import config, lifecycle, prosody
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.audio_io import KOKORO_SAMPLE_RATE
@@ -1436,49 +1435,15 @@ class PronunciationTrainerGUI:
         Shared by quit_app and restart_app. Stops playback, ends a recording
         in progress (so the capture thread exits its loop and closes the input
         stream), and kills the local LLM server subprocess - the hard exit
-        below does NOT terminate children, so without this the llama_cpp
-        server would leak, keep holding VRAM, and (on restart) still occupy
-        the server port the new process needs.
+        (lifecycle.hard_exit) does NOT terminate children, so without this
+        the llama_cpp server would leak, keep holding VRAM, and (on restart)
+        still occupy the server port the new process needs.
         """
         self.shutdown_event.set()
         self.playback.stop()
         self.recorder.stop()
         self.recorder.join()
         self.llm_server.shutdown()
-
-    def _hard_exit(self):
-        """End the process immediately, bypassing interpreter finalization.
-
-        Hard-exit on the main thread instead of via root.destroy() + the
-        interpreter's normal finalization. With CUDA + PyTorch loaded, the
-        native CUDA context is torn down while still live and crashes inside
-        the C extensions, surfacing as Windows exit code 0xC0000409
-        (STATUS_STACK_BUFFER_OVERRUN) with no Python traceback.
-
-        os._exit is NOT enough on Windows: it maps to ExitProcess, which still
-        runs DLL_PROCESS_DETACH for every loaded DLL - and the CUDA runtime's
-        detach is exactly what crashes. TerminateProcess ends the process at
-        the OS level without running any DLL detach handlers, so that crash
-        never runs. The external resources that actually need releasing were
-        handled by _shutdown_runtime; logs are flushed here first. os._exit is
-        the fallback for non-Windows.
-        """
-        logging.shutdown()
-        if sys.platform == "win32":
-            import ctypes
-            from ctypes import wintypes
-            kernel32 = ctypes.windll.kernel32
-            # Declare the signatures: GetCurrentProcess returns a HANDLE (a
-            # 64-bit pointer). Without this, ctypes defaults the result to a
-            # 32-bit c_int and TRUNCATES the pseudo-handle, so TerminateProcess
-            # gets a bad handle, silently fails (returns FALSE without killing
-            # anything), and we fall through to os._exit - which crashes in the
-            # CUDA DLL detach. With the correct types the pseudo-handle (-1) is
-            # passed intact and the process ends at once with exit code 0.
-            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
-            kernel32.TerminateProcess.argtypes = [wintypes.HANDLE, wintypes.UINT]
-            kernel32.TerminateProcess(kernel32.GetCurrentProcess(), 0)
-        os._exit(0)
 
     def quit_app(self):
         if self._closing:
@@ -1487,7 +1452,7 @@ class PronunciationTrainerGUI:
         logging.info("Shutting down Mimora...")
         self._shutdown_runtime()
         logging.info("quit_app: cleanup done, hard-exiting now.")
-        self._hard_exit()
+        lifecycle.hard_exit()
 
     def restart_app(self):
         """Relaunch the app in a new process (settings-window restart).
@@ -1495,58 +1460,18 @@ class PronunciationTrainerGUI:
         Applies restart-only settings without the user quitting and starting
         the app by hand: the same cleanup as quit_app runs first (crucially
         freeing the LLM server port for the new process), then a detached
-        replacement process is spawned and this one hard-exits.
-        subprocess.Popen is used instead of os.execv: on Windows execv detaches
-        the console under some launchers and mangles arguments with spaces.
-
-        The replacement must not share the dying parent's console/stdio: when
-        launched from an IDE, the IDE closes those pipes as soon as the parent
-        exits and the child's first print would crash with [Errno 22] (the
-        same failure mode the module-top comment describes for os.execv). So
-        stdio is pointed at DEVNULL - the app logs to logs/main.log anyway -
-        and on Windows the child is detached from the console and, when the
-        launcher allows it, broken out of the IDE's job object so "stop" in
-        the IDE cannot kill the restarted app.
+        replacement process is spawned (lifecycle.spawn_replacement, which
+        logs and swallows a relaunch failure so this process still exits
+        cleanly) and this one hard-exits.
         """
         if self._closing:
             return
         self._closing = True
         logging.info("Restarting Mimora to apply changed settings...")
         self._shutdown_runtime()
-        try:
-            command = [sys.executable] + sys.argv
-            logging.info(f"Relaunching: {command}")
-            popen_kwargs = {
-                "cwd": os.getcwd(),
-                "stdin": subprocess.DEVNULL,
-                "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL,
-            }
-            if sys.platform == "win32":
-                flags = (subprocess.DETACHED_PROCESS
-                         | subprocess.CREATE_NEW_PROCESS_GROUP)
-                try:
-                    # Escape the launcher's job object (IDEs kill the whole
-                    # tree on stop). Denied by some jobs - retry without.
-                    subprocess.Popen(
-                        command,
-                        creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB,
-                        **popen_kwargs)
-                except OSError:
-                    logging.info("Job breakaway denied; relaunching attached "
-                                 "to the current job.")
-                    subprocess.Popen(command, creationflags=flags,
-                                     **popen_kwargs)
-            else:
-                # POSIX: a new session detaches from the controlling terminal.
-                subprocess.Popen(command, start_new_session=True,
-                                 **popen_kwargs)
-        except OSError:
-            # The old process must still exit cleanly - the user can relaunch
-            # by hand, which is exactly what a failed restart degrades to.
-            logging.exception("Relaunch failed; exiting without a new process:")
+        lifecycle.spawn_replacement()
         logging.info("restart_app: cleanup done, hard-exiting now.")
-        self._hard_exit()
+        lifecycle.hard_exit()
 
     def run(self):
         self.root.mainloop()
