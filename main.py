@@ -667,24 +667,29 @@ class PronunciationTrainerGUI:
             self.view.set_show_prosody(value)
             self.on_prosody_toggled()
         elif key == "reference_speed":
-            # Apply live so the next Reference playback uses it; no replay here
-            # (the change originates in the separate Settings window, so there
-            # is nothing on-screen to demo against).
+            # Apply live so the next Reference playback uses it, then speak
+            # the preview phrase at the new speed (current voice) so the
+            # change is audible right away without leaving the Settings
+            # window - reuses the Listen preview path, which already honors
+            # config.REFERENCE_SPEED (see _preview_voice_worker).
             config.REFERENCE_SPEED = float(value)
             self.settings_ctl.persist(key, float(value))
+            self.on_preview_voice(config.KOKORO_VOICE)
         elif key == "practice_text_file":
             self._load_practice_file(value)
         else:
             self.settings_ctl.persist_and_apply_live(key, value)
 
     def on_preview_voice(self, voice: str):
-        """Speak the preview phrase with *voice* (settings-window Listen button).
+        """Speak the preview phrase with *voice* at the current reference speed.
 
-        Gated like the other playback actions: never into an open microphone,
-        never during generation or analysis. Only voices of the active accent
-        can be previewed (the Kokoro pipeline speaks one accent per run); the
-        settings window disables the button otherwise, this check is the
-        thread-safe backstop.
+        Triggered by the settings-window Listen button, and also by changing
+        the Reference speed setting (see on_setting_changed) so a speed change
+        is immediately audible. Gated like the other playback actions: never
+        into an open microphone, never during generation or analysis. Only
+        voices of the active accent can be previewed (the Kokoro pipeline
+        speaks one accent per run); the settings window disables the Listen
+        button otherwise, this check is the thread-safe backstop.
         """
         if not self.app_ready or self.is_generating:
             return
@@ -697,7 +702,9 @@ class PronunciationTrainerGUI:
                 return
         self.playback.stop()
         stop_event = self.playback.new_event()
-        self.view.playing_status(f"Previewing {voice}...")
+        speed = self._selected_speed()
+        status = f"Previewing {voice}..." if speed == 1.0 else f"Previewing {voice} ({speed:g}×)..."
+        self.view.playing_status(status)
         threading.Thread(target=self._preview_voice_worker,
                          args=(voice, stop_event), daemon=True).start()
 
@@ -706,7 +713,12 @@ class PronunciationTrainerGUI:
         try:
             audio = self.tts_mgr.synthesize(PREVIEW_PHRASE, voice=voice)
             if audio.size > 0:
-                self.playback.play_with_face(audio, KOKORO_SAMPLE_RATE, stop_event)
+                # Honor the current Reference speed setting, same trick as
+                # _play_reference_at: play the 24 kHz waveform at a lowered
+                # sample rate so the preview actually demonstrates the speed
+                # the user just picked, instead of always playing at 1.0x.
+                effective_sr = int(KOKORO_SAMPLE_RATE * self._selected_speed())
+                self.playback.play_with_face(audio, effective_sr, stop_event)
         except Exception:
             logging.exception("Voice preview error:")
             self.root.after(0, self.view.append_error_msg,
