@@ -76,6 +76,7 @@ from mimora.recorder import (
 from mimora import engine
 from mimora.playback import PlaybackController
 from mimora.session import SessionState
+from mimora.settings_ctl import SettingsGlue
 from mimora.ui import TrainerView, ViewCallbacks, LENGTH_FEW_WORDS
 from mimora.settings_window import (
     PREVIEW_PHRASE,
@@ -225,11 +226,10 @@ class PronunciationTrainerGUI:
         # callbacks back to this controller through an explicit ViewCallbacks
         # bundle (the view never holds the controller itself).
         # Settings window (mimora/settings_window.py); at most one instance,
-        # created on demand by on_settings_clicked. _suppress_persist is set
-        # only while on_reset_settings re-applies the defaults (see
-        # _persist_setting); written and read on the Tk main thread only.
+        # created on demand by on_settings_clicked. Persistence, the window
+        # mirroring and the "Default" reset live in self.settings_ctl
+        # (mimora/settings_ctl.py), composed below after the view.
         self._settings_window: Optional[SettingsWindow] = None
-        self._suppress_persist = False
 
         self.view = TrainerView(self.root, ViewCallbacks(
             on_settings_clicked=self.on_settings_clicked,
@@ -253,6 +253,14 @@ class PronunciationTrainerGUI:
         # drives the face and status line through the view facade.
         self.playback = PlaybackController(self.root, self.view, self.tts_mgr,
                                            self.shutdown_event)
+        # Settings persistence glue (mimora/settings_ctl.py): persisting,
+        # settings-window mirroring and the "Default" reset. The dispatch
+        # (on_setting_changed and the on_*_changed handlers) stays here.
+        self.settings_ctl = SettingsGlue(
+            report_error=self.view.append_error_msg,
+            get_window=lambda: self._settings_window,
+            dispatch=self.on_setting_changed,
+        )
         self.bind_events()
 
         # Bring the freshly launched window to the foreground and put keyboard
@@ -449,11 +457,11 @@ class PronunciationTrainerGUI:
             saved = Path(path).relative_to(config.BASE_DIR).as_posix()
         except ValueError:
             saved = path  # outside the project - keep the absolute path
-        self._persist_setting("practice_text_file", saved)
+        self.settings_ctl.persist("practice_text_file", saved)
         # Keep the runtime view current for load_practice_text and the file
         # dialog's initialdir; the settings window reads the persisted value.
         config.PRACTICE_TEXT_FILE = str(path)
-        self._sync_settings_window("practice_text_file", saved)
+        self.settings_ctl.sync_window("practice_text_file", saved)
 
     def make_app_ready(self):
         self.app_ready = True
@@ -508,21 +516,6 @@ class PronunciationTrainerGUI:
         except AttributeError:
             return ""
 
-    def _persist_setting(self, key: str, value) -> bool:
-        """Save one UI setting to settings.json, reporting failure in the UI.
-
-        No-op while _suppress_persist is set (the "Default" reset just removed
-        every override from settings.json; the handlers re-run to apply the
-        default values live and must not write them back as overrides).
-        Returns True on success (or when suppressed).
-        """
-        if self._suppress_persist:
-            return True
-        if config.save_user_setting(key, value):
-            return True
-        self.view.append_error_msg(f"Could not save {key} to settings.json.")
-        return False
-
     def on_voice_changed(self, event=None):
         """Regenerate the phrase with the newly chosen voice.
 
@@ -531,8 +524,8 @@ class PronunciationTrainerGUI:
         is busy the change is ignored here and simply applies to the next phrase.
         """
         logging.info(f"Reference voice changed to {self._selected_voice()}.")
-        self._persist_setting("voice", self._selected_voice())
-        self._sync_settings_window("voice", self._selected_voice())
+        self.settings_ctl.persist("voice", self._selected_voice())
+        self.settings_ctl.sync_window("voice", self._selected_voice())
         # Return focus to the window so the spacebar record toggle keeps working.
         self.root.focus_set()
         if self.app_ready and not self.is_generating:
@@ -550,16 +543,16 @@ class PronunciationTrainerGUI:
         name = self.view.get_user_name()
         if name == self._saved_user_name:
             return  # unchanged - don't rewrite the file
-        if self._persist_setting("user_name", name):
+        if self.settings_ctl.persist("user_name", name):
             self._saved_user_name = name
             logging.info(f"User name saved: {name!r}.")
-            self._sync_settings_window("user_name", name)
+            self.settings_ctl.sync_window("user_name", name)
 
     def on_length_changed(self, event=None):
         """Regenerate the phrase when the desired length changes."""
         logging.info(f"Phrase length changed to {self.view.get_length_label()!r}.")
-        self._persist_setting("phrase_length", self._selected_length())
-        self._sync_settings_window("phrase_length", self._selected_length())
+        self.settings_ctl.persist("phrase_length", self._selected_length())
+        self.settings_ctl.sync_window("phrase_length", self._selected_length())
         # Reconcile the translation panel and selector. Fragments are translated
         # too, so the length mode does not affect them; this is a consistency
         # refresh, not a mode switch.
@@ -579,8 +572,8 @@ class PronunciationTrainerGUI:
         """
         language = self.view.get_translation_language()
         logging.info(f"Translation language changed to {language!r}.")
-        self._persist_setting("translation_language", language)
-        self._sync_settings_window("translation_language", language)
+        self.settings_ctl.persist("translation_language", language)
+        self.settings_ctl.sync_window("translation_language", language)
         # The cached translation belonged to the previous language, so drop it and
         # blank the panel to "-"; the next generated phrase fills it for the new
         # language (translations are applied to the next phrase, like voice/length).
@@ -598,62 +591,29 @@ class PronunciationTrainerGUI:
         # on analysis threads; written only here, on the Tk main thread).
         self._prosody_wanted = self.view.get_show_prosody()
         # Keep config current too: it is the live source of truth the reset
-        # diffing (_default_differs_from_live) compares against.
+        # diffing (settings_ctl._default_differs_from_live) compares against.
         config.SHOW_PROSODY = self.view.get_show_prosody()
-        self._persist_setting("show_prosody", self.view.get_show_prosody())
-        self._sync_settings_window("show_prosody", self.view.get_show_prosody())
+        self.settings_ctl.persist("show_prosody", self.view.get_show_prosody())
+        self.settings_ctl.sync_window("show_prosody", self.view.get_show_prosody())
 
     def on_show_face_toggled(self):
         """Apply the face checkbox (show/hide the panel) and persist it."""
         self.view.toggle_face()
         config.SHOW_FACE = self.view.get_show_face()
-        self._persist_setting("show_face", self.view.get_show_face())
-        self._sync_settings_window("show_face", self.view.get_show_face())
+        self.settings_ctl.persist("show_face", self.view.get_show_face())
+        self.settings_ctl.sync_window("show_face", self.view.get_show_face())
 
     def on_practice_collapsed_toggled(self):
         """Apply the practice-text collapse toggle and persist it."""
         self.view.toggle_practice_text()
         collapsed = self.view.get_practice_collapsed()
         config.PRACTICE_TEXT_COLLAPSED = collapsed
-        self._persist_setting("practice_text_collapsed", collapsed)
-        self._sync_settings_window("practice_text_collapsed", collapsed)
+        self.settings_ctl.persist("practice_text_collapsed", collapsed)
+        self.settings_ctl.sync_window("practice_text_collapsed", collapsed)
 
     # ------------------------------------------------------------------
     # Settings window (mimora/settings_window.py)
     # ------------------------------------------------------------------
-    # settings.json key -> (config attribute, cast) for settings that the
-    # runtime re-reads from the config module on every use (recorder loop,
-    # phrase generator, recording dumps). Updating the attribute applies the
-    # change immediately; everything else in _RESTART-marked fields waits for
-    # a restart because it was bound at startup.
-    _LIVE_CONFIG_ATTRS = {
-        "save_recordings": ("SAVE_RECORDINGS", bool),
-        "max_record_seconds": ("MAX_RECORD_SECONDS", float),
-        "silence_timeout": ("SILENCE_TIMEOUT", float),
-        "silence_threshold": ("SILENCE_THRESHOLD", float),
-        "phrase_gen_window_sentences": ("PHRASE_GEN_WINDOW_SENTENCES", int),
-        "phrase_gen_window_repeats": ("PHRASE_GEN_WINDOW_REPEATS", int),
-    }
-
-    # settings.json key -> config attribute holding the value the running app
-    # currently uses, for the handler-driven settings on_setting_changed
-    # applies live (the handlers keep these attributes current). Together with
-    # _LIVE_CONFIG_ATTRS this lets the "Default" reset skip no-op dispatches -
-    # see _default_differs_from_live. Restart-only keys are absent on purpose:
-    # their dispatch would be persist-only, and the reset has already removed
-    # the persisted overrides.
-    _SETTING_LIVE_ATTRS = {
-        "user_name": "USER_NAME",
-        "voice": "KOKORO_VOICE",
-        "phrase_length": "PHRASE_LENGTH",
-        "translation_language": "TRANSLATION_LANGUAGE",
-        "reference_speed": "REFERENCE_SPEED",
-        "show_face": "SHOW_FACE",
-        "show_prosody": "SHOW_PROSODY",
-        "practice_text_collapsed": "PRACTICE_TEXT_COLLAPSED",
-        "practice_text_file": "PRACTICE_TEXT_FILE",
-    }
-
     def on_settings_clicked(self):
         """Open the settings window, or raise the one already open."""
         if self._settings_window is not None and self._settings_window.exists():
@@ -663,18 +623,8 @@ class PronunciationTrainerGUI:
             on_setting_changed=self.on_setting_changed,
             on_preview_voice=self.on_preview_voice,
             on_restart_requested=self.restart_app,
-            on_reset_settings=self.on_reset_settings,
+            on_reset_settings=self.settings_ctl.reset_to_defaults,
         ))
-
-    def _sync_settings_window(self, key: str, value):
-        """Mirror a main-window setting change into the settings window.
-
-        No-op when the window is closed. set_value never re-emits, so a change
-        that originated in the settings window cannot loop back through here.
-        """
-        window = self._settings_window
-        if window is not None and window.exists():
-            window.set_value(key, value)
 
     def on_setting_changed(self, key: str, value):
         """Apply one settings-window change (Tk main thread).
@@ -686,8 +636,9 @@ class PronunciationTrainerGUI:
         or regenerates as needed. The prosody collapse toggle also has an
         on-main control, and the face is settings-only now; both route through
         their handler so the view and settings stay in sync. Keys the runtime
-        re-reads are persisted and applied via _LIVE_CONFIG_ATTRS; restart-only
-        keys are just persisted (the window shows the pending-restart hint).
+        re-reads are persisted and applied via
+        settings_ctl.persist_and_apply_live; restart-only keys are just
+        persisted (the window shows the pending-restart hint).
         """
         if key == "user_name":
             config.USER_NAME = value
@@ -699,7 +650,7 @@ class PronunciationTrainerGUI:
             else:
                 # A voice of the other (not yet active) accent: valid only
                 # after restarting into that accent, so only persist it.
-                self._persist_setting("voice", value)
+                self.settings_ctl.persist("voice", value)
         elif key == "phrase_length":
             config.PHRASE_LENGTH = value
             self.on_length_changed()
@@ -720,66 +671,11 @@ class PronunciationTrainerGUI:
             # (the change originates in the separate Settings window, so there
             # is nothing on-screen to demo against).
             config.REFERENCE_SPEED = float(value)
-            self._persist_setting(key, float(value))
+            self.settings_ctl.persist(key, float(value))
         elif key == "practice_text_file":
             self._load_practice_file(value)
         else:
-            self._persist_setting(key, value)
-            live = self._LIVE_CONFIG_ATTRS.get(key)
-            if live is not None:
-                attr, cast = live
-                setattr(config, attr, cast(value))
-                logging.info(f"Applied live setting config.{attr} = {value!r}.")
-
-    def on_reset_settings(self) -> bool:
-        """Reset every user setting to its default ("Default" button).
-
-        Two steps, matching the chosen semantics: first every override is
-        removed from settings.json (defaults live in the code, so an empty
-        file IS the default state), then the known default values are pushed
-        through the normal on_setting_changed dispatch to take effect live -
-        with persistence suppressed, so the applied defaults are not written
-        straight back as overrides. Returns True on success.
-        """
-        if not config.reset_user_settings():
-            self.view.append_error_msg("Could not reset settings.json.")
-            return False
-        logging.info("Settings reset to defaults; applying live values.")
-        self._suppress_persist = True
-        try:
-            for key, value in config.default_user_settings().items():
-                # Dispatch only actual changes: re-applying an already-default
-                # voice or phrase length would needlessly regenerate the
-                # current phrase (their handlers regenerate on every call).
-                if self._default_differs_from_live(key, value):
-                    self.on_setting_changed(key, value)
-        finally:
-            self._suppress_persist = False
-        return True
-
-    def _default_differs_from_live(self, key: str, value) -> bool:
-        """True when applying default *value* for *key* would change anything.
-
-        The comparison target is the config attribute the running app reads
-        (the handlers and _LIVE_CONFIG_ATTRS keep those current). Restart-only
-        keys always answer False: their reset dispatch would be persist-only,
-        and on_reset_settings already removed the overrides from the file.
-        Numbers compare as floats (an int/float mismatch is not a change) and
-        the practice-text path compares normalized, mirroring
-        SettingsWindow._differs_from_runtime.
-        """
-        live = self._LIVE_CONFIG_ATTRS.get(key)
-        attr = live[0] if live is not None else self._SETTING_LIVE_ATTRS.get(key)
-        if attr is None:
-            return False
-        current = getattr(config, attr)
-        if key == "practice_text_file":
-            return (os.path.normcase(os.path.normpath(str(current)))
-                    != os.path.normcase(os.path.normpath(str(value))))
-        if isinstance(value, (int, float)) and not isinstance(value, bool) \
-                and isinstance(current, (int, float)):
-            return float(current) != float(value)
-        return current != value
+            self.settings_ctl.persist_and_apply_live(key, value)
 
     def on_preview_voice(self, voice: str):
         """Speak the preview phrase with *voice* (settings-window Listen button).
