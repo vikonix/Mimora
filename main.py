@@ -19,7 +19,6 @@ the whole app. Run this module to start the trainer:
 import subprocess
 import time
 import threading
-from collections import deque
 from typing import Optional
 import os
 import sys
@@ -95,6 +94,7 @@ from mimora.recorder import (
 # pronunciation/phoneme/) and exposes one interface. main.py never imports an engine
 # directly, so switching is a single settings.json flip.
 from mimora import engine
+from mimora.session import SessionState
 from mimora.ui import TrainerView, ViewCallbacks, LENGTH_FEW_WORDS
 from mimora.settings_window import (
     PREVIEW_PHRASE,
@@ -214,21 +214,10 @@ class PronunciationTrainerGUI:
         # the phrase generator when a translation language is selected; kept
         # beside current_phrase so the two are always shown together.
         self.current_translation: str = ""
-        # Session tally shown in the status bar. "Phrases: N" counts the distinct
-        # phrases practiced this run (a set of phrase texts); "Avg" is the running
-        # mean over *every* scored attempt this run (repeats of one phrase each
-        # add to the average). The two therefore count different things: unique
-        # phrases vs total attempts. Empty/zero at construction == reset on app
-        # start (no explicit reset action).
-        self._session_phrases: set[str] = set()
-        self._session_score_sum: float = 0.0
-        self._session_attempts: int = 0
-        # Bounded attempt history shown in the scrollable list (view.render_history).
-        # Holds the last N entries - scored takes, unscored ("none" engine) takes
-        # and error messages - oldest first. The controller owns it so the trend
-        # arrow (this take vs the previous attempt of the same phrase) can be
-        # computed from the retained entries.
-        self._history: deque = deque(maxlen=10)
+        # Session score tally and bounded attempt history (mimora/session.py).
+        # SessionState is pure data, no Tk: on_take_scored / on_history_entry
+        # feed it and forward the returned values to the view.
+        self.session = SessionState()
         # Kokoro voice the current reference was synthesized with (logged with
         # every analysis sample - the acoustic calibration is voice-specific).
         self.current_voice: str = config.KOKORO_VOICE
@@ -1397,68 +1386,24 @@ class PronunciationTrainerGUI:
     def on_take_scored(self, phrase: str, score: float, graded: bool = False):
         """Record a scored take into the session tally and refresh the status bar.
 
-        Called by the view once a take has a user-facing score. Every attempt
-        feeds the running average; the phrase text is added to a set so the count
-        reflects distinct phrases. The status bar then shows the unique-phrase
-        count and the mean over all attempts this run. ``graded`` says which scale
-        ``score`` is on: True for the phoneme engine's 0-5 grade axis (average
-        shown as "3.8/5" - one decimal, whole numbers would hide movement on the
-        coarse scale), False for a raw 0-100 score (shown as "78", as before).
+        Called by the view once a take has a user-facing score. The tally
+        itself (distinct-phrase count, running average, grade formatting)
+        lives in SessionState (mimora/session.py); this handler only pushes
+        the returned values into the status bar.
         """
-        phrase = (phrase or "").strip()
-        if not phrase:
-            return
-        self._session_phrases.add(phrase)
-        self._session_score_sum += score
-        self._session_attempts += 1
-        average = self._session_score_sum / self._session_attempts
-        average_text = f"{average:.1f}/5" if graded else f"{average:.0f}"
-        self.view.update_session_stats(len(self._session_phrases), average_text)
+        stats = self.session.record_take(phrase, score, graded)
+        if stats is not None:
+            self.view.update_session_stats(*stats)
 
     def on_history_entry(self, record: dict):
-        """Append an entry to the bounded attempt history and re-render the list.
+        """Append an entry to the attempt history and re-render the list.
 
-        ``record`` comes from the view with a ``kind`` of "attempt", "unscored" or
-        "error". For a scored take, the trend arrow is derived here by comparing
-        the new score with the most recent earlier attempt of the *same* phrase:
-        "up" if higher, "down" if lower, "same" if equal, and left unset (a dim
-        dash) when there is no earlier attempt to compare against. Errors and
-        unscored takes carry no trend. The deque is capped at 10, so old entries
-        drop off the top; the view then rebuilds every row from the full list.
+        ``record`` comes from the view with a ``kind`` of "attempt",
+        "unscored" or "error". Trend derivation and the bounded storage live
+        in SessionState (mimora/session.py); the view then rebuilds every
+        row from the returned full list.
         """
-        if record.get("kind") == "attempt":
-            record["trend"] = self._history_trend(record.get("phrase", ""),
-                                                  record.get("score", 0.0),
-                                                  record.get("score_text"))
-        self._history.append(record)
-        self.view.render_history(list(self._history))
-
-    def _history_trend(self, phrase: str, score: float,
-                       score_text: Optional[str] = None) -> Optional[str]:
-        """Trend of ``score`` vs the previous attempt of ``phrase`` in the history.
-
-        Compared on the *displayed* mark, not the raw float, so the arrow always
-        agrees with the two chips the user sees. When both takes carry a
-        ``score_text`` (the "4+"-style grade chip), equal texts read as "same" and
-        the direction comes from the numeric ``score`` behind them (grade texts do
-        not order lexically: "4-" < "4"). Without texts the comparison falls back
-        to the rounded numeric score, as before: 82 vs 82 is "same", never a stray
-        up/down from a sub-point difference like 82.4 vs 81.6.
-        """
-        for past in reversed(self._history):
-            if past.get("kind") == "attempt" and past.get("phrase") == phrase:
-                previous = past.get("score", 0.0)
-                previous_text = past.get("score_text")
-                if score_text and previous_text:
-                    if score_text == previous_text:
-                        return "same"
-                    return "up" if score > previous else "down"
-                if round(score) > round(previous):
-                    return "up"
-                if round(score) < round(previous):
-                    return "down"
-                return "same"
-        return None
+        self.view.render_history(self.session.add_history_entry(record))
 
     def _play_reference_at(self, speed: float):
         """Play the current reference audio at *speed* (1.0 = normal)."""
