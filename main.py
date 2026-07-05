@@ -20,30 +20,19 @@ import time
 import threading
 from typing import Optional
 import os
-import sys
 
-# Prefer UTF-8 everywhere so non-ASCII (IPA phones, espeak-ng / panphon data) never
-# trips a cp1252 default on Windows. We deliberately do NOT re-exec the interpreter
-# into UTF-8 mode: os.execv detaches stdout under some launchers (the orphaned
-# process then fails any print with "[Errno 22] Invalid argument"). Instead we set
-# the hint for child processes and switch our own console streams to UTF-8 where the
-# stream supports it. The in-process file reads that mattered (panphon's tables) keep
-# their own narrow UTF-8 fallback in pronunciation/phoneme/speech.py.
-os.environ.setdefault("PYTHONUTF8", "1")
-os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-for _stream in (sys.stdout, sys.stderr):
-    try:
-        _stream.reconfigure(encoding="utf-8", errors="replace")
-    except (AttributeError, ValueError, OSError):
-        pass  # stream may be None (pythonw), wrapped by an IDE, or already detached
+# Early process setup (UTF-8 console/env, library warning filters) lives in
+# mimora/bootstrap.py and must run BEFORE the heavy mimora.* imports below.
+# Importing `mimora` / `mimora.bootstrap` is free: __init__.py only defines
+# __version__ and bootstrap is stdlib-only.
+from mimora import __version__, bootstrap
+
+bootstrap.early_init()
 
 # Parse CLI arguments before anything heavy: the mimora.* imports below pull in
 # torch/transformers/Kokoro and can take many seconds, so `--version` (which
-# exits inside parse_args) must run before them to return fast. Importing bare
-# `mimora` is free - its __init__.py only defines __version__. Guarded by
+# exits inside parse_args) must run before them to return fast. Guarded by
 # __name__ so importing this module never consumes sys.argv.
-from mimora import __version__
-
 if __name__ == "__main__":
     import argparse
 
@@ -58,19 +47,11 @@ if __name__ == "__main__":
 # the user gets. flush=True defeats stdout buffering when output is redirected.
 print("starting ...", flush=True)
 
-import warnings
 import logging
 import tkinter as tk
 from tkinter import ttk
 from pathlib import Path
 import numpy as np
-
-# Disable Hugging Face hub symlinks warning for a cleaner console output
-os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-
-# Ignore specific deprecation and model warnings from underlying libraries
-warnings.filterwarnings("ignore", message="dropout option adds dropout.*")
-warnings.filterwarnings("ignore", message=".*weight_norm.*deprecated.*")
 
 from mimora import config, lifecycle, prosody
 from mimora.llm import LLMManager
@@ -102,20 +83,9 @@ from mimora.settings_window import (
     SettingsWindow,
 )
 
-# Configure comprehensive events logging (console + file). force=True replaces
-# any handlers auto-installed by logging calls during the imports above (e.g.
-# the acoustic engine loads calibration.json at import and logs it), which would otherwise
-# turn this basicConfig into a silent no-op and leave main.log empty.
-log_format = "%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s"
-logging.basicConfig(
-    level=logging.INFO,
-    format=log_format,
-    handlers=[
-        logging.FileHandler(config.LOG_FILE, mode="w", encoding="utf-8"),
-        logging.StreamHandler(sys.stdout)
-    ],
-    force=True,
-)
+# Root logging (console + logs/main.log). Must come after the heavy imports
+# above - see bootstrap.setup_logging for the force=True rationale.
+bootstrap.setup_logging(config.LOG_FILE)
 
 class PronunciationTrainerGUI:
     """Tkinter front-end for the Mimora pronunciation trainer.
