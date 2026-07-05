@@ -245,6 +245,42 @@ class TestBucketToPercent(unittest.TestCase):
             self.assertEqual(speech._bucket_to_percent(9, fallback=77.0), 77.0)
 
 
+class TestGradeForScore(unittest.TestCase):
+    """0-5 grade with a +/- shade from the score's third of its bucket's range."""
+
+    def test_no_cutpoints_is_ungraded(self):
+        with mock.patch.object(speech, "BUCKET_CUTPOINTS", []):
+            self.assertEqual(speech._grade_for_score(2, 25.0), ("", -1.0))
+
+    def test_negative_bucket_is_ungraded(self):
+        with mock.patch.object(speech, "BUCKET_CUTPOINTS", [10.0, 20.0, 30.0]):
+            self.assertEqual(speech._grade_for_score(-1, 25.0), ("", -1.0))
+
+    def test_middle_third_is_plain(self):
+        # Bucket 2 spans [20, 30); 25 sits in the middle third.
+        with mock.patch.object(speech, "BUCKET_CUTPOINTS", [10.0, 20.0, 30.0]):
+            self.assertEqual(speech._grade_for_score(2, 25.0), ("2", 2.0))
+
+    def test_lower_third_is_minus(self):
+        with mock.patch.object(speech, "BUCKET_CUTPOINTS", [10.0, 20.0, 30.0]):
+            self.assertEqual(speech._grade_for_score(2, 21.0), ("2-", 1.67))
+
+    def test_upper_third_is_plus(self):
+        with mock.patch.object(speech, "BUCKET_CUTPOINTS", [10.0, 20.0, 30.0]):
+            self.assertEqual(speech._grade_for_score(2, 29.0), ("2+", 2.33))
+
+    def test_top_bucket_extends_to_hundred(self):
+        # Top bucket spans [30, 100]; 40 is still its lower third, 100 clamps to "+".
+        with mock.patch.object(speech, "BUCKET_CUTPOINTS", [10.0, 20.0, 30.0]):
+            self.assertEqual(speech._grade_for_score(3, 40.0)[0], "3-")
+            self.assertEqual(speech._grade_for_score(3, 100.0)[0], "3+")
+
+    def test_bottom_bucket_starts_at_zero(self):
+        # Bucket 0 spans [0, 10); 5 is its middle third.
+        with mock.patch.object(speech, "BUCKET_CUTPOINTS", [10.0, 20.0, 30.0]):
+            self.assertEqual(speech._grade_for_score(0, 5.0), ("0", 0.0))
+
+
 class TestWordLevel(unittest.TestCase):
     """Three-level per-word highlight cutoffs over the [good, bad] window."""
 

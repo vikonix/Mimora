@@ -52,8 +52,15 @@ class PronunciationResult:
     bucket: int = -1
     # user_percent: the bucket mapped to a user-facing percent (band midpoint), so the
     # "good >= 90% / reference >= 95%" product requirement holds by construction.
-    # Kept for logs/diagnostics; the GUI currently displays only ``bucket``.
+    # Kept for logs/diagnostics; the GUI displays ``grade`` instead.
     user_percent: float = 0.0
+    # grade: the bucket with a +/- shade from the score's position inside the
+    # bucket's raw-score range ("4-", "4", "4+") - what the GUI shows as the take's
+    # mark. Empty when the engine does not bucketize (the acoustic engine).
+    grade: str = ""
+    # grade_value: ``grade`` on a continuous 0-5 axis (4-/4/4+ -> 3.67/4.0/4.33),
+    # used for the session average and the history trend arrow. -1.0 when ungraded.
+    grade_value: float = -1.0
 
     # --- Engine-neutral display fields (read by the GUI regardless of engine). ---
     words_with_errors: List[str] = field(default_factory=list)

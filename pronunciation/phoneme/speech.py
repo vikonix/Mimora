@@ -1000,6 +1000,26 @@ def _bucket_to_percent(bucket: int, fallback: float) -> float:
     return round((float(lo) + float(hi)) / 2.0, 1)
 
 
+def _grade_for_score(bucket: int, score: float) -> tuple:
+    """0-5 grade with a +/- shade: ("4+", 4.33) for ``score`` inside ``bucket``.
+
+    The label is the bucket number plus a modifier for the score's third of the
+    bucket's raw-score range (lower third "-", middle plain, upper third "+"), so
+    the user sees within-bucket movement without the false precision of a percent.
+    The value is the same mark on a continuous 0-5 axis (bucket + (third-1)/3),
+    for session averaging and trend comparison. Returns ("", -1.0) when ``bucket``
+    is not a configured bucket (no calibration, or a patched cutpoint list).
+    """
+    if bucket < 0 or bucket > len(BUCKET_CUTPOINTS) or not BUCKET_CUTPOINTS:
+        return "", -1.0
+    edges = [0.0] + [float(c) for c in BUCKET_CUTPOINTS] + [100.0]
+    lo, hi = edges[bucket], edges[bucket + 1]
+    frac = (score - lo) / (hi - lo) if hi > lo else 0.5
+    third = min(2, max(0, int(frac * 3)))
+    label = f"{bucket}{('-', '', '+')[third]}"
+    return label, round(bucket + (third - 1) / 3.0, 2)
+
+
 # =====================================================================
 # Entry point.
 # =====================================================================
@@ -1097,16 +1117,18 @@ def analyze(user_audio: np.ndarray,
     if bucket >= 0:
         passed = bucket >= PASS_BUCKET
         user_percent = _bucket_to_percent(bucket, result.score)
+        grade, grade_value = _grade_for_score(bucket, result.score)
     else:
         passed = result.score >= cfg.score_threshold
         user_percent = result.score
+        grade, grade_value = "", -1.0
     feedback = _build_feedback(result.score, passed, words_with_errors)
 
     logging.info(
-        "[phoneme] score=%.1f -> bucket=%d (%.0f%%) | (phoneme=%.1f recall=%.2f) | "
+        "[phoneme] score=%.1f -> bucket=%d grade=%s (%.0f%%) | (phoneme=%.1f recall=%.2f) | "
         "dist/phone=%.4f (good=%.3f bad=%.3f) | ref=%d spoken=%d overprod=%.2f | is_ref=%s | voice=%s | "
         "bad_words=%s | ref_ipa=%r | asr_ipa=%r",
-        result.score, bucket, user_percent, result.phoneme_score, result.recall,
+        result.score, bucket, grade or "-", user_percent, result.phoneme_score, result.recall,
         result.per_phone_distance, result.good, result.bad_baseline,
         len(reference), len(spoken), overprod, is_reference, voice,
         words_with_errors, " ".join(reference), transcription,
@@ -1125,6 +1147,7 @@ def analyze(user_audio: np.ndarray,
         "is_reference": bool(is_reference),
         "score": result.score,
         "bucket": bucket,
+        "grade": grade,
         "user_percent": user_percent,
         "passed": passed,
         "phoneme_score": round(result.phoneme_score, 1),
@@ -1162,6 +1185,8 @@ def analyze(user_audio: np.ndarray,
         weak_phonemes=_weak_phonemes(result.pairs),
         bucket=bucket,
         user_percent=user_percent,
+        grade=grade,
+        grade_value=grade_value,
         per_phone_distance=result.per_phone_distance,
         bad_baseline=result.bad_baseline,
         phoneme_score=result.phoneme_score,

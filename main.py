@@ -1394,13 +1394,16 @@ class PronunciationTrainerGUI:
         """
         self._speak_word_at(word, 1.0, f"Playing example '{word.strip()}'...")
 
-    def on_take_scored(self, phrase: str, score: float):
+    def on_take_scored(self, phrase: str, score: float, graded: bool = False):
         """Record a scored take into the session tally and refresh the status bar.
 
         Called by the view once a take has a user-facing score. Every attempt
         feeds the running average; the phrase text is added to a set so the count
         reflects distinct phrases. The status bar then shows the unique-phrase
-        count and the mean over all attempts this run.
+        count and the mean over all attempts this run. ``graded`` says which scale
+        ``score`` is on: True for the phoneme engine's 0-5 grade axis (average
+        shown as "3.8/5" - one decimal, whole numbers would hide movement on the
+        coarse scale), False for a raw 0-100 score (shown as "78", as before).
         """
         phrase = (phrase or "").strip()
         if not phrase:
@@ -1409,7 +1412,8 @@ class PronunciationTrainerGUI:
         self._session_score_sum += score
         self._session_attempts += 1
         average = self._session_score_sum / self._session_attempts
-        self.view.update_session_stats(len(self._session_phrases), average)
+        average_text = f"{average:.1f}/5" if graded else f"{average:.0f}"
+        self.view.update_session_stats(len(self._session_phrases), average_text)
 
     def on_history_entry(self, record: dict):
         """Append an entry to the bounded attempt history and re-render the list.
@@ -1424,25 +1428,34 @@ class PronunciationTrainerGUI:
         """
         if record.get("kind") == "attempt":
             record["trend"] = self._history_trend(record.get("phrase", ""),
-                                                  record.get("score", 0.0))
+                                                  record.get("score", 0.0),
+                                                  record.get("score_text"))
         self._history.append(record)
         self.view.render_history(list(self._history))
 
-    def _history_trend(self, phrase: str, score: float) -> Optional[str]:
+    def _history_trend(self, phrase: str, score: float,
+                       score_text: Optional[str] = None) -> Optional[str]:
         """Trend of ``score`` vs the previous attempt of ``phrase`` in the history.
 
-        Compared on the *displayed* (rounded) score, not the raw float, so the
-        arrow always agrees with the two chip numbers the user sees: 82 vs 82
-        reads as "same" (a dash), never a stray up/down from a sub-point
-        difference like 82.4 vs 81.6.
+        Compared on the *displayed* mark, not the raw float, so the arrow always
+        agrees with the two chips the user sees. When both takes carry a
+        ``score_text`` (the "4+"-style grade chip), equal texts read as "same" and
+        the direction comes from the numeric ``score`` behind them (grade texts do
+        not order lexically: "4-" < "4"). Without texts the comparison falls back
+        to the rounded numeric score, as before: 82 vs 82 is "same", never a stray
+        up/down from a sub-point difference like 82.4 vs 81.6.
         """
-        current = round(score)
         for past in reversed(self._history):
             if past.get("kind") == "attempt" and past.get("phrase") == phrase:
-                previous = round(past.get("score", 0.0))
-                if current > previous:
+                previous = past.get("score", 0.0)
+                previous_text = past.get("score_text")
+                if score_text and previous_text:
+                    if score_text == previous_text:
+                        return "same"
+                    return "up" if score > previous else "down"
+                if round(score) > round(previous):
                     return "up"
-                if current < previous:
+                if round(score) < round(previous):
                     return "down"
                 return "same"
         return None
