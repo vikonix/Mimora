@@ -77,7 +77,7 @@ from mimora import config, prosody
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.audio_io import KOKORO_SAMPLE_RATE
-from mimora.tts import TTSManager, loudness_envelope
+from mimora.tts import TTSManager
 from mimora.translator import TranslatorManager
 from mimora.recorder import (
     AudioRecorder,
@@ -94,6 +94,7 @@ from mimora.recorder import (
 # pronunciation/phoneme/) and exposes one interface. main.py never imports an engine
 # directly, so switching is a single settings.json flip.
 from mimora import engine
+from mimora.playback import PlaybackController
 from mimora.session import SessionState
 from mimora.ui import TrainerView, ViewCallbacks, LENGTH_FEW_WORDS
 from mimora.settings_window import (
@@ -179,12 +180,11 @@ class PronunciationTrainerGUI:
         window_height = avail_height - caption - border
         self.root.geometry(f"{window_width}x{window_height}+{x}+{work_top}")
 
-        # Thread management events. playback_stop_event always refers to the
-        # *current* playback's stop event; each new playback installs a fresh
-        # one via _new_playback_event() (always on the Tk main thread) and
-        # stop_playback() sets the current.
+        # App-wide shutdown flag: set in _shutdown_runtime, observed by the
+        # blocking audio writes (TTSManager.play_array) so they bail out on
+        # exit. The per-playback stop events live in self.playback
+        # (mimora/playback.py), composed below once the view exists.
         self.shutdown_event = threading.Event()
-        self.playback_stop_event = threading.Event()
 
         # Recording is press-to-start / auto-stop (see the recording controls
         # section). _record_key_held only tracks whether a record key (spacebar
@@ -279,6 +279,11 @@ class PronunciationTrainerGUI:
             on_take_scored=self.on_take_scored,
             on_history_entry=self.on_history_entry,
         ))
+        # Playback machinery: per-playback stop events + the talking-mouth
+        # track (mimora/playback.py). Composed after the view because it
+        # drives the face and status line through the view facade.
+        self.playback = PlaybackController(self.root, self.view, self.tts_mgr,
+                                           self.shutdown_event)
         self.bind_events()
 
         # Bring the freshly launched window to the foreground and put keyboard
@@ -488,10 +493,10 @@ class PronunciationTrainerGUI:
         # Speak a personal greeting first, then auto-generate the first phrase.
         # The name and voice are read here, on the main thread (Tk is not
         # thread-safe), and the playback stop event is installed here too (see
-        # _new_playback_event); the worker only receives plain values.
+        # PlaybackController.new_event); the worker only receives plain values.
         name = self.view.get_user_name()
         voice = self._selected_voice()
-        stop_event = self._new_playback_event()
+        stop_event = self.playback.new_event()
         threading.Thread(target=self._greet_and_start,
                          args=(name, voice, stop_event), daemon=True).start()
 
@@ -507,7 +512,7 @@ class PronunciationTrainerGUI:
             self.root.after(0, self.view.append_system_msg, greeting)
             audio = self.tts_mgr.synthesize(greeting, voice=voice)
             if audio.size > 0:
-                self._play_with_face(audio, KOKORO_SAMPLE_RATE, stop_event)
+                self.playback.play_with_face(audio, KOKORO_SAMPLE_RATE, stop_event)
         except Exception:
             logging.exception("Greeting error:")
         finally:
@@ -825,8 +830,8 @@ class PronunciationTrainerGUI:
         with self.processing_lock:
             if self.is_processing_audio:
                 return
-        self.stop_playback()
-        stop_event = self._new_playback_event()
+        self.playback.stop()
+        stop_event = self.playback.new_event()
         self.view.playing_status(f"Previewing {voice}...")
         threading.Thread(target=self._preview_voice_worker,
                          args=(voice, stop_event), daemon=True).start()
@@ -836,13 +841,13 @@ class PronunciationTrainerGUI:
         try:
             audio = self.tts_mgr.synthesize(PREVIEW_PHRASE, voice=voice)
             if audio.size > 0:
-                self._play_with_face(audio, KOKORO_SAMPLE_RATE, stop_event)
+                self.playback.play_with_face(audio, KOKORO_SAMPLE_RATE, stop_event)
         except Exception:
             logging.exception("Voice preview error:")
             self.root.after(0, self.view.append_error_msg,
                             f"Could not preview voice {voice}.")
         finally:
-            self.root.after(0, self._playback_finished, stop_event)
+            self.root.after(0, self.playback.finished, stop_event)
 
     def on_generate_phrase(self):
         if not self.app_ready or self.is_generating:
@@ -867,12 +872,12 @@ class PronunciationTrainerGUI:
         # thread-safe), and once per generation, so the phrase, its audio and
         # its translation all stay consistent even if the user changes a
         # selector mid-generation. The worker never reads a widget. The playback
-        # stop event is installed here too (see _new_playback_event).
+        # stop event is installed here too (see PlaybackController.new_event).
         length = self._selected_length()
         language = self._selected_translation_language()
         voice = self._selected_voice()
         speed = self._selected_speed()
-        stop_event = self._new_playback_event()
+        stop_event = self.playback.new_event()
 
         threading.Thread(target=self._generate_and_prompt,
                          args=(source_text, length, language, voice, speed, stop_event),
@@ -886,7 +891,7 @@ class PronunciationTrainerGUI:
         All selector values (``length``, ``language``, ``voice``, ``speed``) are
         captured by the caller on the Tk main thread and passed in as plain
         values, and ``stop_event`` was installed there as well (see
-        _new_playback_event): this worker must never read widgets or mutate the
+        PlaybackController.new_event): this worker must never read widgets or mutate the
         shared playback state (Tk is not thread-safe).
         """
         try:
@@ -912,12 +917,13 @@ class PronunciationTrainerGUI:
                 dump_record_wav(reference_audio, RECORD_MODEL_FILE, KOKORO_SAMPLE_RATE)
                 dump_record_text(phrase, RECORD_PHRASE_FILE)
             # Show the phrase and play the reference for the user to hear
-            # (stop_event was installed by the caller; see _new_playback_event).
+            # (stop_event was installed by the caller; see PlaybackController.new_event).
             self.root.after(0, self._show_new_phrase, phrase)
             # Honor the selected reference speed (see play_reference for the
             # lowered-sample-rate slowing approach) instead of always 1.0×.
             effective_sr = int(KOKORO_SAMPLE_RATE * speed)
-            self._play_with_face(self.reference_audio, effective_sr, stop_event)
+            self.playback.play_with_face(self.reference_audio, effective_sr,
+                                         stop_event)
 
             # Re-enable the controls now, before translating: NLLB translation is
             # latency-tolerant and (on its first call) pays a one-time model load,
@@ -1051,7 +1057,7 @@ class PronunciationTrainerGUI:
             return
         if self.recorder.is_active():
             return
-        self.stop_playback()  # silence any reference playback before recording
+        self.playback.stop()  # silence any reference playback before recording
         if not self.recorder.start():
             return
         # Lock out every playback/diagnostic action for the duration of the
@@ -1076,8 +1082,8 @@ class PronunciationTrainerGUI:
 
         self.root.after(0, self.view.enter_analyzing)
         # The stop event for the take's playback is installed here, on the main
-        # thread (see _new_playback_event); the worker only receives it.
-        stop_event = self._new_playback_event()
+        # thread (see PlaybackController.new_event); the worker only receives it.
+        stop_event = self.playback.new_event()
         threading.Thread(target=self._finalize_recording, args=(stop_event,),
                          daemon=True).start()
 
@@ -1198,10 +1204,10 @@ class PronunciationTrainerGUI:
                 return
             self.is_processing_audio = True
 
-        self.stop_playback()  # silence any current playback first
+        self.playback.stop()  # silence any current playback first
         # The playback stop event is installed here, on the main thread (see
-        # _new_playback_event); the worker only receives it.
-        stop_event = self._new_playback_event()
+        # PlaybackController.new_event); the worker only receives it.
+        stop_event = self.playback.new_event()
         threading.Thread(target=self._run_reference_test, args=(stop_event,),
                          daemon=True).start()
 
@@ -1209,10 +1215,10 @@ class PronunciationTrainerGUI:
         """Play the reference, then analyze it against itself (off the main thread)."""
         try:
             # Play the reference back first (stop_event was installed by the
-            # caller; see _new_playback_event).
+            # caller; see PlaybackController.new_event).
             self.root.after(0, self.view.enter_playing, "Playing reference...")
-            self._play_with_face(self.reference_audio, KOKORO_SAMPLE_RATE,
-                                 stop_event)
+            self.playback.play_with_face(self.reference_audio,
+                                         KOKORO_SAMPLE_RATE, stop_event)
 
             # Then run analysis with the reference as both inputs.
             self.root.after(0, self.view.enter_analyzing, "Testing with reference...")
@@ -1262,10 +1268,10 @@ class PronunciationTrainerGUI:
 
             # Play the just-recorded audio back to the user right away, before the
             # (slower) pronunciation analysis runs (stop_event was installed by
-            # trigger_recording_stop; see _new_playback_event).
+            # trigger_recording_stop; see PlaybackController.new_event).
             self.root.after(0, self.view.enter_playing, "Playing your recording...")
-            self._play_with_face(self.last_user_audio, config.AUDIO_SAMPLE_RATE,
-                                 stop_event)
+            self.playback.play_with_face(self.last_user_audio,
+                                         config.AUDIO_SAMPLE_RATE, stop_event)
             self.root.after(0, self.view.enter_analyzing)
 
             analyze_start = time.perf_counter()
@@ -1345,10 +1351,10 @@ class PronunciationTrainerGUI:
         with self.processing_lock:
             if self.is_processing_audio:
                 return
-        self.stop_playback()  # silence any current playback first
+        self.playback.stop()  # silence any current playback first
         # The stop event is installed here on the main thread (see
-        # _new_playback_event); the worker only receives it.
-        stop_event = self._new_playback_event()
+        # PlaybackController.new_event); the worker only receives it.
+        stop_event = self.playback.new_event()
         self.view.playing_status(status)
 
         def _worker():
@@ -1356,12 +1362,12 @@ class PronunciationTrainerGUI:
                 audio = self.tts_mgr.synthesize(word, voice=self.current_voice)
                 if audio is None or audio.size == 0:
                     return
-                self._play_with_face(audio, int(KOKORO_SAMPLE_RATE * speed),
-                                     stop_event)
+                self.playback.play_with_face(
+                    audio, int(KOKORO_SAMPLE_RATE * speed), stop_event)
             except Exception:
                 logging.exception("Word playback error:")
             finally:
-                self.root.after(0, self._playback_finished, stop_event)
+                self.root.after(0, self.playback.finished, stop_event)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -1414,106 +1420,12 @@ class PronunciationTrainerGUI:
         # resampling approach - it also shifts the pitch down, no extra deps.
         effective_sr = int(KOKORO_SAMPLE_RATE * speed)
         status = "Playing reference..." if speed == 1.0 else f"Playing reference ({speed:g}×)..."
-        self._play_async(self.reference_audio, effective_sr, status)
+        self.playback.play_async(self.reference_audio, effective_sr, status)
 
     def play_user_recording(self):
         if self.last_user_audio is None or self.last_user_audio.size == 0:
             return
-        self._play_async(self.last_user_audio, config.AUDIO_SAMPLE_RATE, "Playing your recording...")
-
-    def _new_playback_event(self) -> threading.Event:
-        """Install a fresh stop event for a new playback and return it.
-
-        Every playback gets its own event. The previous shared event needed a
-        set()-then-clear() dance: an old playback blocked inside a chunk write
-        could miss the brief set() entirely and keep playing alongside the new
-        one. With per-playback events, stop_playback() sets the current
-        playback's event and it stays set - nothing is ever cleared from under
-        a still-running playback.
-
-        Must be called on the Tk main thread: it replaces the shared "current
-        playback" reference that stop_playback() (also main thread) reads, so
-        installing it from a worker would race the stop. Workers receive the
-        event as an argument instead of creating it themselves. A stop issued
-        between installing the event and the actual start of playback is not
-        lost: play_array checks the event before and during playback.
-        """
-        event = threading.Event()
-        self.playback_stop_event = event
-        return event
-
-    def _play_async(self, waveform: np.ndarray, sample_rate: int, status: str):
-        """Play a waveform in a background thread, stopping any current playback first."""
-        self.stop_playback()
-        stop_event = self._new_playback_event()
-        self.view.playing_status(status)
-
-        def _worker():
-            self._play_with_face(waveform, sample_rate, stop_event)
-            self.root.after(0, self._playback_finished, stop_event)
-
-        threading.Thread(target=_worker, daemon=True).start()
-
-    # ------------------------------------------------------------------
-    # Articulation face (talking mouth driven from the loudness envelope)
-    # ------------------------------------------------------------------
-    def _play_with_face(self, waveform: np.ndarray, sample_rate: int,
-                        stop_event: threading.Event):
-        """play_array, with the talking mouth driven from its loudness envelope.
-
-        winsound plays the whole buffer with no per-frame callback, so the mouth
-        cannot follow live amplitude on Windows. Instead the envelope is
-        pre-computed (the signal is fully known up front) and the face advances
-        it on its own wall-clock timer, kept in sync by matching the playback
-        lead-in. Safe to call from a background thread: the widget is touched
-        only via root.after. Blocks for the playback duration, like play_array.
-        """
-        self.root.after(0, self._start_face_track, waveform, sample_rate)
-        try:
-            self.tts_mgr.play_array(waveform, sample_rate, stop_event, self.shutdown_event)
-        finally:
-            self.root.after(0, self._rest_face_if_current, stop_event)
-
-    def _start_face_track(self, waveform: np.ndarray, sample_rate: int):
-        """Build the loudness track and hand it to the face. (Tk thread.)"""
-        fps = self.view.face_fps()
-        if fps is None or waveform is None or getattr(waveform, "size", 0) == 0:
-            return
-        levels = loudness_envelope(waveform, sample_rate, fps=fps)
-        # Keep the mouth shut during any playback lead-in silence (Windows
-        # audio-session warm-up) so the animation lines up with the sound.
-        lead_frames = int(round(self.tts_mgr.playback_lead_in_seconds() * fps))
-        if lead_frames:
-            levels = [0.0] * lead_frames + levels
-        self.view.face_play_levels(levels, fps=fps)
-
-    def _rest_face_if_current(self, stop_event: threading.Event):
-        """Close the mouth, unless a newer playback has already taken over.
-
-        Guards against an interrupted playback's cleanup clobbering the mouth
-        track of the playback that superseded it (same reasoning as
-        _playback_finished). (Tk thread.)
-        """
-        if stop_event is self.playback_stop_event:
-            self.view.face_rest()
-
-    def _playback_finished(self, stop_event: threading.Event):
-        """Restore the Ready status unless this playback was stopped/superseded.
-
-        Without the check, the worker of an interrupted playback would
-        overwrite the status set by whatever replaced it (e.g. a newer
-        playback's "Playing..." line).
-        """
-        if stop_event is self.playback_stop_event and not stop_event.is_set():
-            self.view.restore_ready_status()
-
-    def stop_playback(self):
-        self.playback_stop_event.set()
-        self.tts_mgr.stop_playback()
-        # Close the mouth at once on an interrupt; a track left running would
-        # keep flapping with no sound. A superseding playback calls this before
-        # starting its own track, so the order (rest -> new track) is correct.
-        self.view.face_rest()
+        self.playback.play_async(self.last_user_audio, config.AUDIO_SAMPLE_RATE, "Playing your recording...")
 
     # ------------------------------------------------------------------
     # Shutdown
@@ -1529,7 +1441,7 @@ class PronunciationTrainerGUI:
         the server port the new process needs.
         """
         self.shutdown_event.set()
-        self.stop_playback()
+        self.playback.stop()
         self.recorder.stop()
         self.recorder.join()
         self.llm_server.shutdown()
