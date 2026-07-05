@@ -13,8 +13,8 @@ Pipeline::
 
 Unlike the acoustic core it needs no per-phrase reference *recording* to score --
 the reference phonemes come from espeak. The reference audio is still accepted and,
-in the optional ``good_mode="ceiling"``, recognized once to anchor a flawless read
-to 100 per phrase; the default ``good_mode="global"`` scores against the single
+in the default ``good_mode="ceiling"``, recognized once to anchor a flawless read
+to 100 per phrase; the alternative ``good_mode="global"`` scores against the single
 calibrated PHONEME_GOOD (matching how the 0-5 buckets were fit).
 
 Public API mirrors ``acoustic/`` exactly so the dispatcher can treat both engines

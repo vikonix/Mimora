@@ -81,13 +81,13 @@ USER_SETTING_DEFAULTS = {
     "voice": None,
     "color_theme": "dark",
     "pronunciation_score_threshold": 70.0,
-    "phoneme_good_mode": "global",
+    "phoneme_good_mode": "ceiling",
     "max_record_seconds": 20,
     "llm_backend": "local_server",
     "external_model_path": "models/llama-3.2-3b-instruct-q4_k_m.gguf",
     "external_n_ctx": None,
     "practice_text_file": "texts/practice_text.txt",
-    "practice_text_collapsed": False,
+    "practice_text_collapsed": True,
     "phrase_gen_window_sentences": 5,
     "phrase_gen_window_repeats": 5,
     "user_name": "",
@@ -449,19 +449,20 @@ if not isinstance(ENGINE, str) or ENGINE not in ENGINE_CHOICES:
 
 # GOOD-anchor mode for the phoneme engine (see pronunciation/phoneme/config.py),
 # read from settings.json ("phoneme_good_mode"); only affects ENGINE == "phoneme":
-#   "global"  - one calibrated PHONEME_GOOD anchor for every phrase (the default;
-#               the 0-5 bucket cutpoints were fit under this anchor, so scores and
-#               buckets stay consistent).
+#   "global"  - one calibrated PHONEME_GOOD anchor for every phrase; the 0-5
+#               bucket cutpoints were fit under this anchor, so scores and
+#               buckets stay consistent.
 #   "ceiling" - per-phrase anchor = the TTS reference's own recognized per-phone
-#               distance, so a flawless read maps to 100 for each phrase. Costs an
-#               extra recognizer pass over the reference per phrase and shifts
-#               scores away from the global anchor the buckets were calibrated for.
+#               distance, so a flawless read maps to 100 for each phrase (the
+#               default). Costs an extra recognizer pass over the reference per
+#               phrase and shifts scores away from the global anchor the buckets
+#               were calibrated for.
 PHONEME_GOOD_MODE_CHOICES = ("global", "ceiling")
-PHONEME_GOOD_MODE = _USER.get("phoneme_good_mode", "global")
+PHONEME_GOOD_MODE = _USER.get("phoneme_good_mode", "ceiling")
 if PHONEME_GOOD_MODE not in PHONEME_GOOD_MODE_CHOICES:
     print(f"[config] settings.json: phoneme_good_mode must be 'global' or "
-          f"'ceiling', got {PHONEME_GOOD_MODE!r}; using 'global'", file=sys.stderr)
-    PHONEME_GOOD_MODE = "global"
+          f"'ceiling', got {PHONEME_GOOD_MODE!r}; using 'ceiling'", file=sys.stderr)
+    PHONEME_GOOD_MODE = "ceiling"
 
 # =====================================================================
 # Acoustic + transcription model used by the pronunciation/acoustic/ module.
@@ -614,8 +615,8 @@ SHOW_FACE = _bool("show_face", True)
 
 # Collapsed state of the editable practice-text box, toggled by clicking the
 # "Practice text:" caption in the app and persisted on change. The selector
-# row below the box stays visible either way.
-PRACTICE_TEXT_COLLAPSED = _bool("practice_text_collapsed", False)
+# row below the box stays visible either way. Collapsed by default.
+PRACTICE_TEXT_COLLAPSED = _bool("practice_text_collapsed", True)
 
 # =====================================================================
 # Color Theme (UI palette)

@@ -48,14 +48,14 @@ class AnalyzerConfig:
     score_threshold: float = 70.0
     # GOOD-anchor mode for the phoneme-quality axis:
     #   "global"  -- the single PHONEME_GOOD anchor from the model calibration,
-    #                optionally overridden per user by calibration.json (the
-    #                default; the 0-5 bucket cutpoints were calibrated under this
-    #                anchor, so production scores and the buckets stay consistent).
+    #                optionally overridden per user by calibration.json; the
+    #                0-5 bucket cutpoints were calibrated under this anchor, so
+    #                production scores and the buckets stay consistent.
     #   "ceiling" -- per-phrase GOOD = the TTS reference's own per-phone distance,
-    #                so a flawless read maps to 100 for each phrase (needs the
-    #                reference audio, which the host passes in).
+    #                so a flawless read maps to 100 for each phrase (the default;
+    #                needs the reference audio, which the host passes in).
     # A missing/empty reference silently falls back to "global" (never fails).
-    good_mode: str = "global"
+    good_mode: str = "ceiling"
     # Directory engine logs are written to (kept symmetric with pronunciation/acoustic/).
     log_dir: Path = Path("logs")
     # Practising user; reserved for per-user calibration ("" when unset).
