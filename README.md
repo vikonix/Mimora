@@ -9,11 +9,11 @@
   <img src="docs/mimora1.gif" width="400"
        alt="Mimora demo: one full practice loop - new phrase, speak, score, highlighted words, replay">
 </p>
+-->
 
 | Dark theme | Light theme |
 |:---:|:---:|
-| ![Mimora pronunciation trainer, dark theme](docs/mimora-dark2.png) | ![Mimora pronunciation trainer, light theme](docs/mimora-light2.png) |
--->
+| ![Mimora pronunciation trainer, dark theme](docs/mimora-dark.png) | ![Mimora pronunciation trainer, light theme](docs/mimora-light.png) |
 
 *Themes are configurable in `config/themes/`.*
 
