@@ -92,7 +92,7 @@ class PracticePanel:
     # Text access
     # ------------------------------------------------------------------
     def get_text(self) -> str:
-        """Return the editable practice text (without trailing whitespace)."""
+        """Return the editable practice text (stripped of leading/trailing whitespace)."""
         return self.text.get("1.0", tk.END).strip()
 
     def set_text(self, text: str):

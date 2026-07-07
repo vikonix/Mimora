@@ -205,7 +205,7 @@ class TrainerView:
     def _control_column(self, parent, caption):
         """A vertical control cell: the control(s) on top, an 8pt caption below.
 
-        Used by the bottom control panel (v2c step 4) so each action - Reference,
+        Used by the bottom control panel so each action - Reference,
         the mic, My recording, Next phrase - carries a one-line hint underneath.
         The caption is packed at the bottom up-front, so callers can simply pack
         their control widgets (default ``side=TOP``) into the returned frame
@@ -274,13 +274,13 @@ class TrainerView:
         # role the removed instruction line used to fill.
         self.tip_label = tk.Label(
             self.root,
-            text='Tip: hold SPACE or click the mic to record. '
+            text='Tip: press SPACE or click the mic to record. '
                  '"Reference ▶" replays the example.',
             font=(FONT_FAMILY, FONT_SIZE_CAPTION), fg=THEME["text_muted"],
             bg=THEME["bg_main"], anchor=tk.W)
         self.tip_label.pack(side=tk.BOTTOM, fill=tk.X, padx=20, pady=(0, 4))
 
-        # 3. Control panel (v2c step 4): one row holding every phrase-level
+        # 3. Control panel: one row holding every phrase-level
         # action, each in its own column with an 8pt caption beneath. Left to
         # right: Reference (+ slow-replay button), the mic, My recording, Next
         # phrase. The old single instruction line is gone - its guidance now
@@ -325,8 +325,8 @@ class TrainerView:
         self.slow_btn.pack(side=tk.LEFT)
         self.slow_btn.config(state=tk.DISABLED)
 
-        # -- Mic column: the press-and-hold record button (canvas-drawn). --
-        mic_col = self._control_column(controls_row, "Hold SPACE or click")
+        # -- Mic column: the press-to-toggle record button (canvas-drawn). --
+        mic_col = self._control_column(controls_row, "Press SPACE or click")
         self.btn_canvas = tk.Canvas(mic_col, width=100, height=100, bg=THEME["bg_main"],
                                     highlightthickness=0, cursor="hand2")
         self.btn_canvas.pack()
@@ -541,7 +541,7 @@ class TrainerView:
         return self._test_enabled
 
     def is_user_enabled(self) -> bool:
-        """True when the My phrase replay button is currently clickable."""
+        """True when the My recording replay button is currently clickable."""
         return str(self.user_btn["state"]) == str(tk.NORMAL)
 
     # ------------------------------------------------------------------
