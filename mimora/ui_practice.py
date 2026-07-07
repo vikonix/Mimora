@@ -13,7 +13,7 @@ from tkinter import scrolledtext
 from typing import Callable
 
 from mimora import config
-from mimora.ui_theme import FONT_FAMILY, THEME
+from mimora.ui_theme import FONT_FAMILY, THEME, Tooltip, bind_hover
 
 
 class PracticePanel:
@@ -40,15 +40,23 @@ class PracticePanel:
         header.pack(fill=tk.X)
         # The caption doubles as the collapse toggle for the text box: clicking
         # it hides/shows the editor (Paste/Clear go with it) to free vertical
-        # space; the arrow prefix mirrors the state (see toggle).
+        # space; the arrow prefix mirrors the state (see toggle). Hover
+        # underline + tooltip make the caption read as clickable (same
+        # treatment as the prosody caption).
         self.collapsed = tk.BooleanVar(value=config.PRACTICE_TEXT_COLLAPSED)
         self._caption = tk.Button(
             header, text="▾ Practice text:",
             command=self._on_caption_clicked,
-            font=(FONT_FAMILY, 9, "bold"), fg=THEME["text_dim"], bg=THEME["bg_main"],
+            font=(FONT_FAMILY, 10, "bold"), fg=THEME["text_dim"], bg=THEME["bg_main"],
             activebackground=THEME["bg_main"], activeforeground=THEME["text"],
             bd=0, padx=0, pady=0, cursor="hand2")
         self._caption.pack(side=tk.LEFT)
+        bind_hover(self._caption,
+                   enter={"font": (FONT_FAMILY, 10, "bold", "underline"),
+                          "fg": THEME["text"]},
+                   leave={"font": (FONT_FAMILY, 10, "bold"),
+                          "fg": THEME["text_dim"]})
+        Tooltip(self._caption, "Show/hide the practice-text editor")
 
         # Quick-edit affordances next to the caption. Their real job is
         # discoverability: a control visible even while the field still shows the

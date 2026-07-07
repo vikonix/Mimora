@@ -12,7 +12,7 @@ import tkinter as tk
 from typing import Callable
 
 from mimora import config, prosody_utils
-from mimora.ui_theme import FONT_FAMILY, THEME
+from mimora.ui_theme import FONT_FAMILY, THEME, Tooltip, bind_hover
 
 
 class ProsodyPanel:
@@ -35,15 +35,23 @@ class ProsodyPanel:
 
         # Header caption doubles as the collapse toggle (same idiom as the
         # practice-text caption): clicking it expands/collapses the body; the
-        # arrow prefix mirrors the state.
+        # arrow prefix mirrors the state. Hover underline + tooltip make the
+        # caption read as clickable, not as a decorated label (reviewers took
+        # the arrow for a technical artifact).
         self.show_prosody = tk.BooleanVar(value=config.SHOW_PROSODY)
         self._caption = tk.Button(
             self.frame, text="▾ Intonation & stress",
             command=self._on_caption_clicked,
-            font=(FONT_FAMILY, 9, "bold"), fg=THEME["accent"], bg=THEME["bg_main"],
-            activebackground=THEME["bg_main"], activeforeground=THEME["accent"],
+            font=(FONT_FAMILY, 10, "bold"), fg=THEME["text_dim"], bg=THEME["bg_main"],
+            activebackground=THEME["bg_main"], activeforeground=THEME["text"],
             bd=0, padx=0, pady=0, cursor="hand2")
         self._caption.pack(anchor=tk.W)
+        bind_hover(self._caption,
+                   enter={"font": (FONT_FAMILY, 10, "bold", "underline"),
+                          "fg": THEME["text"]},
+                   leave={"font": (FONT_FAMILY, 10, "bold"),
+                          "fg": THEME["text_dim"]})
+        Tooltip(self._caption, "Show/hide the intonation charts")
 
         # Body: everything hidden while collapsed. toggle() packs/forgets it as
         # a whole, so the individual children are packed once here.

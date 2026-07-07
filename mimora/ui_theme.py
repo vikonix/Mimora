@@ -93,6 +93,19 @@ def wheel_scroll_units(event) -> int:
     return -1 if delta > 0 else 1  # macOS: small per-event deltas
 
 
+def bind_hover(widget, enter: dict, leave: dict) -> None:
+    """Give a widget a hover state: ``config(**enter)`` on ``<Enter>``,
+    ``config(**leave)`` on ``<Leave>``.
+
+    Tk buttons have no native hover (``activebackground`` shows only while
+    pressed), so without this flat buttons read as static text. ``add="+"``
+    keeps other Enter/Leave bindings (e.g. a Tooltip) working on the same
+    widget.
+    """
+    widget.bind("<Enter>", lambda _e: widget.config(**enter), add="+")
+    widget.bind("<Leave>", lambda _e: widget.config(**leave), add="+")
+
+
 class Tooltip:
     """A minimal hover tooltip for a Tk widget (Tk has no native ``title=``).
 

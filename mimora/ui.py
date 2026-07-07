@@ -44,6 +44,7 @@ from mimora.ui_theme import (  # noqa: F401  (re-exported for settings_window)
     FONT_SIZE_CAPTION,
     THEME,
     WHEEL_EVENTS,
+    bind_hover,
     wheel_scroll_units,
 )
 
@@ -242,12 +243,22 @@ class TrainerView:
                      side=tk.LEFT, padx=(0, 0), pady=(6, 0))
 
         # Settings gear at the right edge of the header. Opens the settings
-        # window (see main.py on_settings_clicked).
-        tk.Button(header_frame, text="⚙", command=self._cb.on_settings_clicked,
-                  font=(FONT_FAMILY, 12), bg=THEME["bg_main"], fg=THEME["text_dim"],
-                  activebackground=THEME["bg_accent_active"],
-                  activeforeground=THEME["text_bright"],
-                  bd=0, padx=6, pady=0, cursor="hand2").pack(side=tk.RIGHT)
+        # window (see main.py on_settings_clicked). Tk buttons have no native
+        # hover state (activebackground only shows while pressed), so a small
+        # <Enter>/<Leave> pair brightens the glyph and fills the button like a
+        # quiet outline-less icon button - otherwise the gear reads as a stray
+        # character rather than a control.
+        gear = tk.Button(header_frame, text="⚙",
+                         command=self._cb.on_settings_clicked,
+                         font=(FONT_FAMILY, 15), bg=THEME["bg_main"],
+                         fg=THEME["text_dim"],
+                         activebackground=THEME["bg_accent_active"],
+                         activeforeground=THEME["text_bright"],
+                         bd=0, padx=8, pady=2, cursor="hand2")
+        gear.pack(side=tk.RIGHT)
+        bind_hover(gear,
+                   enter={"bg": THEME["bg_panel"], "fg": THEME["text_bright"]},
+                   leave={"bg": THEME["bg_main"], "fg": THEME["text_dim"]})
 
         # 2. Status bar (absolute bottom)
         self.status_bar = tk.Frame(self.root, bg=THEME["bg_panel"], height=30)
