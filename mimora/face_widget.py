@@ -3,31 +3,40 @@
 
 """Schematic articulation face for Mimora.
 
-A minimal "talking head" drawn on a Tk Canvas: a circle for the face and two
-dot eyes, plus a mouth that has two mutually exclusive modes:
+A cartoon "talking head" rendered with Pillow and shown on a Tk Canvas: a face
+disc with eyebrows, blinking eyes and a mouth that has two mutually exclusive
+modes:
 
-  * Talking -- a simple ellipse whose height tracks playback loudness. This is
-    live feedback *during* TTS playback (it shows how open the mouth is, not
-    tongue position), and is the original behaviour.
+  * Talking -- a plain dark mouth ellipse whose height tracks playback
+    loudness. This is live feedback *during* TTS playback; it shows how open
+    the mouth is, not tongue position.
 
-  * Paused -- when nothing is playing, the mouth becomes a smiley curve
-    (``:)`` / ``:|`` / ``:(``) reflecting the current state. The smiley is never
-    drawn on top of the talking ellipse: ``set_level`` switches to talking,
-    ``rest`` switches back to the smiley.
+  * Paused -- when nothing is playing, the mouth becomes a single round-capped
+    stroke: smile / flat / frown (``:)`` / ``:|`` / ``:(``) reflecting the
+    current state, with the eyebrows following the expression. The smiley is
+    never drawn together with the talking mouth: ``set_level`` switches to
+    talking, ``rest`` switches back to the smiley.
 
 Design constraints this module is built around:
 
-  * No pre-rendering. Shapes are created once in ``__init__``; each animation
-    frame only moves the existing mouth oval via ``Canvas.coords`` -- a few
-    microseconds. Nothing is generated ahead of playback.
+  * Antialiased rendering. Tk Canvas primitives have no antialiasing, which is
+    why the previous vector face read as clipart at ~78 px. Each frame is now
+    drawn by Pillow at 4x size and downscaled with LANCZOS, then shown as a
+    single Canvas image item.
 
-  * Thread-safe hand-off. Audio plays on a sounddevice thread while Tk draws on
-    the main thread. ``set_level`` therefore only stores the latest loudness in
-    a plain attribute (a single assignment, atomic in CPython); a small
-    ``after``-loop on the Tk thread reads it and redraws. The audio callback
-    must never touch the Canvas directly.
+  * Lazy frame cache instead of per-frame rendering. Mouth openness, smile
+    curl and the blink phase are quantized to a small number of steps; every
+    distinct combination is rendered once on first use (~1-2 ms) and cached as
+    a ``PhotoImage``. Steady-state animation is just an image swap -- cheaper
+    than the old ``Canvas.coords`` path. The cache is cleared on resize.
 
-  * Zero extra dependencies: standard-library ``tkinter`` only.
+  * Thread-safe hand-off. Audio plays on a sounddevice thread while Tk draws
+    on the main thread. ``set_level`` therefore only stores the latest
+    loudness in a plain attribute (a single assignment, atomic in CPython);
+    the ``after``-loop on the Tk thread reads it and swaps frames. Pillow /
+    ``ImageTk`` objects are only ever touched on the Tk thread.
+
+  * Dependencies: stdlib ``tkinter`` plus Pillow (pinned in requirements.txt).
 
 Typical use::
 
@@ -38,7 +47,7 @@ Typical use::
     ...
     # inside the audio playback callback (any thread):
     rms = float(np.sqrt(np.mean(chunk.astype("float32") ** 2)))
-    face.set_level(FaceWidget.level_from_rms(rms))   # talking ellipse
+    face.set_level(FaceWidget.level_from_rms(rms))   # talking mouth
     ...
     face.set_score(score)   # choose the paused smiley (:) / :| / :( )
     face.rest()             # playback stopped -> show the smiley
@@ -46,16 +55,52 @@ Typical use::
 
 from __future__ import annotations
 
+import random
 import time
 import tkinter as tk
 
+from PIL import Image, ImageDraw, ImageTk
+
+# Rendering scale: frames are drawn this many times larger than the widget and
+# downscaled with LANCZOS -- this is where the antialiasing comes from.
+_SUPERSAMPLE = 4
+
+# Quantization steps for the frame cache. More steps = smoother motion but a
+# larger (still lazy) cache. Mouth openness 0..1 -> 0.._MOUTH_STEPS; smile
+# curl -1..1 -> -_CURL_STEPS.._CURL_STEPS.
+_MOUTH_STEPS = 11
+_CURL_STEPS = 4
+
+# Blink choreography, in seconds from blink start: lids half-closed, fully
+# closed, half again, then open. Kept short so it reads as a blink, not a nap.
+_BLINK_HALF_IN = 0.05
+_BLINK_OPEN_AT = 0.17
+_BLINK_TOTAL = 0.22
+
+
+def _blend(c1: tuple, c2: tuple, k: float) -> tuple:
+    """Linear mix of two RGB tuples: ``k=0`` -> ``c1``, ``k=1`` -> ``c2``."""
+    return tuple(round(a + (b - a) * k) for a, b in zip(c1, c2))
+
+
+def _bezier_point(p0: tuple, p1: tuple, p2: tuple, t: float) -> tuple:
+    """Point at parameter ``t`` on the quadratic Bezier ``p0 -> p1 -> p2``."""
+    u = 1.0 - t
+    return (u * u * p0[0] + 2 * u * t * p1[0] + t * t * p2[0],
+            u * u * p0[1] + 2 * u * t * p1[1] + t * t * p2[1])
+
+
+def _quad_bezier(p0: tuple, p1: tuple, p2: tuple, n: int = 24) -> list:
+    """Sample a quadratic Bezier into ``n + 1`` points (for lines/polygons)."""
+    return [_bezier_point(p0, p1, p2, i / n) for i in range(n + 1)]
+
 
 class FaceWidget(tk.Canvas):
-    """A Tk Canvas that draws a schematic face and animates the mouth.
+    """A Tk Canvas that shows a Pillow-rendered face and animates the mouth.
 
-    The widget is itself a ``tk.Canvas``, so it can be ``pack``/``grid``-ed like
-    any other widget. It starts its own redraw loop immediately and begins in
-    the paused (smiley) mode.
+    The widget is itself a ``tk.Canvas``, so it can be ``pack``/``grid``-ed
+    like any other widget. It starts its own redraw loop immediately and
+    begins in the paused (smiley) mode.
     """
 
     def __init__(
@@ -76,31 +121,41 @@ class FaceWidget(tk.Canvas):
 
         Args:
             parent: parent Tk widget.
-            size: side of the square canvas, in pixels. All face geometry scales
-                from this, so this is the only sizing knob you need.
-            bg: canvas background colour (the panel behind the face).
+            size: side of the square canvas, in pixels. All face geometry
+                scales from this, so this is the only sizing knob you need.
+            bg: canvas background colour (the panel behind the face). Frames
+                are rendered on this colour, so antialiased edges blend into
+                it exactly.
             face_color: fill colour of the face disc.
             face_outline: outline colour of the face disc. Empty string (the
                 default) draws no outline; pass a colour so the disc stays
-                visible when its fill matches the panel behind it (e.g. a white
-                face on a white panel in the light theme).
-            eye_color: colour of the two dot eyes, drawn on top of the face.
-            mouth_color: colour of the mouth (talking ellipse and smiley),
-                drawn on top of the face.
+                visible when its fill matches the panel behind it (e.g. a
+                white face on a white panel in the light theme). Drawn as a
+                thin 1 px rim, not the old heavy stroke.
+            eye_color: colour of the eyes and eyebrows.
+            mouth_color: colour of the resting mouth stroke; the darker
+                talking-mouth fill is derived from it.
             fps: redraw rate of the animation loop.
             attack: smoothing factor used while the mouth is *opening* (target
                 louder than current). Higher = snappier. Range (0, 1].
             release: smoothing factor used while the mouth is *closing*. Lower
-                than ``attack`` on purpose -- mouths close more slowly than they
-                open, which reads as natural rather than twitchy.
+                than ``attack`` on purpose -- mouths close more slowly than
+                they open, which reads as natural rather than twitchy.
         """
         super().__init__(parent, width=size, height=size, bg=bg,
                          highlightthickness=0, bd=0)
 
-        self._eye_color = eye_color
-        self._mouth_color = mouth_color
-        self._face_color = face_color
-        self._face_outline = face_outline
+        # Palette: parse the Tk colour strings once (winfo_rgb also resolves
+        # named colours), then derive the accent tones from them so the face
+        # follows the theme without extra knobs.
+        self._c_bg = self._rgb(bg)
+        self._c_face = self._rgb(face_color)
+        self._c_outline = self._rgb(face_outline) if face_outline else None
+        self._c_eye = self._rgb(eye_color)
+        self._c_mouth = self._rgb(mouth_color)
+        self._c_mouth_in = _blend(self._c_mouth, (24, 12, 12), 0.5)  # interior
+        self._c_shine = (255, 255, 255)  # eye highlight
+
         self._frame_ms = max(1, int(1000 / fps))
         self.fps = fps
         self._attack = attack
@@ -110,10 +165,10 @@ class FaceWidget(tk.Canvas):
         # ``_current`` is the smoothed value the loop actually draws.
         self._target = 0.0
         self._current = 0.0
-        # Optional pre-computed loudness track (see play_levels). While set, the
-        # loop reads the level for the current time from it instead of from
-        # set_level; this is how playback drives the mouth when the audio backend
-        # gives no per-frame callback (winsound on Windows).
+        # Optional pre-computed loudness track (see play_levels). While set,
+        # the loop reads the level for the current time from it instead of
+        # from set_level; this is how playback drives the mouth when the audio
+        # backend gives no per-frame callback (winsound on Windows).
         self._track: list[float] | None = None
         self._track_fps = float(fps)
         self._track_t0 = 0.0
@@ -122,117 +177,45 @@ class FaceWidget(tk.Canvas):
         self._curl_current = 0.0
         # Mouth mode: "talking" (ellipse) or "paused" (smiley). Starts paused.
         self._mode = "paused"
-        self._shown: str | None = None
+        # Next blink start, wall-clock. Blinks repeat at a random 2-5 s pace.
+        self._blink_at = time.perf_counter() + random.uniform(1.0, 3.0)
+
+        # Frame cache: quantized state -> rendered PhotoImage. Lazy -- only
+        # combinations that actually occur are rendered. Cleared on resize.
+        self._cache: dict[tuple, ImageTk.PhotoImage] = {}
+        self._photo: ImageTk.PhotoImage | None = None  # keep-alive reference
+        self._key_shown: tuple | None = None
         self._loop_id: str | None = None
         self._size = size  # fallback dimension before the first <Configure>
+        # Canvas size in px. NB: not ``_w``/``_h`` -- tkinter reserves ``_w``
+        # for the widget's Tcl path name; shadowing it breaks every Tk call.
+        self._cw = size
+        self._ch = size
 
-        # Draw once at the requested size, then rebuild on resize so the face
-        # always fills (and never overflows) whatever box the layout gives it.
-        self._rebuild(size, size)
+        # One image item holds the current frame; frames are centred so the
+        # face stays circular in whatever box the layout gives it.
+        self._img_item = self.create_image(size / 2, size / 2)
         self.bind("<Configure>", self._on_resize)
 
         self._tick()  # start the redraw loop
 
-    # -- geometry ---------------------------------------------------------
+    # -- colours ------------------------------------------------------------
+
+    def _rgb(self, color: str) -> tuple:
+        """Resolve a Tk colour string to an 8-bit RGB tuple."""
+        r, g, b = self.winfo_rgb(color)
+        return (r // 257, g // 257, b // 257)
+
+    # -- geometry / resize ----------------------------------------------------
 
     def _on_resize(self, event: "tk.Event") -> None:
-        self._rebuild(event.width, event.height)
-
-    def _rebuild(self, width: int, height: int) -> None:
-        """Recompute geometry for the current canvas size and redraw all parts."""
-        dim = min(width, height)
-        if dim <= 1:  # not laid out yet; fall back to the requested size
-            dim = self._size
-        self.delete("all")
-        self._build_geometry(dim, width, height)
-        self._draw_static()
-        self._create_mouth()
-        self._shown = None  # force _tick to re-apply the visible mouth
-
-    def _build_geometry(self, dim: float, width: float, height: float) -> None:
-        """Pre-compute coordinates so the loop does no layout maths.
-
-        ``dim`` is the limiting side (so the face stays circular); ``width`` and
-        ``height`` centre it in the canvas.
-        """
-        self._cx = width / 2
-        self._cy = height / 2
-        radius = dim * 0.42
-
-        # Eyes: two dots in the upper third of the face.
-        eye_y = self._cy - radius * 0.30
-        eye_dx = radius * 0.34
-        eye_r = max(2.0, radius * 0.08)
-        self._eye_r = eye_r
-        self._eye_l = (self._cx - eye_dx, eye_y)
-        self._eye_r_pos = (self._cx + eye_dx, eye_y)
-
-        self._head_r = radius
-
-        # Mouth: centred in the lower third. Two independent shapes share this
-        # spot but are never shown together (see _tick):
-        #   * talking ellipse -- width is fixed; height runs from a near-flat
-        #     line (closed) up to ``ry_max`` (loud speech).
-        #   * paused smiley -- a curve whose corners rise/fall with ``curl``.
-        self._mouth_cy = self._cy + radius * 0.38
-        self._mouth_rx = radius * 0.34           # half-width of the mouth
-        self._mouth_ry_min = max(1.0, radius * 0.02)  # closed = thin line
-        self._mouth_ry_max = radius * 0.28       # loud speech (deliberately toned down)
-        self._smile_amp = radius * 0.16          # corner/mid offset at full curl
-        self._line_w = max(2, int(dim * 0.02))
-        self._outline_w = max(2, int(dim * 0.03))  # disc edge when shown
-
-    def _draw_static(self) -> None:
-        """Draw the parts that never move: head outline and eyes."""
-        r = self._head_r
-        self.create_oval(self._cx - r, self._cy - r, self._cx + r, self._cy + r,
-                         outline=self._face_outline, width=self._outline_w,
-                         fill=self._face_color)
-        er = self._eye_r
-        for ex, ey in (self._eye_l, self._eye_r_pos):
-            self.create_oval(ex - er, ey - er, ex + er, ey + er,
-                             outline="", fill=self._eye_color)
-
-    def _smile_points(self, curl: float) -> list[float]:
-        """Three smooth-curve points for the paused smiley.
-
-        ``curl`` (-1..1) lifts the corners and drops the middle for a smile,
-        and the reverse for a frown. At ``curl`` 0 all three points sit on one
-        line -- the flat ``:|`` mouth.
-        """
-        cx, my, rx = self._cx, self._mouth_cy, self._mouth_rx
-        amp = self._smile_amp
-        return [
-            cx - rx, my - curl * amp,   # left corner
-            cx, my + curl * amp,        # middle
-            cx + rx, my - curl * amp,   # right corner
-        ]
-
-    def _create_mouth(self) -> None:
-        """Create both mouth shapes once; only one is ever visible."""
-        # Talking ellipse (shown during playback). Starts hidden and closed.
-        rx, ry = self._mouth_rx, self._mouth_ry_min
-        self._mouth_oval = self.create_oval(
-            self._cx - rx, self._mouth_cy - ry,
-            self._cx + rx, self._mouth_cy + ry,
-            outline=self._mouth_color, width=self._line_w, fill="", state="hidden",
-        )
-        # Paused smiley (shown when idle). Starts visible and flat.
-        self._mouth_smile = self.create_line(
-            self._smile_points(0.0), fill=self._mouth_color, width=self._line_w,
-            smooth=True, capstyle=tk.ROUND,
-        )
-
-    def _show_mouth(self, which: str) -> None:
-        """Toggle which mouth shape is visible (no-op if already current)."""
-        if self._shown == which:
+        if event.width == self._cw and event.height == self._ch:
             return
-        self._shown = which
-        talking = which == "oval"
-        self.itemconfigure(self._mouth_oval,
-                           state="normal" if talking else "hidden")
-        self.itemconfigure(self._mouth_smile,
-                           state="hidden" if talking else "normal")
+        self._cw, self._ch = event.width, event.height
+        self.coords(self._img_item, self._cw / 2, self._ch / 2)
+        # Cached frames are the old size; re-render lazily at the new one.
+        self._cache.clear()
+        self._key_shown = None
 
     # -- public API -------------------------------------------------------
 
@@ -288,9 +271,10 @@ class FaceWidget(tk.Canvas):
 
         Accepts a name (``"happy"``/``"neutral"``/``"sad"``), an emoticon
         (``":)"`` / ``":|"`` / ``":("``), or a raw curl float in ``[-1, 1]``
-        (``+1`` full smile, ``-1`` full frown). This sets the smiley shown while
-        paused; it has no effect on the talking ellipse. The curve eases in, so
-        switching expressions looks smooth. Handy for score feedback.
+        (``+1`` full smile, ``-1`` full frown). This sets the smiley shown
+        while paused and tilts the eyebrows with it; it has no effect on the
+        talking mouth height. The curve eases in, so switching expressions
+        looks smooth. Handy for score feedback.
         """
         if isinstance(expression, str):
             try:
@@ -336,10 +320,25 @@ class FaceWidget(tk.Canvas):
 
     # -- animation loop ---------------------------------------------------
 
+    def _blink_phase(self) -> int:
+        """Return the current eyelid state: 0 open, 1 half, 2 closed.
+
+        Driven by wall-clock so the pace is independent of fps. Advancing past
+        the end of a blink schedules the next one at a random 2-5 s distance.
+        """
+        now = time.perf_counter()
+        if now < self._blink_at:
+            return 0
+        phase = now - self._blink_at
+        if phase >= _BLINK_TOTAL:
+            self._blink_at = now + random.uniform(2.2, 5.5)
+            return 0
+        return 2 if _BLINK_HALF_IN <= phase < _BLINK_OPEN_AT else 1
+
     def _tick(self) -> None:
-        """One animation frame: update only the mouth shape that is visible."""
-        # A pre-computed loudness track, if present, drives the talking mouth by
-        # wall-clock time and hands back to the smiley once it is exhausted.
+        """One animation frame: swap in the cached frame for the new state."""
+        # A pre-computed loudness track, if present, drives the talking mouth
+        # by wall-clock time and hands back to the smiley once exhausted.
         if self._track is not None:
             idx = int((time.perf_counter() - self._track_t0) * self._track_fps)
             if idx < len(self._track):
@@ -350,27 +349,134 @@ class FaceWidget(tk.Canvas):
                 self._target = 0.0
                 self._mode = "paused"
 
+        # Asymmetric loudness smoothing: open fast, close slow.
+        target, current = self._target, self._current
+        coeff = self._attack if target >= current else self._release
+        self._current = current + coeff * (target - current)
+        # Expression eases toward its target at a steady, gentle rate. Updated
+        # in both modes: the eyebrows follow the curl even while talking.
+        self._curl_current += 0.25 * (self._curl_target - self._curl_current)
+
+        blink = self._blink_phase()
+        curl_q = round(self._curl_current * _CURL_STEPS)
         if self._mode == "talking":
-            self._show_mouth("oval")
-            # Asymmetric smoothing: open fast, close slow.
-            target, current = self._target, self._current
-            coeff = self._attack if target >= current else self._release
-            current += coeff * (target - current)
-            self._current = current
-            ry = self._mouth_ry_min + current * (self._mouth_ry_max - self._mouth_ry_min)
-            rx = self._mouth_rx
-            self.coords(self._mouth_oval,
-                        self._cx - rx, self._mouth_cy - ry,
-                        self._cx + rx, self._mouth_cy + ry)
+            key = ("talk", round(self._current * _MOUTH_STEPS), curl_q, blink)
         else:
-            self._show_mouth("smile")
-            # Expression eases toward its target at a steady, gentle rate.
-            self._curl_current += 0.25 * (self._curl_target - self._curl_current)
-            self.coords(self._mouth_smile, *self._smile_points(self._curl_current))
+            key = ("rest", 0, curl_q, blink)
+
+        if key != self._key_shown:
+            photo = self._cache.get(key)
+            if photo is None:
+                if len(self._cache) > 512:  # safety valve, never hit in practice
+                    self._cache.clear()
+                photo = self._render_frame(key)
+                self._cache[key] = photo
+            self.itemconfigure(self._img_item, image=photo)
+            self._photo = photo  # PhotoImage must stay referenced or Tk blanks
+            self._key_shown = key
 
         # Reschedule. winfo_exists guards against a destroyed widget.
         if self.winfo_exists():
             self._loop_id = self.after(self._frame_ms, self._tick)
+
+    # -- frame rendering ----------------------------------------------------
+
+    def _render_frame(self, key: tuple) -> ImageTk.PhotoImage:
+        """Render one face frame for a quantized state, antialiased.
+
+        Drawn at ``_SUPERSAMPLE`` times the widget size on the opaque ``bg``
+        colour (so edge pixels blend into the panel exactly), then downscaled
+        with LANCZOS. Tk-thread only (creates a ``PhotoImage``).
+        """
+        mode, mouth_q, curl_q, blink = key
+        dim = min(self._cw, self._ch)
+        if dim <= 1:  # not laid out yet; fall back to the requested size
+            dim = self._size
+        s = dim * _SUPERSAMPLE
+        curl = curl_q / _CURL_STEPS
+        openness = mouth_q / _MOUTH_STEPS
+
+        img = Image.new("RGB", (s, s), self._c_bg)
+        d = ImageDraw.Draw(img)
+        cx = cy = s / 2
+        r = s * 0.42  # head radius; everything below scales from it
+
+        # Face disc, with an optional thin rim (1 px after downscale).
+        if self._c_outline is not None:
+            d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=self._c_face,
+                      outline=self._c_outline, width=_SUPERSAMPLE)
+        else:
+            d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=self._c_face)
+
+        # Eyes: tall ellipses with a highlight; the blink squashes them.
+        ey, edx = cy - r * 0.30, r * 0.34
+        erx, ery_open = r * 0.105, r * 0.16
+        ery = max(ery_open * (1.0, 0.45, 0.10)[blink], r * 0.02)
+        for side in (-1, 1):
+            ex = cx + side * edx
+            d.ellipse((ex - erx, ey - ery, ex + erx, ey + ery), fill=self._c_eye)
+            if blink == 0:
+                hr = erx * 0.42
+                hx, hy = ex - erx * 0.28, ey - ery_open * 0.38
+                d.ellipse((hx - hr, hy - hr, hx + hr, hy + hr), fill=self._c_shine)
+
+        # Eyebrows: gentle arches that rise with a smile; a frown raises the
+        # inner ends and drops the outer ones (the classic "worried" tilt).
+        brow_y = ey - ery_open - r * 0.13 - curl * r * 0.045
+        sad = max(0.0, -curl)
+        brow_w = max(2, int(r * 0.055))
+        for side in (-1, 1):
+            ex = cx + side * edx
+            inner = (ex - side * erx * 1.15, brow_y - sad * r * 0.09)
+            outer = (ex + side * erx * 1.15, brow_y + sad * r * 0.05)
+            ctrl = ((inner[0] + outer[0]) / 2, min(inner[1], outer[1]) - r * 0.05)
+            d.line(_quad_bezier(inner, ctrl, outer), fill=self._c_eye,
+                   width=brow_w, joint="curve")
+            for px, py in (inner, outer):  # round caps
+                cr = brow_w / 2
+                d.ellipse((px - cr, py - cr, px + cr, py + cr), fill=self._c_eye)
+
+        my = cy + r * 0.38  # mouth centre line
+        if mode == "talk":
+            self._draw_talking_mouth(d, cx, my, r, openness)
+        else:
+            self._draw_smiley(d, cx, my, r, curl)
+
+        img = img.resize((dim, dim), Image.Resampling.LANCZOS)
+        return ImageTk.PhotoImage(img)
+
+    def _draw_talking_mouth(self, d: "ImageDraw.ImageDraw", cx: float,
+                            my: float, r: float, openness: float) -> None:
+        """Plain dark mouth ellipse; slightly narrows as it opens.
+
+        No lip outline or interior detail on purpose -- at widget size the
+        single dark shape reads cleaner.
+        """
+        mrx = r * 0.30 - openness * r * 0.04
+        mry = r * 0.03 + openness * (r * 0.26 - r * 0.03)
+        d.ellipse((cx - mrx, my - mry, cx + mrx, my + mry),
+                  fill=self._c_mouth_in)
+
+    def _draw_smiley(self, d: "ImageDraw.ImageDraw", cx: float, my: float,
+                     r: float, curl: float) -> None:
+        """Single round-capped stroke: smile, flat line or frown.
+
+        A quadratic Bezier whose corners sit at ``my - curl * amp`` and whose
+        middle dips the opposite way, so ``curl`` (-1..1) bends the stroke
+        from a full smile through flat (``:|``) to a frown. Round end caps
+        are drawn as small discs (PIL lines have butt caps).
+        """
+        srx = r * 0.32
+        amp = r * 0.16
+        left = (cx - srx, my - curl * amp)
+        right = (cx + srx, my - curl * amp)
+        ctrl = (cx, my + curl * amp * 2.0)
+        width = max(2, int(r * 0.075))
+        d.line(_quad_bezier(left, ctrl, right), fill=self._c_mouth,
+               width=width, joint="curve")
+        for px, py in (left, right):
+            cr = width / 2
+            d.ellipse((px - cr, py - cr, px + cr, py + cr), fill=self._c_mouth)
 
     def destroy(self) -> None:
         """Cancel the loop before the widget goes away."""
@@ -385,7 +491,7 @@ class FaceWidget(tk.Canvas):
 
 if __name__ == "__main__":
     # Manual eyeball test, no audio needed. Run: python -m mimora.face_widget
-    # It alternates ~2.5 s of "talking" (the ellipse driven by a sine envelope)
+    # It alternates ~2.5 s of "talking" (the mouth driven by a sine envelope)
     # with ~1 s of "paused", cycling through the three smileys.
     import math
 

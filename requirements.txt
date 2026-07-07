@@ -24,6 +24,12 @@ ttkbootstrap>=1.10,<2
 # (used by the slow-tokenizer path and the standard NLLB setup).
 sentencepiece>=0.1.99
 
+# Face widget (mimora/face_widget.py): frames are drawn supersampled with
+# Pillow and downscaled for antialiasing. Pillow was already installed as a
+# transitive dependency; pinned explicitly because the widget imports PIL
+# directly. >=9.1 for Image.Resampling.
+pillow>=9.1
+
 # Subproject dependencies (paths are relative to this file).
 # llm_server brings llama-cpp-python - CPU-only build by default; for the CUDA
 # build (GPU offload for the LLM) see "llama-cpp-python with CUDA Support"
