@@ -20,9 +20,10 @@ HISTORY_LIMIT = 10
 class SessionState:
     """Session score tally plus the bounded attempt history for one app run.
 
-    The tally feeds the status bar: "Phrases: N" counts the distinct phrases
-    practiced this run (a set of phrase texts); the average is the running
-    mean over *every* scored attempt (repeats of one phrase each add to it).
+    The tally feeds the hero card's progress ring: "Phrases: N" counts the
+    distinct phrases practiced this run (a set of phrase texts); the average is
+    the running mean over *every* scored attempt (repeats of one phrase each
+    add to it).
     The two therefore count different things: unique phrases vs total
     attempts. Empty/zero at construction == reset on app start (no explicit
     reset action).

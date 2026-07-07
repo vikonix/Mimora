@@ -21,7 +21,8 @@ view shares no implicit namespace with the controller:
 TrainerView is a facade over per-panel classes, each owning its widgets:
 
 * :class:`mimora.ui_practice.PracticePanel` - the collapsible source-text editor.
-* :class:`mimora.ui_hero.HeroCard` - phrase, translation, score row, face.
+* :class:`mimora.ui_hero.HeroCard` - phrase, translation, score row, face,
+  session-average progress ring.
 * :class:`mimora.ui_prosody.ProsodyPanel` - the pitch/energy sparklines.
 * :class:`mimora.ui_history.HistoryPanel` - the scrollable attempt list.
 * :mod:`mimora.ui_theme` - shared palette, fonts, wheel helpers, tooltip.
@@ -268,15 +269,10 @@ class TrainerView:
                                      font=(FONT_FAMILY, 9), fg=THEME["ready"], bg=THEME["bg_panel"])
         self.status_label.pack(side=tk.LEFT, padx=15, pady=4)
 
-        # Session tally (right side): the number of distinct phrases practiced
-        # this run and the mean over every scored attempt this run (repeats of
-        # one phrase each add to the average - see main.py on_take_scored). The
-        # per-take score itself lives in the hero card (see HeroCard), so this
-        # line does not duplicate it. Driven by update_session_stats.
-        self.stats_label = tk.Label(self.status_bar,
-                                    text="Phrases: 0 · Avg: -",
-                                    font=(FONT_FAMILY, 9), fg=THEME["text_dim"], bg=THEME["bg_panel"])
-        self.stats_label.pack(side=tk.RIGHT, padx=15, pady=4)
+        # The session tally (distinct-phrase count + running average) used to
+        # live here on the right of the status bar; it now lives in the hero
+        # card's progress ring (see HeroCard / update_session_stats), so the
+        # status bar carries only the transient status line on the left.
 
         # 2a. Tip line - a single static hint sitting directly above the status
         # bar. Packed side=BOTTOM after the status bar so it lands just above it,
@@ -741,15 +737,24 @@ class TrainerView:
         self.status_label.configure(text=text, fg=color)
 
     def update_session_stats(self, count: int, average_text: str):
-        """Show the session tally in the status bar: ``Phrases: 4 · Avg: 3.8/5``.
+        """Show the session tally in the hero card's progress ring.
 
         ``count`` is the number of distinct phrases practiced this run and
         ``average_text`` the already-formatted mean over every scored attempt
         (both supplied by the controller, which owns the session data and knows
         the scale: "3.8/5" for graded takes, "78" for raw-percent ones).
+
+        The ring needs the average as numbers, so the display string is parsed
+        back into value/maximum here: "3.8/5" -> (3.8, 5); a bare "78" (the raw
+        engine) -> (78, 100). This keeps SessionState's single formatted output
+        as the source of truth while the ring stays a plain numeric gauge.
         """
-        self.stats_label.configure(text=f"Phrases: {count} · Avg: {average_text}",
-                                   fg=THEME["text_dim"])
+        if "/" in average_text:
+            value_text, max_text = average_text.split("/", 1)
+            value, maximum = float(value_text), float(max_text)
+        else:
+            value, maximum = float(average_text), 100.0
+        self._hero.set_progress(value, maximum, count)
 
     def clear_previous_result(self):
         """Reset the per-take indicators before a new recording starts.
@@ -926,7 +931,7 @@ class TrainerView:
         self._prosody.redraw()
 
         # Unscored takes ("none" engine) do not contribute to the session tally,
-        # so the status bar's Phrases/Avg line is left untouched here.
+        # so the hero card's progress ring is left untouched here.
 
         self._set_actions(generate=True, reference=True, user=has_recording, test=True)
         self.draw_mic_button("idle")

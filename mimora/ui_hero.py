@@ -18,6 +18,7 @@ from typing import Callable, Optional
 from mimora import config
 from mimora.face_widget import FaceWidget
 from mimora.phoneme_examples import example_for
+from mimora.progress_widget import ProgressRing
 from mimora.ui_theme import (
     FONT_FAMILY,
     FONT_SIZE_BODY,
@@ -34,8 +35,9 @@ class HeroCard:
     """The phrase + score card, including the talking face.
 
     Owns the phrase Text (word tags, miss underlines, hover), the translation
-    label, the score column, the WORK ON badges, the interactive-feedback hint
-    and the FaceWidget. Built and packed into ``root`` at construction.
+    label, the score column, the WORK ON badges, the interactive-feedback hint,
+    the FaceWidget (left of the score row) and the session-average ProgressRing
+    (right of it). Built and packed into ``root`` at construction.
     """
 
     def __init__(self, root,
@@ -124,13 +126,18 @@ class HeroCard:
         tk.Frame(self.frame, height=14, bg=THEME["bg_card"]).pack(fill=tk.X)
         tk.Frame(self.frame, height=1, bg=THEME["border"]).pack(fill=tk.X)
 
-        # Score row: [SCORE column] [WORK ON badges] [face]. Filled by the
-        # facade's show_feedback; reset_score_row shows the empty state ("--"
-        # and "record to get a score") until the first take.
+        # Score row, left to right: [face] [SCORE column] [WORK ON badges]
+        # [progress ring]. The face (verdict indicator) and the session-average
+        # ring bracket the textual middle. Filled by the facade's show_feedback;
+        # reset_score_row shows the empty state ("--" and "record to get a
+        # score") until the first take.
         score_row = tk.Frame(self.frame, bg=THEME["bg_card"])
         score_row.pack(fill=tk.X, padx=18, pady=(10, 12))
 
-        score_col = tk.Frame(score_row, bg=THEME["bg_card"])
+        # Kept as an attribute so toggle_face can pack the face *before* it -
+        # i.e. as the leftmost child of the row (see toggle_face).
+        self.score_col = tk.Frame(score_row, bg=THEME["bg_card"])
+        score_col = self.score_col
         score_col.pack(side=tk.LEFT)
         tk.Label(score_col, text="SCORE", font=(FONT_FAMILY, FONT_SIZE_CAPTION, "bold"),
                  fg=THEME["text_dim"], bg=THEME["bg_card"]).pack()
@@ -143,6 +150,14 @@ class HeroCard:
             font=(FONT_FAMILY, FONT_SIZE_CAPTION),
             fg=THEME["text_dim"], bg=THEME["bg_card"])
         self.score_verdict_label.pack()
+
+        # Session-average ring on the right of the row (mirrors the face on the
+        # left). Packed here - before the expanding WORK ON column below - so the
+        # right edge is claimed first; otherwise the expand=True middle column
+        # would swallow all the leftover space and leave the ring no room. Driven
+        # by set_progress; starts in the empty state ("0 phrases", no fill).
+        self.progress = ProgressRing(score_row, size=82, bg=THEME["bg_card"])
+        self.progress.pack(side=tk.RIGHT, padx=(8, 0))
 
         # WORK ON: caption + a row of flat phoneme badges (top problem sounds).
         # The badges are rebuilt per result (set_badges); clicking one speaks an
@@ -160,8 +175,7 @@ class HeroCard:
         # set_hint), so the empty/unscored states stay quiet.
         self.hint_label = tk.Label(
             workon_col,
-            text="Click any word to hear it slowly; "
-                 "click a sound for an example.",
+            text="Click a word or a sound to hear it.",
             font=(FONT_FAMILY, FONT_SIZE_CAPTION), fg=THEME["text_muted"],
             bg=THEME["bg_card"], justify=tk.LEFT, wraplength=320)
 
@@ -353,6 +367,11 @@ class HeroCard:
         self.score_num_label.configure(text=number, fg=color)
         self.score_verdict_label.configure(text=verdict, fg=color)
 
+    def set_progress(self, value: Optional[float], maximum: float, count: int):
+        """Update the session-average ring: ``value`` out of ``maximum`` and the
+        distinct-phrase ``count``. ``value=None`` shows the empty state."""
+        self.progress.set_progress(value, maximum, count)
+
     def set_badges(self, phonemes: list[str]):
         """Rebuild the WORK ON badges from the top problem phonemes.
 
@@ -454,9 +473,16 @@ class HeroCard:
         self.root.focus_set()
         shown = self.face.winfo_manager() == "pack"
         if self.show_face.get() and not shown:
-            # The only side=RIGHT child of the score row, so packing order
-            # relative to the other columns does not matter.
-            self.face.pack(side=tk.RIGHT, padx=(8, 0))
+            # Leftmost child of the score row: packed side=LEFT *before* the
+            # SCORE column so it sits to its left (the progress ring holds the
+            # right edge). Without before=, packing it after the columns already
+            # laid out would drop it to the right of them. anchor="n" pins the
+            # face to the top of the row so its circle lines up with the progress
+            # ring's circle: the ring frame is the row's tallest child (ring +
+            # count label), so top-aligning matches the two discs without a
+            # hard-coded offset.
+            self.face.pack(side=tk.LEFT, padx=(0, 12), anchor=tk.N,
+                           before=self.score_col)
         elif not self.show_face.get() and shown:
             self.face.pack_forget()
 
