@@ -57,9 +57,11 @@ def normalize_audio(audio: np.ndarray) -> np.ndarray:
     is not boosted into the analysis path.
     """
     peak = np.max(np.abs(audio))
-    logging.info(f"Normalizing audio. Peak signal level: {peak:.4f}")
+    # Per-take diagnostics: DEBUG, not INFO, so a normal session's log is not
+    # flooded with two lines per attempt.
+    logging.debug(f"Normalizing audio. Peak signal level: {peak:.4f}")
     if peak < AUDIO_MIN_PEAK_THRESHOLD:
-        logging.info("Peak signal is too low (silence). Skipping gain adjustment.")
+        logging.debug("Peak signal is too low (silence). Skipping gain adjustment.")
         return audio.astype(np.float32)
     audio = audio / peak * AUDIO_NORMALIZATION_CEILING
     return np.nan_to_num(audio).astype(np.float32)

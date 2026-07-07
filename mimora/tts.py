@@ -176,6 +176,12 @@ class TTSManager:
             # explicit AUDIO_OUTPUT_DEVICE forces the sounddevice path below -
             # otherwise that config option would be silently ignored on Windows.
             if uses_winsound():
+                # No config.AUDIO_LOCK here (unlike the sounddevice branch below
+                # and the recorder): that lock guards PortAudio init/teardown, and
+                # winsound does not touch PortAudio at all. Playback and recording
+                # never overlap anyway - the controller stops playback before it
+                # opens the mic (see main.py trigger_recording_start).
+                #
                 # Prepend silence so the Windows Audio Session can initialize without
                 # clipping the first ~150ms. Lead-in scales with the sample rate.
                 lead_in = np.zeros(int(sample_rate * WINSOUND_LEAD_IN_SECONDS), dtype=np.float32)

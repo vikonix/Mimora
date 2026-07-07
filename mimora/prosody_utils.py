@@ -22,6 +22,10 @@ def resample_series(values: Sequence[float], target: int = 160) -> List[float]:
     ``target`` length are returned unchanged (as a list).
     """
     n = len(values)
+    if target <= 1:
+        # 0 or 1 point requested: nothing to interpolate, and target == 1 would
+        # make the (target - 1) step below divide by zero. Slice keeps it safe.
+        return list(values[:target])
     if n <= target:
         return list(values)
     step = (n - 1) / (target - 1)

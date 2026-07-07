@@ -783,6 +783,12 @@ class PronunciationTrainerGUI:
                 self.root.after(0, self._phrase_generation_failed, "Could not synthesize the reference audio.")
                 return
 
+            # These are plain-data fields (not Tk widgets), so - unlike widget
+            # access - they are intentionally written here on the worker thread.
+            # There is no lock: the is_generating / is_processing_audio guards
+            # serialize generation against analysis and the next generation, so
+            # only one worker ever writes them at a time, and _translate_into_panel
+            # re-reads current_phrase purely as a staleness check.
             self.current_phrase = phrase
             # Translation is filled later by _translate_into_panel (after the
             # reference plays); until then the panel shows its "-" placeholder
