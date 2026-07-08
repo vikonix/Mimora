@@ -129,6 +129,7 @@ REQUIRED_DISTS = [
     "torch", "transformers", "fastapi", "uvicorn", "llama-cpp-python",
     "torchaudio", "librosa", "scipy", "scikit-learn", "fastdtw",
     "phonemizer-fork", "python-Levenshtein", "panphon", "sentencepiece",
+    "ttkbootstrap", "pillow",
 ]
 
 
@@ -702,16 +703,21 @@ def step_cpu_llama(
     satisfied, so pip never reaches for the missing PyPI wheel.
     """
     index = LLAMA_INDEX_URL.format(series="cpu")
+    # Presence-only check: metadata can't tell a CPU build from a CUDA one, so
+    # any installed llama-cpp-python triggers the reinstall/skip prompt.
+    installed = is_installed("llama-cpp-python")
+    # When the user answers "[r]einstall" the command must actually reinstall:
+    # without --force-reinstall pip answers "Requirement already satisfied"
+    # and exits 0 without touching a possibly broken/CUDA install.
+    reinstall_flags = ["--upgrade", "--force-reinstall"] if installed else []
     # --only-binary forbids a source build: --extra-index-url merely *adds*
     # abetlen's index to PyPI, and pip picks the highest version across both.
     # PyPI's latest release is often newer than abetlen's prebuilt CPU wheel and
     # ships only an sdist, so without this flag pip would compile it from source.
     # --extra-index-url (not --index-url) keeps PyPI reachable for other deps.
-    cmd = PIP + ["install", "--no-cache-dir", "--only-binary", ":all:",
+    cmd = PIP + ["install", *reinstall_flags, "--no-cache-dir",
+                 "--only-binary", ":all:",
                  "llama-cpp-python", "--extra-index-url", index]
-    # Presence-only check: metadata can't tell a CPU build from a CUDA one, so
-    # any installed llama-cpp-python triggers the reinstall/skip prompt.
-    installed = is_installed("llama-cpp-python")
     desc = ("Install prebuilt CPU wheel of llama-cpp-python from abetlen's "
             "index (no CPU wheel exists on PyPI; avoids a doomed source build).")
     if installed:
@@ -876,18 +882,29 @@ def configure_hf_symlink_fallback(log: Logger) -> None:
     log.log("    Tip: enabling Windows Developer Mode lets HF use symlinks.")
 
 
+def prepare_hf_env(log: Logger) -> None:
+    """Point HF_HOME at model_cache/ and arm the Windows symlink/xet fallbacks.
+
+    Shared by every step that downloads from Hugging Face (prefetch and the
+    GGUF download - the latter also runs standalone under --skip-models, so it
+    cannot rely on the prefetch step having done this). Must run before
+    huggingface_hub is first imported: HF_HOME and HF_HUB_DISABLE_XET are read
+    at import time. Idempotent.
+    """
+    # Match mimora/config.py: HF_HOME points at the project's model_cache/.
+    MODEL_CACHE_DIR.mkdir(exist_ok=True)
+    os.environ["HF_HOME"] = str(MODEL_CACHE_DIR)
+    # Avoid the Windows symlink-privilege crash (WinError 1314).
+    configure_hf_symlink_fallback(log)
+
+
 def step_prefetch_models(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the Hugging Face models into model_cache/ (HF_HOME)."""
     log.banner("Step 6/9 - Pre-download Hugging Face models")
 
-    # Match mimora/config.py: HF_HOME points at the project's model_cache/.
-    MODEL_CACHE_DIR.mkdir(exist_ok=True)
-    os.environ["HF_HOME"] = str(MODEL_CACHE_DIR)
-    # Avoid the Windows symlink-privilege crash (WinError 1314) before any
-    # huggingface_hub import happens below.
-    configure_hf_symlink_fallback(log)
+    prepare_hf_env(log)
 
     repos = ", ".join(repo for repo, _ in HF_MODEL_REPOS)
     installed = all(hf_repo_fully_cached(repo) for repo, _ in HF_MODEL_REPOS)
@@ -926,6 +943,7 @@ def step_download_gguf(
 ) -> None:
     """Download the GGUF chat model into models/ if not already present."""
     log.banner("Step 7/9 - GGUF chat model")
+    prepare_hf_env(log)
     MODELS_DIR.mkdir(exist_ok=True)
     target = MODELS_DIR / GGUF_FILENAME
 

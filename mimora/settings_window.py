@@ -437,6 +437,17 @@ class SettingsWindow:
                                        values=tuple(field.choices()))
             combo.bind("<<ComboboxSelected>>",
                        lambda e, f=field, v=var: self._on_choice_selected(f, v))
+            # Tk's TCombobox class binding cycles a readonly combobox's value
+            # on mouse wheel and fires <<ComboboxSelected>> - so scrolling the
+            # settings column with the cursor over a combobox would silently
+            # change (and persist) that setting. "break" stops the class (and
+            # toplevel) bindings; the column is scrolled here instead, so the
+            # wheel behaves the same everywhere in the window.
+            def _wheel_scrolls_column(event):
+                self._on_mousewheel(event)
+                return "break"
+            for sequence in WHEEL_EVENTS:
+                combo.bind(sequence, _wheel_scrolls_column)
             self._vars[field.key] = var
             self._widgets[field.key] = combo
             if field.key == "voice":

@@ -32,7 +32,9 @@ def read_json(path: Path) -> dict:
             data = json.load(fh)
     except FileNotFoundError:
         return {}
-    except (OSError, json.JSONDecodeError) as exc:
+    # ValueError covers json.JSONDecodeError and UnicodeDecodeError (a file
+    # saved in a non-UTF-8 encoding must not crash startup either).
+    except (OSError, ValueError) as exc:
         print(f"[config] cannot read {path.name} ({exc}); using defaults",
               file=sys.stderr)
         return {}
@@ -109,7 +111,7 @@ def _rewrite_would_lose_content(path: Path, data: dict) -> bool:
         raw = path.read_text(encoding="utf-8").strip()
     except FileNotFoundError:
         return False
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return True  # existing but unreadable: do not risk overwriting it
     return raw not in ("", "{}")
 

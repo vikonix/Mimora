@@ -203,7 +203,7 @@ def save_calibration(acoustic_good: float, extra: Optional[Dict[str, Any]] = Non
 
 # Lazily-initialised model singletons (loaded once, reused for every analysis).
 _processor: Optional[Wav2Vec2Processor] = None
-_model: Optional[Wav2Vec2Model] = None          # embeddings (acoustic similarity)
+_model: Optional[Wav2Vec2Model] = None          # embeddings; alias of _model_ctc.wav2vec2
 _model_ctc: Optional[Wav2Vec2ForCTC] = None     # transcription (what was recognised)
 # Guards load_models() so concurrent callers cannot load the weights twice
 # (the public API does not require callers to serialize themselves).
@@ -238,11 +238,13 @@ def load_models() -> None:
         cfg = get_config()
         _processor = Wav2Vec2Processor.from_pretrained(cfg.model_name)
 
-        _model = Wav2Vec2Model.from_pretrained(cfg.model_name).to(cfg.device)
-        _model.eval()
-
         _model_ctc = Wav2Vec2ForCTC.from_pretrained(cfg.model_name).to(cfg.device)
         _model_ctc.eval()
+
+        # The CTC checkpoint already contains the full base encoder - reuse it
+        # for embeddings instead of loading a second identical copy of the
+        # weights (~1.2 GB of RAM/VRAM and a second load from disk).
+        _model = _model_ctc.wav2vec2
 
 
 def warm_up() -> None:
@@ -317,10 +319,18 @@ def _phonemize_word(word: str) -> tuple:
                                backend="espeak",
                                strip=True, preserve_punctuation=False).split())
     except Exception:
+        # A broken/missing espeak-ng must not fail the whole analysis, but it
+        # must not be silent either: with empty phonemes every word is skipped
+        # in compare_transcriptions and the score is quietly distorted.
+        logging.exception(f"[acoustic] espeak phonemization failed for "
+                          f"{word!r}; trying festival")
         try:
             return tuple(phonemize(word, language="en-us", backend="festival",
                                    strip=True, preserve_punctuation=False).split())
         except Exception:
+            logging.exception(f"[acoustic] festival fallback failed for "
+                              f"{word!r}; returning no phonemes - the word "
+                              f"will be excluded from scoring")
             return ()  # fallback if every backend fails
 
 

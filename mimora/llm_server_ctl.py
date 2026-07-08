@@ -11,6 +11,7 @@ shutdown. Phrase generation itself goes through LLMManager (llm.py).
 import logging
 import subprocess
 import sys
+import threading
 import time
 from typing import Optional
 
@@ -29,6 +30,9 @@ class LLMServerController:
     def __init__(self):
         self._process: Optional[subprocess.Popen] = None
         self._log_file = None
+        # shutdown() is reached from two threads at once when the app quits
+        # while start() is on a failure path (loader thread) - see shutdown().
+        self._shutdown_lock = threading.Lock()
 
     def start(self, llm_mgr: LLMManager) -> bool:
         """Launch the server subprocess and block until it responds.
@@ -97,20 +101,25 @@ class LLMServerController:
         """Terminate the subprocess (kill on timeout) and close its log file.
 
         Safe to call repeatedly and when the server was never started - every
-        step is a no-op then. Also called by start() on its failure paths.
+        step is a no-op then. Also called by start() on its failure paths, so
+        it can run concurrently on the loader thread and the Tk main thread
+        (quit_app); the lock makes the check-then-use on the process and log
+        file atomic - the loser of the race sees None and does nothing.
         """
-        if self._process is not None:
-            if self._process.poll() is None:
+        with self._shutdown_lock:
+            process, self._process = self._process, None
+            log_file, self._log_file = self._log_file, None
+
+        if process is not None:
+            if process.poll() is None:
                 logging.info("Terminating LLM server subprocess...")
-                self._process.terminate()
+                process.terminate()
                 try:
-                    self._process.wait(timeout=SERVER_TERMINATE_TIMEOUT_SEC)
+                    process.wait(timeout=SERVER_TERMINATE_TIMEOUT_SEC)
                 except subprocess.TimeoutExpired:
                     logging.warning("LLM server did not exit cleanly - killing it.")
-                    self._process.kill()
-                    self._process.wait()  # reap the killed process (avoids a zombie on POSIX)
-            self._process = None
+                    process.kill()
+                    process.wait()  # reap the killed process (avoids a zombie on POSIX)
 
-        if self._log_file is not None:
-            self._log_file.close()
-            self._log_file = None
+        if log_file is not None:
+            log_file.close()

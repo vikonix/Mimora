@@ -886,11 +886,17 @@ class PronunciationTrainerGUI:
         Text inputs, comboboxes, and scrollbars are left alone so clicking them
         keeps normal editing/selection behavior. Widgets created inside Tk
         itself (e.g. the combobox dropdown list) reach a bind_all handler as
-        path strings rather than instances - those are skipped too.
+        path strings rather than instances - those are skipped too. bind_all
+        fires for every toplevel of the app, so clicks in other windows (the
+        settings dialog) are ignored - stealing their keyboard focus would
+        break Tab navigation there and re-arm the main-window hotkeys while
+        the dialog looks active.
         """
         if isinstance(event.widget, str):
             return
         if isinstance(event.widget, (tk.Entry, tk.Text, ttk.Combobox, tk.Scrollbar)):
+            return
+        if event.widget.winfo_toplevel() is not self.root:
             return
         self.root.focus_set()
 
