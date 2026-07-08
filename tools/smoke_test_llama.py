@@ -44,6 +44,7 @@ Run it directly to check the currently installed build:
 from __future__ import annotations
 
 import argparse
+import ctypes
 import logging
 import os
 import site
@@ -97,24 +98,66 @@ def _say(message: str) -> None:
 
 
 def _register_native_dll_dirs() -> None:
-    """Make CUDA runtime DLLs from pip-installed nvidia-* packages findable.
+    """Make the CUDA runtime (libcudart / libcublas) findable before llama_cpp
+    is imported. A no-op for the CPU build, which needs nothing.
 
-    A CUDA build of llama-cpp-python needs cudart64_12.dll / cublas64_12.dll,
-    which ship in the nvidia-cuda-runtime-cu12 / nvidia-cublas-cu12 packages
-    under site-packages/nvidia/*/bin, NOT on the default DLL search path.
-    Without this, importing llama_cpp on a GPU machine fails with "Could not
-    find module llama.dll (or one of its dependencies)". llama_cpp loads
-    llama.dll with the legacy Windows search (PATH is consulted, the
-    os.add_dll_directory() dirs are not), so the dirs are added to PATH as well.
-    Mirrors the helper in detect_hardware.py / llm_server/server.py. A no-op off
-    Windows or when the nvidia packages are absent (the CPU build needs nothing).
+    Without a system CUDA Toolkit, these come from the nvidia-cuda-runtime-cu12
+    / nvidia-cublas-cu12 pip packages that install.py's GPU step installs (or,
+    when torch is a CUDA build, are already bundled inside torch/lib/). Windows
+    and Linux need different tricks because the two platforms resolve a native
+    library's own dependencies differently:
+
+    - Windows: llama.dll needs cudart64_12.dll / cublas64_12.dll on PATH. It is
+      loaded with the legacy Windows DLL search (PATH is consulted, the
+      os.add_dll_directory() dirs are not), so the pip packages'
+      site-packages/nvidia/*/bin folders are prepended to PATH.
+    - Linux: libllama.so needs libcudart.so.12 / libcublas.so.12 resolvable by
+      the dynamic linker. Setting os.environ["LD_LIBRARY_PATH"] from within an
+      already-running process has NO effect - glibc's loader reads it once at
+      process startup. Instead, each library is preloaded here with
+      ctypes.CDLL(path, mode=RTLD_GLOBAL): once a shared object with a given
+      SONAME is loaded anywhere in the process, the loader reuses that same
+      instance to satisfy any other module's dependency on that SONAME - which
+      is exactly what libllama.so asks for when it is imported next.
+
+    No-op on macOS (no CUDA there) or when no candidate library is found.
+    Mirrors the helper in detect_hardware.py / llm_server/server.py - keep all
+    three in sync.
     """
-    if sys.platform != "win32":
+    if sys.platform == "win32":
+        for site_dir in site.getsitepackages():
+            for bin_dir in Path(site_dir).glob("nvidia/*/bin"):
+                os.add_dll_directory(str(bin_dir))
+                os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ["PATH"]
         return
-    for site_dir in site.getsitepackages():
-        for bin_dir in Path(site_dir).glob("nvidia/*/bin"):
-            os.add_dll_directory(str(bin_dir))
-            os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ["PATH"]
+
+    if not sys.platform.startswith("linux"):
+        return  # macOS: no CUDA.
+
+    nvidia_dirs = [Path(site_dir) / "nvidia" for site_dir in site.getsitepackages()]
+    lib_dirs = [
+        nvidia_dir / pkg / "lib"
+        for nvidia_dir in nvidia_dirs
+        for pkg in ("cuda_runtime", "cublas")
+        if (nvidia_dir / pkg / "lib").is_dir()
+    ]
+    try:
+        import torch
+        lib_dirs.append(Path(torch.__file__).resolve().parent / "lib")
+    except ImportError:
+        pass
+
+    # cudart first: cublas's own dependency on it must already be resolvable
+    # when cublas itself gets preloaded next.
+    for stem in ("libcudart.so", "libcublas.so"):
+        for lib_dir in lib_dirs:
+            matches = sorted(lib_dir.glob(f"{stem}*")) if lib_dir.is_dir() else []
+            if matches:
+                try:
+                    ctypes.CDLL(str(matches[0]), mode=ctypes.RTLD_GLOBAL)
+                except OSError:
+                    pass
+                break
 
 
 def resolve_model(explicit: str | None) -> Path | None:

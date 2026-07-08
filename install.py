@@ -608,6 +608,87 @@ def step_check_vcredist(
     ])
 
 
+def _linux_tkinter_command() -> list[str] | None:
+    """Build the right install command for the detected Linux package manager.
+
+    Mirrors _linux_espeak_command(). Debian/Ubuntu call the package
+    python3-tk, Fedora python3-tkinter, Arch just tk.
+    """
+    if shutil.which("apt-get"):
+        return ["sudo", "apt-get", "install", "-y", "python3-tk"]
+    if shutil.which("dnf"):
+        return ["sudo", "dnf", "install", "-y", "python3-tkinter"]
+    if shutil.which("pacman"):
+        return ["sudo", "pacman", "-S", "--noconfirm", "tk"]
+    return None
+
+
+def step_check_tkinter(
+    log: Logger, confirmer: Confirmer, report: StepReport
+) -> None:
+    """Verify tkinter (main.py's GUI toolkit) is importable; offer to install it.
+
+    On Linux, tkinter is packaged separately from the interpreter itself
+    (python3-tk / python3-tkinter / tk) and pip cannot install it - a venv
+    built from a system Python that lacks the package fails at `import
+    tkinter` with a plain ModuleNotFoundError no matter how many pip
+    requirements succeed. Checked here, early, for the same reason as the
+    Windows VC++ runtime check: catch it before `python main.py` does. The
+    package installs into the base interpreter's stdlib location, which a venv
+    sees directly (venvs only isolate site-packages, not the stdlib), so it
+    becomes importable immediately with no venv recreation needed. Windows
+    Python installers and the python.org macOS installer both bundle Tcl/Tk
+    already, so in practice this only bites Linux (and Homebrew Python on
+    macOS).
+    """
+    log.banner("Step 0/9 - tkinter (GUI toolkit)")
+    if sys.platform == "win32":
+        log.log("    Windows Python installers bundle tkinter; skipping.")
+        report.add("tkinter", SKIPPED, "not Linux/Unix")
+        return
+
+    try:
+        import tkinter  # noqa: F401
+    except ImportError:
+        pass
+    else:
+        log.log("    tkinter is importable.")
+        report.add("tkinter", DONE, "present")
+        return
+
+    log.log("    tkinter is NOT importable (main.py needs it to open its window).")
+    system = platform.system()
+
+    if system == "Linux":
+        pkg_cmd = _linux_tkinter_command()
+        if pkg_cmd:
+            if confirmer.confirm("Install tkinter via the system package "
+                                 "manager (needs sudo).", " ".join(pkg_cmd)):
+                run_or_fail(pkg_cmd, log, report, "tkinter")
+            else:
+                report.add("tkinter", SKIPPED)
+            return
+        log.log("    Could not detect a supported package manager. Install "
+                "the 'tkinter' (or 'tk') package for your distribution "
+                "manually, then re-run install.py.")
+
+    elif system == "Darwin":
+        if shutil.which("brew"):
+            brew_cmd = ["brew", "install", "python-tk"]
+            if confirmer.confirm("Install tkinter via Homebrew (only needed "
+                                 "for Homebrew Python - the python.org "
+                                 "installer bundles it already).",
+                                 " ".join(brew_cmd)):
+                run_or_fail(brew_cmd, log, report, "tkinter")
+                return
+            report.add("tkinter", SKIPPED)
+            return
+        log.log("    Homebrew not found. If this is a python.org install, "
+                "tkinter should already be bundled - check your Python build.")
+
+    report.add("tkinter", MANUAL, "install separately, see log")
+
+
 def step_check_python(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
@@ -779,18 +860,22 @@ def step_gpu_llama(
     else:
         run_or_fail(cmd, log, report, "llama-cpp-python (CUDA)", series)
 
-    # On Windows with no system CUDA toolkit, the CUDA runtime DLLs come from
-    # these pip packages; detect_hardware.py / llm_server expect them on PATH.
-    if sys.platform == "win32":
+    # With no system CUDA Toolkit, the CUDA runtime libraries come from these
+    # pip packages; detect_hardware.py / llm_server / smoke_test_llama.py each
+    # register them (DLLs on PATH on Windows, ctypes-preloaded on Linux) before
+    # importing llama_cpp - see _register_nvidia_dll_dirs() in those files.
+    # Not needed on macOS (no CUDA there).
+    if sys.platform != "darwin":
         runtime_cmd = PIP + ["install",
                              "nvidia-cuda-runtime-cu12", "nvidia-cublas-cu12"]
         runtime_present = (is_installed("nvidia-cuda-runtime-cu12")
                            and is_installed("nvidia-cublas-cu12"))
-        rdesc = ("Install CUDA runtime DLLs (nvidia-cuda-runtime-cu12, "
-                 "nvidia-cublas-cu12) so llama-cpp can load on Windows.")
+        rdesc = ("Install CUDA runtime libraries (nvidia-cuda-runtime-cu12, "
+                 "nvidia-cublas-cu12) so llama-cpp can load without a system "
+                 "CUDA Toolkit.")
         if confirmer.confirm(rdesc, " ".join(runtime_cmd),
                              installed=runtime_present):
-            run_or_fail(runtime_cmd, log, report, "CUDA runtime DLLs")
+            run_or_fail(runtime_cmd, log, report, "CUDA runtime libraries")
 
 
 def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
@@ -1152,6 +1237,7 @@ def main() -> int:
         # (on Windows) verify the MSVC runtime torch/llama need at runtime.
         check_virtualenv(log, args)
         step_check_vcredist(log, confirmer, report)
+        step_check_tkinter(log, confirmer, report)
 
         # Step 1: Python version (hard min gate; warn above the tested max).
         step_check_python(log, confirmer, report)

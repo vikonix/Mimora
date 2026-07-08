@@ -25,6 +25,7 @@ model switching becomes a real product feature.
 """
 
 import argparse
+import ctypes
 import json
 import logging
 import os
@@ -44,26 +45,71 @@ from pydantic import BaseModel
 
 
 def _register_nvidia_dll_dirs() -> None:
-    """Make CUDA runtime DLLs from pip-installed nvidia-* packages findable.
+    """Make the CUDA runtime (libcudart / libcublas) findable before llama_cpp
+    is imported.
 
-    The CUDA wheel of llama-cpp-python needs cudart64_12.dll / cublas64_12.dll
-    but only searches its own lib/ dir and CUDA_PATH. With no system CUDA
-    Toolkit those DLLs come from the nvidia-cuda-runtime-cu12 /
-    nvidia-cublas-cu12 pip packages, which place them under
-    site-packages/nvidia/*/bin - register those dirs before importing
-    llama_cpp. No-op on non-Windows or when the packages are absent.
+    Without a system CUDA Toolkit, these come from the nvidia-cuda-runtime-cu12
+    / nvidia-cublas-cu12 pip packages that install.py's GPU step installs (or,
+    when torch is a CUDA build, are already bundled inside torch/lib/). Windows
+    and Linux need different tricks because the two platforms resolve a native
+    library's own dependencies differently:
 
-    llama_cpp loads llama.dll with winmode=RTLD_GLOBAL (0), which selects the
-    legacy Windows DLL search: PATH is consulted, os.add_dll_directory() dirs
-    are not - so the dirs must go on PATH (add_dll_directory is kept in case
-    a future llama_cpp switches to the default winmode).
+    - Windows: llama.dll needs cudart64_12.dll / cublas64_12.dll on PATH. It is
+      loaded with winmode=RTLD_GLOBAL (0), which selects the legacy DLL search
+      (PATH is consulted, os.add_dll_directory() dirs are not) - so the pip
+      packages' site-packages/nvidia/*/bin folders are prepended to PATH
+      (add_dll_directory is still called too, in case a future llama_cpp
+      switches winmode).
+    - Linux: libllama.so needs libcudart.so.12 / libcublas.so.12 resolvable by
+      the dynamic linker. Setting os.environ["LD_LIBRARY_PATH"] from within an
+      already-running process has NO effect - glibc's loader reads it once at
+      process startup, before this function ever runs. Instead, each library is
+      preloaded here with ctypes.CDLL(path, mode=RTLD_GLOBAL): once a shared
+      object with a given SONAME is loaded anywhere in the process, the loader
+      reuses that same instance to satisfy any other module's dependency on
+      that SONAME - which is exactly what libllama.so asks for when it is
+      imported next.
+
+    No-op on macOS (no CUDA there) or when no candidate library is found - the
+    subsequent `from llama_cpp import Llama` below then fails with its original
+    error.
+    (tools/detect_hardware.py and tools/smoke_test_llama.py carry the same
+    helper - keep all three in sync.)
     """
-    if sys.platform != "win32":
+    if sys.platform == "win32":
+        for site_dir in site.getsitepackages():
+            for bin_dir in Path(site_dir).glob("nvidia/*/bin"):
+                os.add_dll_directory(str(bin_dir))
+                os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ["PATH"]
         return
-    for site_dir in site.getsitepackages():
-        for bin_dir in Path(site_dir).glob("nvidia/*/bin"):
-            os.add_dll_directory(str(bin_dir))
-            os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ["PATH"]
+
+    if not sys.platform.startswith("linux"):
+        return  # macOS: no CUDA.
+
+    nvidia_dirs = [Path(site_dir) / "nvidia" for site_dir in site.getsitepackages()]
+    lib_dirs = [
+        nvidia_dir / pkg / "lib"
+        for nvidia_dir in nvidia_dirs
+        for pkg in ("cuda_runtime", "cublas")
+        if (nvidia_dir / pkg / "lib").is_dir()
+    ]
+    try:
+        import torch
+        lib_dirs.append(Path(torch.__file__).resolve().parent / "lib")
+    except ImportError:
+        pass
+
+    # cudart first: cublas's own dependency on it must already be resolvable
+    # when cublas itself gets preloaded next.
+    for stem in ("libcudart.so", "libcublas.so"):
+        for lib_dir in lib_dirs:
+            matches = sorted(lib_dir.glob(f"{stem}*")) if lib_dir.is_dir() else []
+            if matches:
+                try:
+                    ctypes.CDLL(str(matches[0]), mode=ctypes.RTLD_GLOBAL)
+                except OSError:
+                    pass
+                break
 
 
 _register_nvidia_dll_dirs()
