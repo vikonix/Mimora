@@ -176,6 +176,29 @@ The offline translator (NLLB-200) needs no extra step - its dependencies
 - **macOS** - `brew install espeak-ng`
 - **Linux** - `sudo apt-get install espeak-ng`
 
+### Emoji icons on Linux (mic button shows a blank box)
+
+The mic/record button (`mimora/ui.py` `draw_mic_button`) draws its state icons
+(`🎤` `🔴` `🔊` `⌛` `⚡`) as text on the Tk canvas, using the platform font
+(`mimora/ui_theme.py`, `"DejaVu Sans"` on Linux). DejaVu Sans covers `⚡`/`⌛`
+(older BMP symbols) but not `🎤`/`🔴`/`🔊` (astral-plane emoji), so on a fresh
+Linux install those three render as a blank/tofu box instead of the icon -
+it can look like the mic and speaker icons are simply missing.
+
+Fix: install a **monochrome** emoji font so Tk can render the glyphs as normal
+vector outlines (Tk canvas text cannot render color/bitmap emoji fonts like
+`fonts-noto-color-emoji`, which is the one `apt` installs by default):
+
+```bash
+sudo apt install fonts-symbola   # in Ubuntu's universe repo; enable it first if missing:
+                                  # sudo add-apt-repository universe && sudo apt update
+fc-cache -f -v
+```
+
+Then restart Mimora. If the icons are still missing after that, the fallback
+is to stop depending on emoji glyphs entirely and draw the icons as Canvas
+vector shapes in `draw_mic_button` instead.
+
 ### GPU support (recommended)
 
 The default `torch` and `llama-cpp-python` wheels are CPU-only. For NVIDIA GPUs:
