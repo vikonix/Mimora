@@ -195,9 +195,7 @@ sudo apt install fonts-symbola   # in Ubuntu's universe repo; enable it first if
 fc-cache -f -v
 ```
 
-Then restart Mimora. If the icons are still missing after that, the fallback
-is to stop depending on emoji glyphs entirely and draw the icons as Canvas
-vector shapes in `draw_mic_button` instead.
+Then restart Mimora.
 
 ### GPU support (recommended)
 
