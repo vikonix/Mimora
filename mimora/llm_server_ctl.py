@@ -30,9 +30,15 @@ class LLMServerController:
     def __init__(self):
         self._process: Optional[subprocess.Popen] = None
         self._log_file = None
-        # shutdown() is reached from two threads at once when the app quits
-        # while start() is on a failure path (loader thread) - see shutdown().
+        # Serializes subprocess creation (start) against teardown (shutdown)
+        # and makes shutdown() itself safe to reach from two threads at once
+        # (loader thread on a start() failure path + Tk thread in quit_app).
         self._shutdown_lock = threading.Lock()
+        # Set by shutdown(). A start() that loses the race to a quit_app
+        # shutdown must not spawn a server afterwards - nothing would ever
+        # terminate it. One-way by design: start() runs once per process
+        # (load_components) and is never retried after shutdown.
+        self._shutdown_requested = False
 
     def start(self, llm_mgr: LLMManager) -> bool:
         """Launch the server subprocess and block until it responds.
@@ -40,7 +46,7 @@ class LLMServerController:
         Readiness is probed through ``llm_mgr``, whose client is (re)pointed
         at the local server here - the same client the app then uses for
         generation. Returns False on a missing model path, an early subprocess
-        exit, or a startup timeout.
+        exit, a startup timeout, or when shutdown() has already been requested.
         """
         model_path = config.EXTERNAL_MODEL_PATH
         if not model_path:
@@ -58,16 +64,26 @@ class LLMServerController:
         ]
         log_path = config.LLM_SERVER_LOG_FILE
         logging.info(f"Starting LLM server: {' '.join(cmd)}")
-        self._log_file = open(log_path, "w", encoding="utf-8", buffering=1)
-        try:
-            self._process = subprocess.Popen(cmd, stdout=self._log_file, stderr=self._log_file)
-        except Exception:
-            # Don't leak the just-opened log file when the launch itself fails
-            # (e.g. a missing interpreter); the exception still propagates to
-            # the caller's error handling.
-            self._log_file.close()
-            self._log_file = None
-            raise
+        # Creation runs under the same lock as shutdown(), so the two cannot
+        # interleave: either shutdown() runs first and the flag stops the
+        # launch, or the subprocess is fully published before shutdown() gets
+        # the lock and terminates it. Without this, a quit during startup
+        # could leave a freshly spawned server orphaned.
+        with self._shutdown_lock:
+            if self._shutdown_requested:
+                logging.info("LLM server start aborted: shutdown requested.")
+                return False
+            self._log_file = open(log_path, "w", encoding="utf-8", buffering=1)
+            try:
+                self._process = subprocess.Popen(
+                    cmd, stdout=self._log_file, stderr=self._log_file)
+            except Exception:
+                # Don't leak the just-opened log file when the launch itself
+                # fails (e.g. a missing interpreter); the exception still
+                # propagates to the caller's error handling.
+                self._log_file.close()
+                self._log_file = None
+                raise
 
         deadline = time.time() + config.LOCAL_SERVER_STARTUP_TIMEOUT
         llm_mgr.init_client(base_url=config.LOCAL_SERVER_URL,
@@ -104,9 +120,12 @@ class LLMServerController:
         step is a no-op then. Also called by start() on its failure paths, so
         it can run concurrently on the loader thread and the Tk main thread
         (quit_app); the lock makes the check-then-use on the process and log
-        file atomic - the loser of the race sees None and does nothing.
+        file atomic - the loser of the race sees None and does nothing. Also
+        flags the controller so a start() still ahead of its Popen call aborts
+        instead of spawning a server nothing would terminate.
         """
         with self._shutdown_lock:
+            self._shutdown_requested = True
             process, self._process = self._process, None
             log_file, self._log_file = self._log_file, None
 

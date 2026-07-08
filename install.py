@@ -708,8 +708,13 @@ def step_cpu_llama(
     installed = is_installed("llama-cpp-python")
     # When the user answers "[r]einstall" the command must actually reinstall:
     # without --force-reinstall pip answers "Requirement already satisfied"
-    # and exits 0 without touching a possibly broken/CUDA install.
-    reinstall_flags = ["--upgrade", "--force-reinstall"] if installed else []
+    # and exits 0 without touching a possibly broken/CUDA install. --no-deps
+    # keeps the forced reinstall from also dragging every dependency to its
+    # newest version (e.g. numpy past the <2.5 cap in requirements.txt, which
+    # the presence-only requirements step would then never downgrade back);
+    # the dependencies are already present from the prior install.
+    reinstall_flags = (["--upgrade", "--force-reinstall", "--no-deps"]
+                       if installed else [])
     # --only-binary forbids a source build: --extra-index-url merely *adds*
     # abetlen's index to PyPI, and pip picks the highest version across both.
     # PyPI's latest release is often newer than abetlen's prebuilt CPU wheel and
@@ -744,18 +749,25 @@ def step_gpu_llama(
         return
 
     index = LLAMA_INDEX_URL.format(series=series)
+    # Presence-only check: metadata can't tell a CPU build from a CUDA one, so
+    # any installed llama-cpp-python triggers the reinstall/skip prompt.
+    installed = is_installed("llama-cpp-python")
+    # --no-deps on the reinstall path: --force-reinstall would otherwise drag
+    # every dependency to its newest version (e.g. numpy past the <2.5 cap in
+    # requirements.txt, which the presence-only requirements step would then
+    # never downgrade back); the dependencies are already present from the
+    # prior install. On a fresh install the deps must come along, and the
+    # later requirements step enforces the caps anyway.
+    reinstall_flags = ["--no-deps"] if installed else []
     # No version pin: pip picks the newest wheel published in this index.
     # --only-binary forbids a source build: --extra-index-url merely *adds*
     # abetlen's index to PyPI, and pip picks the highest version across both.
     # A newer PyPI sdist would otherwise be compiled from source instead of
     # using the prebuilt CUDA wheel from abetlen's index.
     # --extra-index-url (not --index-url) keeps PyPI available for deps.
-    cmd = PIP + ["install", "--upgrade", "--force-reinstall", "--no-cache-dir",
-                 "--only-binary", ":all:",
+    cmd = PIP + ["install", "--upgrade", "--force-reinstall", *reinstall_flags,
+                 "--no-cache-dir", "--only-binary", ":all:",
                  "llama-cpp-python", "--extra-index-url", index]
-    # Presence-only check: metadata can't tell a CPU build from a CUDA one, so
-    # any installed llama-cpp-python triggers the reinstall/skip prompt.
-    installed = is_installed("llama-cpp-python")
     desc = (f"Install prebuilt CUDA wheel of llama-cpp-python from the {series} "
             f"index (newest version available there).")
     if installed:
