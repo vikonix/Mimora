@@ -25,7 +25,7 @@ from mimora.ui_theme import (
     FONT_SIZE_CAPTION,
     FONT_SIZE_PHRASE,
     FONT_SIZE_SCORE,
-    FONT_SIZE_TRANSLATION,
+    FONT_SIZE_SUBTITLE,
     THEME,
     Tooltip,
 )
@@ -109,7 +109,7 @@ class HeroCard:
         # refresh_translation_ui() when a translation language is (de)selected;
         # "-" stands in until a translation arrives with the next phrase.
         self.translation_label = tk.Label(
-            self.frame, text="-", font=(FONT_FAMILY, FONT_SIZE_TRANSLATION),
+            self.frame, text="-", font=(FONT_FAMILY, FONT_SIZE_SUBTITLE),
             fg=THEME["text_dim"], bg=THEME["bg_card"], wraplength=560,
             justify=tk.CENTER)
         # Wrap the translation to the label's real width so a long translation

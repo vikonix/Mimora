@@ -56,16 +56,26 @@ _FONT_FAMILIES = {
 }
 FONT_FAMILY = _FONT_FAMILIES.get(platform.system(), "DejaVu Sans")  # Linux/other
 
-# Typographic scale (Tk points). Kept in one place so the redesign pulls from a
-# single ladder instead of scattering magic sizes across widgets. Tk points
-# render larger in pixels than the original design's CSS px (Windows ~1.3x),
-# so the 21pt phrase lands near the original 27px hero text.
-FONT_SIZE_PHRASE = 21        # hero practice phrase (original design ~27px)
-FONT_SIZE_SCORE = 26         # big verdict score in the score row (added in the
-                             # hero-card stage; defined here to keep the scale whole)
-FONT_SIZE_TRANSLATION = 11   # translation line under the phrase
-FONT_SIZE_BODY = 10          # normal body text
-FONT_SIZE_CAPTION = 8        # sublabels, captions, legends
+# Monospace family for aligned/technical text (phoneme rows in the history
+# panel). Kept next to FONT_FAMILY so the one hard-coded face lives here too.
+FONT_FAMILY_MONO = "Consolas"
+
+# Typographic scale (Tk points), ordered large -> small. This is the single
+# source of truth for every font size in the UI: widgets must pull from these
+# names instead of hard-coding numbers, so the whole interface can be rescaled
+# from one place. Tk points render larger in pixels than the original design's
+# CSS px (Windows ~1.3x), so e.g. the 16pt phrase lands near the original hero
+# text. Sizes that share a value are still kept as separate, role-named
+# constants so each can be tuned independently later.
+FONT_SIZE_SCORE = 26         # hero verdict score - the single largest element
+FONT_SIZE_EMOJI = 20         # emoji glyph drawn on the round record button
+FONT_SIZE_PHRASE = 16        # hero practice phrase (the sentence being trained)
+FONT_SIZE_ICON = 15          # header gear / settings glyph
+FONT_SIZE_TITLE = 14         # header brand title ("MIMORA + language")
+FONT_SIZE_SUBTITLE = 11      # emphasized secondary text: translation line, history rows
+FONT_SIZE_BODY = 10          # default body / label text
+FONT_SIZE_SMALL = 9          # compact controls: status bar, settings fields and buttons
+FONT_SIZE_CAPTION = 8        # captions, help text, legends, sublabels
 
 # The wheel-event sequences a scrollable widget must listen to: <MouseWheel>
 # covers Windows and macOS; X11 (Linux) delivers Button-4/Button-5 instead.

@@ -33,7 +33,15 @@ from mimora import config
 # Reuse the main view's resolved palette, platform font and wheel-event
 # helpers so the settings window matches the app theme exactly and scrolls
 # on every platform (ui.py builds/hosts all of these).
-from mimora.ui import FONT_FAMILY, THEME, WHEEL_EVENTS, wheel_scroll_units
+from mimora.ui import (
+    FONT_FAMILY,
+    FONT_SIZE_BODY,
+    FONT_SIZE_CAPTION,
+    FONT_SIZE_SMALL,
+    THEME,
+    WHEEL_EVENTS,
+    wheel_scroll_units,
+)
 
 
 @dataclass(frozen=True)
@@ -384,7 +392,7 @@ class SettingsWindow:
 
     def _add_section_header(self, parent, title: str, row: int) -> int:
         pad_top = 14 if row else 10
-        tk.Label(parent, text=title, font=(FONT_FAMILY, 10, "bold"),
+        tk.Label(parent, text=title, font=(FONT_FAMILY, FONT_SIZE_BODY, "bold"),
                  fg=THEME["accent"], bg=THEME["bg_main"]).grid(
             row=row, column=0, columnspan=2, sticky=tk.W,
             padx=14, pady=(pad_top, 4))
@@ -400,7 +408,7 @@ class SettingsWindow:
             control = tk.Checkbutton(
                 parent, text=field.label, variable=var,
                 command=lambda f=field, v=var: self._emit(f, bool(v.get())),
-                font=(FONT_FAMILY, 9), fg=THEME["text"], bg=THEME["bg_main"],
+                font=(FONT_FAMILY, FONT_SIZE_SMALL), fg=THEME["text"], bg=THEME["bg_main"],
                 activebackground=THEME["bg_main"],
                 activeforeground=THEME["text"],
                 selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
@@ -408,7 +416,7 @@ class SettingsWindow:
             control.grid(row=row, column=0, columnspan=2, sticky=tk.W,
                          padx=14, pady=2)
         else:
-            tk.Label(parent, text=field.label, font=(FONT_FAMILY, 9),
+            tk.Label(parent, text=field.label, font=(FONT_FAMILY, FONT_SIZE_SMALL),
                      fg=THEME["text_dim"], bg=THEME["bg_main"],
                      wraplength=self._LABEL_WRAP, justify=tk.LEFT,
                      anchor=tk.W).grid(
@@ -418,7 +426,7 @@ class SettingsWindow:
         row += 1
 
         if field.help:
-            tk.Label(parent, text=field.help, font=(FONT_FAMILY, 8),
+            tk.Label(parent, text=field.help, font=(FONT_FAMILY, FONT_SIZE_CAPTION),
                      fg=THEME["text_muted"], bg=THEME["bg_main"],
                      wraplength=self._HELP_WRAP, justify=tk.LEFT).grid(
                 row=row, column=0 if field.kind == "bool" else 1,
@@ -468,7 +476,7 @@ class SettingsWindow:
             var = tk.StringVar(value=self._display_value(field, value))
             entry = tk.Entry(
                 parent, textvariable=var, width=16,
-                font=(FONT_FAMILY, 9), bg=THEME["bg_accent"],
+                font=(FONT_FAMILY, FONT_SIZE_SMALL), bg=THEME["bg_accent"],
                 fg=THEME["text_accent"], insertbackground=THEME["text_bright"],
                 bd=0, highlightthickness=1,
                 highlightbackground=THEME["border"],
@@ -484,7 +492,7 @@ class SettingsWindow:
             var = tk.StringVar(value=str(value))
             entry = tk.Entry(
                 frame, textvariable=var, state="readonly",
-                font=(FONT_FAMILY, 8), readonlybackground=THEME["bg_panel"],
+                font=(FONT_FAMILY, FONT_SIZE_CAPTION), readonlybackground=THEME["bg_panel"],
                 fg=THEME["text_dim"], bd=0, highlightthickness=1,
                 highlightbackground=THEME["border"])
             entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
@@ -492,7 +500,7 @@ class SettingsWindow:
             entry.xview_moveto(1.0)
             tk.Button(frame, text="Browse…",
                       command=lambda f=field: self._browse_path(f),
-                      font=(FONT_FAMILY, 8), bg=THEME["bg_accent"],
+                      font=(FONT_FAMILY, FONT_SIZE_CAPTION), bg=THEME["bg_accent"],
                       fg=THEME["text_accent"],
                       activebackground=THEME["bg_accent_active"],
                       activeforeground=THEME["text_bright"],
@@ -508,7 +516,7 @@ class SettingsWindow:
         """Add the Listen preview button next to the voice combobox."""
         self._preview_btn = tk.Button(
             frame, text="▶ Listen", command=self._preview_voice,
-            font=(FONT_FAMILY, 8), bg=THEME["bg_accent"],
+            font=(FONT_FAMILY, FONT_SIZE_CAPTION), bg=THEME["bg_accent"],
             fg=THEME["text_accent"],
             activebackground=THEME["bg_accent_active"],
             activeforeground=THEME["text_bright"],
@@ -525,13 +533,13 @@ class SettingsWindow:
         # Hints stack on their own rows above the button row, so a long hint
         # (e.g. the restart notice) never competes with the buttons for
         # horizontal space and cannot shrink the "Restart now" button.
-        self._status_label = tk.Label(footer, text="", font=(FONT_FAMILY, 8),
+        self._status_label = tk.Label(footer, text="", font=(FONT_FAMILY, FONT_SIZE_CAPTION),
                                       fg=THEME["bad"], bg=THEME["bg_panel"],
                                       wraplength=self._WIDTH - 24,
                                       justify=tk.LEFT)
         self._status_label.pack(side=tk.TOP, anchor=tk.W, padx=12, pady=(6, 0))
 
-        self._restart_label = tk.Label(footer, text="", font=(FONT_FAMILY, 8),
+        self._restart_label = tk.Label(footer, text="", font=(FONT_FAMILY, FONT_SIZE_CAPTION),
                                        fg=THEME["warn"], bg=THEME["bg_panel"],
                                        wraplength=self._WIDTH - 24,
                                        justify=tk.LEFT)
@@ -543,7 +551,7 @@ class SettingsWindow:
 
         # "Default" resets everything to the built-in defaults (confirmed).
         tk.Button(button_row, text="Default", command=self._reset_defaults,
-                  font=(FONT_FAMILY, 9), bg=THEME["bg_accent"],
+                  font=(FONT_FAMILY, FONT_SIZE_SMALL), bg=THEME["bg_accent"],
                   fg=THEME["text_accent"],
                   activebackground=THEME["bg_accent_active"],
                   activeforeground=THEME["text_bright"],
@@ -551,7 +559,7 @@ class SettingsWindow:
             side=tk.LEFT, padx=(12, 0), pady=6)
 
         tk.Button(button_row, text="Close", command=self._on_close,
-                  font=(FONT_FAMILY, 9, "bold"), bg=THEME["bg_button"],
+                  font=(FONT_FAMILY, FONT_SIZE_SMALL, "bold"), bg=THEME["bg_button"],
                   fg=THEME["text_button"],
                   activebackground=THEME["bg_button_active"],
                   activeforeground=THEME["text"],
@@ -560,7 +568,7 @@ class SettingsWindow:
 
         # "Cancel" undoes everything changed in this window session and closes.
         tk.Button(button_row, text="Cancel", command=self._cancel,
-                  font=(FONT_FAMILY, 9), bg=THEME["bg_accent"],
+                  font=(FONT_FAMILY, FONT_SIZE_SMALL), bg=THEME["bg_accent"],
                   fg=THEME["text_accent"],
                   activebackground=THEME["bg_accent_active"],
                   activeforeground=THEME["text_bright"],
@@ -573,7 +581,7 @@ class SettingsWindow:
         # the dark theme (light orange fill under white text).
         self._restart_btn = tk.Button(
             button_row, text="Restart now", command=self._restart_now,
-            font=(FONT_FAMILY, 9, "bold"), bg=THEME["bg_button"],
+            font=(FONT_FAMILY, FONT_SIZE_SMALL, "bold"), bg=THEME["bg_button"],
             fg=THEME["text_button"],
             activebackground=THEME["bg_button_active"],
             activeforeground=THEME["text"],

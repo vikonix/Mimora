@@ -13,7 +13,14 @@ from tkinter import scrolledtext
 from typing import Callable
 
 from mimora import config
-from mimora.ui_theme import FONT_FAMILY, THEME, Tooltip, bind_hover
+from mimora.ui_theme import (
+    FONT_FAMILY,
+    FONT_SIZE_BODY,
+    FONT_SIZE_SMALL,
+    THEME,
+    Tooltip,
+    bind_hover,
+)
 
 
 class PracticePanel:
@@ -47,14 +54,14 @@ class PracticePanel:
         self._caption = tk.Button(
             header, text="▾ Practice text:",
             command=self._on_caption_clicked,
-            font=(FONT_FAMILY, 10, "bold"), fg=THEME["text_dim"], bg=THEME["bg_main"],
+            font=(FONT_FAMILY, FONT_SIZE_BODY, "bold"), fg=THEME["text_dim"], bg=THEME["bg_main"],
             activebackground=THEME["bg_main"], activeforeground=THEME["text"],
             bd=0, padx=0, pady=0, cursor="hand2")
         self._caption.pack(side=tk.LEFT)
         bind_hover(self._caption,
-                   enter={"font": (FONT_FAMILY, 10, "bold", "underline"),
+                   enter={"font": (FONT_FAMILY, FONT_SIZE_BODY, "bold", "underline"),
                           "fg": THEME["text"]},
-                   leave={"font": (FONT_FAMILY, 10, "bold"),
+                   leave={"font": (FONT_FAMILY, FONT_SIZE_BODY, "bold"),
                           "fg": THEME["text_dim"]})
         Tooltip(self._caption, "Show/hide the practice-text editor")
 
@@ -64,13 +71,13 @@ class PracticePanel:
         # (reviewers kept reading the box as static help text).
         self._paste_btn = tk.Button(
             header, text="Paste", command=self._paste,
-            font=(FONT_FAMILY, 9), bg=THEME["bg_accent"], fg=THEME["text_accent"],
+            font=(FONT_FAMILY, FONT_SIZE_SMALL), bg=THEME["bg_accent"], fg=THEME["text_accent"],
             activebackground=THEME["bg_accent_active"], activeforeground=THEME["text_bright"],
             bd=0, width=10, padx=8, pady=1, cursor="hand2")
         self._paste_btn.pack(side=tk.LEFT, padx=(10, 0))
         self._clear_btn = tk.Button(
             header, text="Clear text", command=self._clear,
-            font=(FONT_FAMILY, 9), bg=THEME["bg_accent"], fg=THEME["text_accent"],
+            font=(FONT_FAMILY, FONT_SIZE_SMALL), bg=THEME["bg_accent"], fg=THEME["text_accent"],
             activebackground=THEME["bg_accent_active"], activeforeground=THEME["text_bright"],
             bd=0, width=10, padx=8, pady=1, cursor="hand2")
         self._clear_btn.pack(side=tk.LEFT, padx=(6, 0))
@@ -82,12 +89,12 @@ class PracticePanel:
         # collapsed; toggle swaps it against the editor and the Paste/Clear
         # buttons, and refreshes its text on each collapse.
         self._preview = tk.Label(
-            header, text="", font=(FONT_FAMILY, 9, "italic"),
+            header, text="", font=(FONT_FAMILY, FONT_SIZE_SMALL, "italic"),
             fg=THEME["text_muted"], bg=THEME["bg_main"], anchor=tk.W)
 
         self.text = scrolledtext.ScrolledText(
             self.frame, bg=THEME["bg_panel"], fg=THEME["text"], insertbackground=THEME["text_bright"],
-            font=(FONT_FAMILY, 10), wrap=tk.WORD, bd=0, height=7,
+            font=(FONT_FAMILY, FONT_SIZE_BODY), wrap=tk.WORD, bd=0, height=7,
             highlightthickness=1, highlightbackground=THEME["border"], highlightcolor=THEME["accent"],
             padx=10, pady=8)
         self.text.pack(fill=tk.X, pady=4)

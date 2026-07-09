@@ -91,7 +91,7 @@ class ProgressRing(tk.Frame):
 
         # Big average number, with the "/ max" suffix just below it. Font sizes
         # scale from the widget so the ring stays legible at other sizes.
-        value_font = (FONT_FAMILY, max(10, int(size * 0.28)), "bold")
+        value_font = (FONT_FAMILY, max(10, int(size * 0.25)), "bold")
         sub_font = (FONT_FAMILY, max(7, int(size * 0.13)))
         self._value_item = self.canvas.create_text(
             size / 2, size * 0.44, text="", fill=value_color, font=value_font)

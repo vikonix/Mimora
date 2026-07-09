@@ -12,6 +12,9 @@ import tkinter as tk
 
 from mimora.ui_theme import (
     FONT_FAMILY,
+    FONT_FAMILY_MONO,
+    FONT_SIZE_BODY,
+    FONT_SIZE_SUBTITLE,
     THEME,
     WHEEL_EVENTS,
     wheel_scroll_units,
@@ -67,7 +70,7 @@ class HistoryPanel:
     def _show_placeholder(self):
         self._placeholder = tk.Label(
             self.rows_frame, text="Your attempts will appear here.",
-            font=(FONT_FAMILY, 10, "italic"), fg=THEME["text_muted"],
+            font=(FONT_FAMILY, FONT_SIZE_BODY, "italic"), fg=THEME["text_muted"],
             bg=THEME["bg_panel"], anchor="w")
         self._placeholder.pack(fill=tk.X, padx=12, pady=12)
 
@@ -134,7 +137,7 @@ class HistoryPanel:
 
         if kind == "error":
             tk.Label(row, text=entry.get("text", ""), fg=THEME["bad"],
-                     bg=THEME["bg_panel"], font=(FONT_FAMILY, 10), anchor="w",
+                     bg=THEME["bg_panel"], font=(FONT_FAMILY, FONT_SIZE_BODY), anchor="w",
                      justify=tk.LEFT, wraplength=520).pack(fill=tk.X, padx=4, pady=2)
             return
 
@@ -150,7 +153,7 @@ class HistoryPanel:
         else:  # unscored ("none" engine): no number, no verdict colour.
             chip_text, chip_color = "--", THEME["text_dim"]
         chip = tk.Label(header, text=chip_text, fg=chip_color, bg=THEME["bg_panel"],
-                        font=(FONT_FAMILY, 11, "bold"), padx=8, pady=1,
+                        font=(FONT_FAMILY, FONT_SIZE_SUBTITLE, "bold"), padx=8, pady=1,
                         highlightthickness=1, highlightbackground=chip_color)
         chip.pack(side=tk.LEFT)
 
@@ -163,10 +166,10 @@ class HistoryPanel:
         else:  # "same", or no earlier attempt to compare against.
             arrow_text, arrow_color = "–", THEME["text_dim"]
         tk.Label(header, text=arrow_text, fg=arrow_color, bg=THEME["bg_panel"],
-                 font=(FONT_FAMILY, 11)).pack(side=tk.LEFT, padx=(8, 8))
+                 font=(FONT_FAMILY, FONT_SIZE_SUBTITLE)).pack(side=tk.LEFT, padx=(8, 8))
 
         tk.Label(header, text=entry.get("phrase") or "-", fg=THEME["text_emph"],
-                 bg=THEME["bg_panel"], font=(FONT_FAMILY, 11), anchor="w",
+                 bg=THEME["bg_panel"], font=(FONT_FAMILY, FONT_SIZE_SUBTITLE), anchor="w",
                  justify=tk.LEFT).pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         detail = tk.Frame(row, bg=THEME["bg_panel"])
@@ -194,13 +197,13 @@ class HistoryPanel:
         """
         txt = tk.Text(parent, bg=THEME["bg_panel"], fg=THEME["text"], bd=0,
                       highlightthickness=0, wrap=tk.WORD, height=1, cursor="arrow",
-                      font=(FONT_FAMILY, 10), padx=4, pady=0, spacing3=2)
+                      font=(FONT_FAMILY, FONT_SIZE_BODY), padx=4, pady=0, spacing3=2)
         txt.tag_configure("label", foreground=THEME["text_dim"])
         txt.tag_configure("good", foreground=THEME["good"])
         txt.tag_configure("ok", foreground=THEME["text_dim"])
-        txt.tag_configure("bad", foreground=THEME["bad"], font=(FONT_FAMILY, 10, "bold"))
+        txt.tag_configure("bad", foreground=THEME["bad"], font=(FONT_FAMILY, FONT_SIZE_BODY, "bold"))
         txt.tag_configure("text", foreground=THEME["text_emph"])
-        txt.tag_configure("mono", foreground=THEME["text_dim"], font=("Consolas", 10))
+        txt.tag_configure("mono", foreground=THEME["text_dim"], font=(FONT_FAMILY_MONO, FONT_SIZE_BODY))
 
         if entry.get("kind") == "unscored":
             txt.insert(tk.END, "Heard: ", "label")

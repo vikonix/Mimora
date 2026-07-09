@@ -42,7 +42,12 @@ import tkinter as tk
 from mimora.ui_theme import (  # noqa: F401  (re-exported for settings_window)
     BOOTSTRAP_THEME,
     FONT_FAMILY,
+    FONT_SIZE_BODY,
     FONT_SIZE_CAPTION,
+    FONT_SIZE_EMOJI,
+    FONT_SIZE_ICON,
+    FONT_SIZE_SMALL,
+    FONT_SIZE_TITLE,
     THEME,
     WHEEL_EVENTS,
     bind_hover,
@@ -195,7 +200,7 @@ class TrainerView:
         window without clipping the last button.
         """
         button = tk.Button(parent, text=text, command=command,
-                           font=(FONT_FAMILY, 10, "bold"),
+                           font=(FONT_FAMILY, FONT_SIZE_BODY, "bold"),
                            bg=THEME["bg_button"], fg=THEME["text_button"],
                            activebackground=THEME["bg_button_active"], activeforeground=THEME["text"],
                            bd=0, padx=padx, pady=6, cursor="hand2",
@@ -237,10 +242,10 @@ class TrainerView:
         # subtitle. The language reads from config.TARGET_LANGUAGE so the title
         # stays the single source of truth (replacing the old language chip).
         tk.Label(header_frame, text=f"MIMORA · {config.TARGET_LANGUAGE}",
-                 font=(FONT_FAMILY, 14, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
+                 font=(FONT_FAMILY, FONT_SIZE_TITLE, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
 
         tk.Label(header_frame, text="- Pronunciation Trainer",
-                 font=(FONT_FAMILY, 10, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(
+                 font=(FONT_FAMILY, FONT_SIZE_BODY, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(
                      side=tk.LEFT, padx=(0, 0), pady=(6, 0))
 
         # Settings gear at the right edge of the header. Opens the settings
@@ -251,7 +256,7 @@ class TrainerView:
         # character rather than a control.
         gear = tk.Button(header_frame, text="⚙",
                          command=self._cb.on_settings_clicked,
-                         font=(FONT_FAMILY, 15), bg=THEME["bg_main"],
+                         font=(FONT_FAMILY, FONT_SIZE_ICON), bg=THEME["bg_main"],
                          fg=THEME["text_dim"],
                          activebackground=THEME["bg_accent_active"],
                          activeforeground=THEME["text_bright"],
@@ -266,7 +271,7 @@ class TrainerView:
         self.status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
         self.status_label = tk.Label(self.status_bar, text="Starting...",
-                                     font=(FONT_FAMILY, 9), fg=THEME["ready"], bg=THEME["bg_panel"])
+                                     font=(FONT_FAMILY, FONT_SIZE_SMALL), fg=THEME["ready"], bg=THEME["bg_panel"])
         self.status_label.pack(side=tk.LEFT, padx=15, pady=4)
 
         # The session tally (distinct-phrase count + running average) used to
@@ -418,7 +423,7 @@ class TrainerView:
                                     fill="", outline=outline_color, width=3)
         self.btn_canvas.create_oval(cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner,
                                     fill=bg_color, outline="")
-        self.btn_canvas.create_text(cx, cy, text=emoji, font=(FONT_FAMILY, 20), fill=THEME["text_bright"])
+        self.btn_canvas.create_text(cx, cy, text=emoji, font=(FONT_FAMILY, FONT_SIZE_EMOJI), fill=THEME["text_bright"])
 
     def set_record_level(self, level: float):
         """Redraw the recording button with a level-driven red fill.
