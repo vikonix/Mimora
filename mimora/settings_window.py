@@ -285,6 +285,9 @@ class SettingsWindow:
         # already during construction.
         self._build_footer()
         self._build_body()
+        # Phoneme-only fields start greyed out unless the phoneme engine is the
+        # one currently selected (see _sync_engine_dependent_state).
+        self._sync_engine_dependent_state()
         # Snapshot for Cancel: the values every field had when the window
         # opened (committed values are filled during _build_body).
         self._opened_values = dict(self._committed)
@@ -331,6 +334,11 @@ class SettingsWindow:
             self._committed[key] = value
         finally:
             self._updating = False
+        # An engine change pushed in from elsewhere (main window, or the
+        # Cancel/Default replay that goes through set_value) must re-evaluate
+        # which engine-specific fields are inert and grey them accordingly.
+        if key == "engine":
+            self._sync_engine_dependent_state()
 
     # ------------------------------------------------------------------
     # Window construction
@@ -611,6 +619,8 @@ class SettingsWindow:
         self._emit(field, value)
         if field.key == "english_accent":
             self._apply_accent_change(value)
+        elif field.key == "engine":
+            self._sync_engine_dependent_state()
 
     def _apply_accent_change(self, accent: str):
         """Accent switched: repoint the voice list and reset to its default.
@@ -629,6 +639,25 @@ class SettingsWindow:
         self._vars["voice"].set(default_voice)
         self._emit(self._fields["voice"], default_voice)
         self._sync_preview_state()
+
+    def _sync_engine_dependent_state(self):
+        """Grey out phoneme-only fields unless the phoneme engine is selected.
+
+        "Phoneme anchor mode" (phoneme_good_mode) is handed only to the phoneme
+        engine in engine.configure(); the acoustic engine ignores it and the
+        "none" engine does no scoring at all. Disabling its combobox for any
+        non-phoneme engine signals that the setting is inert for the current
+        choice. The selected (combobox) value drives this, so the field greys
+        the moment the engine is switched, before the pending restart applies.
+        """
+        combo = self._widgets.get("phoneme_good_mode")
+        if combo is None:
+            return
+        engine = self._vars["engine"].get() if "engine" in self._vars \
+            else config.ENGINE
+        # A readonly combobox toggles between "readonly" (usable, closed list)
+        # and "disabled" (greyed); "normal" would wrongly allow free typing.
+        combo.configure(state="readonly" if engine == "phoneme" else "disabled")
 
     # Footer hint shown while the preview button is disabled; kept as a
     # constant so _sync_preview_state can recognize (and clear) its own text.
