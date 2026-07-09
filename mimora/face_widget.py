@@ -116,6 +116,7 @@ class FaceWidget(tk.Canvas):
         fps: int = 30,
         attack: float = 0.6,
         release: float = 0.15,
+        face_offset: float = 0.0,
     ) -> None:
         """Create the face.
 
@@ -141,6 +142,11 @@ class FaceWidget(tk.Canvas):
             release: smoothing factor used while the mouth is *closing*. Lower
                 than ``attack`` on purpose -- mouths close more slowly than
                 they open, which reads as natural rather than twitchy.
+            face_offset: vertical shift of the facial features (eyes, eyebrows
+                and mouth) relative to the head disc, as a fraction of the head
+                radius. Positive moves the features down, negative up; ``0.0``
+                (the default) centres them as before. The disc itself does not
+                move, so this repositions the face *within* the circle.
         """
         super().__init__(parent, width=size, height=size, bg=bg,
                          highlightthickness=0, bd=0)
@@ -160,6 +166,9 @@ class FaceWidget(tk.Canvas):
         self.fps = fps
         self._attack = attack
         self._release = release
+        # Vertical shift of the features inside the disc, in units of the head
+        # radius (see the face_offset argument). Applied in _render_frame.
+        self._face_offset = face_offset
 
         # Loudness state. ``_target`` is written from any thread by set_level;
         # ``_current`` is the smoothed value the loop actually draws.
@@ -407,6 +416,9 @@ class FaceWidget(tk.Canvas):
         d = ImageDraw.Draw(img)
         cx = cy = s / 2
         r = s * 0.42  # head radius; everything below scales from it
+        # Features are laid out around face_cy, the disc stays centred on cy,
+        # so face_offset shifts the face within the circle without moving it.
+        face_cy = cy + self._face_offset * r
 
         # Face disc, with an optional thin rim (1 px after downscale).
         if self._c_outline is not None:
@@ -416,7 +428,7 @@ class FaceWidget(tk.Canvas):
             d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=self._c_face)
 
         # Eyes: tall ellipses with a highlight; the blink squashes them.
-        ey, edx = cy - r * 0.30, r * 0.34
+        ey, edx = face_cy - r * 0.30, r * 0.34
         erx, ery_open = r * 0.105, r * 0.16
         ery = max(ery_open * (1.0, 0.45, 0.10)[blink], r * 0.02)
         for side in (-1, 1):
@@ -443,7 +455,7 @@ class FaceWidget(tk.Canvas):
                 cr = brow_w / 2
                 d.ellipse((px - cr, py - cr, px + cr, py + cr), fill=self._c_eye)
 
-        my = cy + r * 0.38  # mouth centre line
+        my = face_cy + r * 0.38  # mouth centre line
         if mode == "talk":
             self._draw_talking_mouth(d, cx, my, r, openness)
         else:
@@ -507,7 +519,7 @@ if __name__ == "__main__":
     root.configure(bg="#1e1e1e")
     face = FaceWidget(root, size=220, bg="#1e1e1e",
                       face_color="#ffffff", eye_color="#1e2a44",
-                      mouth_color="#8a3a2c")
+                      mouth_color="#8a3a2c", face_offset=0.0)
     face.pack(padx=24, pady=24)
 
     expressions = [":)", ":|", ":("]

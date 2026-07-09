@@ -184,7 +184,8 @@ class HeroCard:
         # face_play_levels/face_rest; ~78px as mocked up.
         self.face = FaceWidget(score_row, size=78, bg=THEME["bg_card"],
                                face_color=THEME["face"], face_outline=THEME["border"],
-                               eye_color=THEME["eyes"], mouth_color=THEME["mouth"])
+                               eye_color=THEME["eyes"], mouth_color=THEME["mouth"],
+                               face_offset=0.05)
         self.face.set_expression(":)")  # waiting state
         # The face has no on-main control: its visibility is a settings value
         # ("Show articulation face"), mirrored into this var and applied by

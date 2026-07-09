@@ -232,3 +232,43 @@ class ProgressRing(tk.Frame):
         py = cy + r * math.sin(rad)
         cap = stroke / 2
         d.ellipse((px - cap, py - cap, px + cap, py + cap), fill=self._c_fill)
+
+
+if __name__ == "__main__":
+    # Manual eyeball test, no data needed. Run: python -m mimora.progress_widget
+    # A new random average target is picked every second and the shown value
+    # eases toward it each frame, so the ring fill and the number move smoothly
+    # rather than jumping. The phrase count ticks up once per second too.
+    import random
+
+    root = tk.Tk()
+    root.title("ProgressRing demo")
+    root.configure(bg=THEME["bg_card"])
+    ring = ProgressRing(root, size=160)
+    ring.pack(padx=32, pady=32)
+
+    maximum = 5.0
+    step_ms = 40  # ~25 fps, fast enough to read as smooth motion
+    state = {
+        "current": 0.0,                             # value shown right now
+        "target": random.uniform(0.0, maximum),     # value we ease toward
+        "count": 0,
+        "since_pick_ms": 0,                         # time on the current target
+    }
+
+    def _drive() -> None:
+        # Ease the displayed value a fraction of the way to the target each
+        # frame (exponential smoothing), then re-pick a new random target once
+        # a full second has elapsed.
+        state["current"] += 0.12 * (state["target"] - state["current"])
+        ring.set_progress(state["current"], maximum, state["count"])
+
+        state["since_pick_ms"] += step_ms
+        if state["since_pick_ms"] >= 1000:
+            state["since_pick_ms"] = 0
+            state["target"] = random.uniform(0.0, maximum)
+            state["count"] += 1
+        root.after(step_ms, _drive)
+
+    _drive()
+    root.mainloop()
