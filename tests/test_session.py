@@ -12,7 +12,7 @@ from mimora.session import SessionState
 
 
 class TestRecordTake(unittest.TestCase):
-    """Session tally: distinct-phrase count and running-average formatting."""
+    """Session tally: distinct-phrase count, running average and its scale."""
 
     def test_blank_phrase_records_nothing(self):
         state = SessionState()
@@ -23,24 +23,27 @@ class TestRecordTake(unittest.TestCase):
         # Two attempts at one phrase: count stays 1, average spans both.
         state = SessionState()
         state.record_take("hello there", 60.0)
-        count, average_text = state.record_take("hello there", 80.0)
+        count, average, maximum = state.record_take("hello there", 80.0)
         self.assertEqual(count, 1)
-        self.assertEqual(average_text, "70")
+        self.assertEqual(average, 70.0)
+        self.assertEqual(maximum, 100.0)
         # A different phrase bumps the distinct count.
-        count, _ = state.record_take("good morning", 90.0)
+        count, _, _ = state.record_take("good morning", 90.0)
         self.assertEqual(count, 2)
 
-    def test_raw_average_is_rounded_to_whole(self):
+    def test_raw_take_uses_percent_scale(self):
         state = SessionState()
-        _, average_text = state.record_take("a phrase", 82.4)
-        self.assertEqual(average_text, "82")
+        _, average, maximum = state.record_take("a phrase", 82.4)
+        self.assertEqual(average, 82.4)
+        self.assertEqual(maximum, 100.0)
 
-    def test_graded_average_keeps_one_decimal_with_suffix(self):
-        # The 0-5 grade axis shows one decimal, so movement stays visible.
+    def test_graded_take_uses_grade_scale(self):
+        # The 0-5 grade axis: the average stays unrounded, the scale says 5.
         state = SessionState()
         state.record_take("a phrase", 4.0, graded=True)
-        _, average_text = state.record_take("a phrase", 3.5, graded=True)
-        self.assertEqual(average_text, "3.8/5")
+        _, average, maximum = state.record_take("a phrase", 3.5, graded=True)
+        self.assertEqual(average, 3.75)
+        self.assertEqual(maximum, 5.0)
 
 
 class TestHistoryTrend(unittest.TestCase):

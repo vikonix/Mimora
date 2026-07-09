@@ -17,6 +17,7 @@ to stderr (never raised) so a hand-edited settings.json cannot crash startup;
 """
 
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -116,6 +117,22 @@ def _rewrite_would_lose_content(path: Path, data: dict) -> bool:
     return raw not in ("", "{}")
 
 
+def _write_json_atomic(path: Path, data: dict) -> None:
+    """Serialize *data* to *path* through a same-directory temp file + os.replace.
+
+    Writing the target in place (open "w" truncates first) risks a torn file
+    if the process dies mid-write: on the next start the settings would
+    silently fall back to defaults and _rewrite_would_lose_content would then
+    block every save until the file is fixed by hand. os.replace is atomic on
+    both POSIX and Windows for paths on the same volume.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, ensure_ascii=False, indent=2)
+        fh.write("\n")
+    os.replace(tmp, path)
+
+
 def save_setting(path: Path, key: str, value, memory_dict: dict) -> bool:
     """Write one setting back to *path*, keeping every other key.
 
@@ -131,9 +148,7 @@ def save_setting(path: Path, key: str, value, memory_dict: dict) -> bool:
         return False
     data[key] = value
     try:
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
+        _write_json_atomic(path, data)
     except OSError as exc:
         print(f"[config] cannot write {path.name} ({exc}); {key} not saved",
               file=sys.stderr)
@@ -159,9 +174,7 @@ def reset_settings(path: Path, keys, memory_dict: dict) -> bool:
     for key in keys:
         data.pop(key, None)
     try:
-        with open(path, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
+        _write_json_atomic(path, data)
     except OSError as exc:
         print(f"[config] cannot write {path.name} ({exc}); settings not reset",
               file=sys.stderr)

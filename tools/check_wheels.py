@@ -48,6 +48,21 @@ EXTERNAL_PREINSTALLED = {"llama-cpp-python"}
 #   ERROR: No matching distribution found for unicodecsv
 _NO_DIST = re.compile(r"No matching distribution found for ([A-Za-z0-9_.\-]+)")
 
+# pip prints the same "No matching distribution" line for a missing wheel, a
+# version conflict and a dead network - only the companion line tells them
+# apart: "(from versions: none)" means pip reached the index and found NO
+# candidate at all (with --only-binary: no wheel). A version conflict lists
+# the candidate versions instead and must NOT become a --no-binary exemption.
+_NO_CANDIDATES = re.compile(
+    r"Could not find a version that satisfies the requirement "
+    r"([A-Za-z0-9_.\-]+)\S* \(from versions: none\)")
+
+# When the index itself is unreachable, "(from versions: none)" appears too -
+# but alongside network errors, which make the whole verdict meaningless.
+_NETWORK_HINTS = ("connection error", "connection broken", "retrying",
+                  "temporary failure", "name resolution", "timed out",
+                  "network is unreachable", "proxyerror", "newconnectionerror")
+
 
 def resolve(requirements: Path, exemptions: list[str]) -> tuple[bool, str]:
     """Dry-run the installer's pip command; return (succeeded, combined output)."""
@@ -106,11 +121,28 @@ def main() -> int:
                 print("The current SOURCE_ONLY_PACKAGES already covers everything.")
             return 0
 
+        lower = output.lower()
+        if any(hint in lower for hint in _NETWORK_HINTS):
+            print("Resolve failed with signs of NETWORK trouble - the missing-"
+                  "wheel detection is unreliable offline. pip said:\n")
+            print(output.strip())
+            return 1
+
         missing = _NO_DIST.findall(output)
+        no_candidates = {p.lower() for p in _NO_CANDIDATES.findall(output)}
+        conflicts = [p for p in missing if p.lower() not in no_candidates]
+        if conflicts:
+            print("Resolve failed on a VERSION CONFLICT (candidates exist, none "
+                  f"satisfies the constraint): {', '.join(conflicts)}. That is "
+                  "not a missing wheel - fix the requirement instead of adding "
+                  "an exemption. pip said:\n")
+            print(output.strip())
+            return 1
+
         new = [p for p in missing if p not in exemptions]
         if not new:
             # Failed for a reason other than a missing wheel - show pip's output
-            # so the real cause (version conflict, offline, etc.) is visible.
+            # so the real cause is visible.
             print("Resolve failed, but not due to a missing wheel. pip said:\n")
             print(output.strip())
             return 1

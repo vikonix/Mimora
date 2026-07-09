@@ -337,47 +337,54 @@ class FaceWidget(tk.Canvas):
 
     def _tick(self) -> None:
         """One animation frame: swap in the cached frame for the new state."""
-        # A pre-computed loudness track, if present, drives the talking mouth
-        # by wall-clock time and hands back to the smiley once exhausted.
-        if self._track is not None:
-            idx = int((time.perf_counter() - self._track_t0) * self._track_fps)
-            if idx < len(self._track):
-                self._target = self._track[idx]
-                self._mode = "talking"
+        try:
+            # A pre-computed loudness track, if present, drives the talking
+            # mouth by wall-clock time and hands back to the smiley once
+            # exhausted.
+            if self._track is not None:
+                idx = int((time.perf_counter() - self._track_t0) * self._track_fps)
+                if idx < len(self._track):
+                    self._target = self._track[idx]
+                    self._mode = "talking"
+                else:
+                    self._track = None
+                    self._target = 0.0
+                    self._mode = "paused"
+
+            # Asymmetric loudness smoothing: open fast, close slow.
+            target, current = self._target, self._current
+            coeff = self._attack if target >= current else self._release
+            self._current = current + coeff * (target - current)
+            # Expression eases toward its target at a steady, gentle rate.
+            # Updated in both modes: the eyebrows follow the curl even while
+            # talking.
+            self._curl_current += 0.25 * (self._curl_target - self._curl_current)
+
+            blink = self._blink_phase()
+            curl_q = round(self._curl_current * _CURL_STEPS)
+            if self._mode == "talking":
+                key = ("talk", round(self._current * _MOUTH_STEPS), curl_q, blink)
             else:
-                self._track = None
-                self._target = 0.0
-                self._mode = "paused"
+                key = ("rest", 0, curl_q, blink)
 
-        # Asymmetric loudness smoothing: open fast, close slow.
-        target, current = self._target, self._current
-        coeff = self._attack if target >= current else self._release
-        self._current = current + coeff * (target - current)
-        # Expression eases toward its target at a steady, gentle rate. Updated
-        # in both modes: the eyebrows follow the curl even while talking.
-        self._curl_current += 0.25 * (self._curl_target - self._curl_current)
-
-        blink = self._blink_phase()
-        curl_q = round(self._curl_current * _CURL_STEPS)
-        if self._mode == "talking":
-            key = ("talk", round(self._current * _MOUTH_STEPS), curl_q, blink)
-        else:
-            key = ("rest", 0, curl_q, blink)
-
-        if key != self._key_shown:
-            photo = self._cache.get(key)
-            if photo is None:
-                if len(self._cache) > 512:  # safety valve, never hit in practice
-                    self._cache.clear()
-                photo = self._render_frame(key)
-                self._cache[key] = photo
-            self.itemconfigure(self._img_item, image=photo)
-            self._photo = photo  # PhotoImage must stay referenced or Tk blanks
-            self._key_shown = key
-
-        # Reschedule. winfo_exists guards against a destroyed widget.
-        if self.winfo_exists():
-            self._loop_id = self.after(self._frame_ms, self._tick)
+            if key != self._key_shown:
+                photo = self._cache.get(key)
+                if photo is None:
+                    if len(self._cache) > 512:  # safety valve, never hit in practice
+                        self._cache.clear()
+                    photo = self._render_frame(key)
+                    self._cache[key] = photo
+                self.itemconfigure(self._img_item, image=photo)
+                self._photo = photo  # PhotoImage must stay referenced or Tk blanks
+                self._key_shown = key
+        finally:
+            # Reschedule even when this frame failed (a transient render error
+            # or a TclError racing widget destruction): without this a single
+            # exception would break the after-chain and freeze the face for
+            # the rest of the session. Tk still reports the exception itself.
+            # winfo_exists guards against a destroyed widget.
+            if self.winfo_exists():
+                self._loop_id = self.after(self._frame_ms, self._tick)
 
     # -- frame rendering ----------------------------------------------------
 

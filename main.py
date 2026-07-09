@@ -320,7 +320,7 @@ class PronunciationTrainerGUI:
             self.view.is_test_enabled, self.on_test_reference))
         self.root.bind("<KeyPress-T>", lambda _: self._hotkey(
             self.view.is_test_enabled, self.on_test_reference))
-        self.root.bind("<Escape>", lambda _: self.quit_app())
+        self.root.bind("<Escape>", self._on_escape)
         # Clicking anywhere that is not a text input returns keyboard focus to
         # the window, so the hotkeys above resume working after the user edits
         # the source text. Without this, focus would stay in the text field
@@ -342,6 +342,20 @@ class PronunciationTrainerGUI:
         if is_enabled():
             action()
             return "break"
+        return None
+
+    def _on_escape(self, _event=None):
+        """Quit on Escape - except while typing, where it only drops focus.
+
+        quit_app ends in a hard exit (TerminateProcess), so an accidental
+        Escape mid-edit would silently discard the typed practice text.
+        Typing therefore gets the same gate as every other hotkey; Escape
+        then acts as "done editing" and hands focus back to the hotkeys.
+        """
+        if self._typing_in_text_field():
+            self.root.focus_set()
+            return "break"
+        self.quit_app()
         return None
 
     # ------------------------------------------------------------------
@@ -441,9 +455,11 @@ class PronunciationTrainerGUI:
         except (OSError, UnicodeDecodeError) as e:
             logging.warning(f"Could not read practice text file {path!r}: {e}")
             self.view.append_error_msg(f"Could not read {os.path.basename(path)}: {e}")
+            self._revert_practice_file_setting()
             return
         if not text:
             self.view.append_error_msg(f"{os.path.basename(path)} is empty - nothing to load.")
+            self._revert_practice_file_setting()
             return
 
         self.view.set_practice_text(text)
@@ -461,6 +477,18 @@ class PronunciationTrainerGUI:
         # Keep the runtime view current for load_practice_text and the file
         # dialog's initialdir; the settings window reads the persisted value.
         config.PRACTICE_TEXT_FILE = str(path)
+        self.settings_ctl.sync_window("practice_text_file", saved)
+
+    def _revert_practice_file_setting(self):
+        """Roll the settings window back to the persisted practice file.
+
+        A failed load persists nothing, but the settings window has already
+        committed the picked path (_emit runs before the controller); left
+        alone it would keep displaying a path that is not in settings.json
+        until reopened. set_value never re-emits, so no loop.
+        """
+        saved = config.user_setting("practice_text_file",
+                                    config.PRACTICE_TEXT_FILE)
         self.settings_ctl.sync_window("practice_text_file", saved)
 
     def make_app_ready(self):
@@ -754,6 +782,7 @@ class PronunciationTrainerGUI:
         language = self._selected_translation_language()
         voice = self._selected_voice()
         speed = self._selected_speed()
+        self.playback.stop()  # silence any current playback first
         stop_event = self.playback.new_event()
 
         threading.Thread(target=self._generate_and_prompt,
@@ -1279,12 +1308,12 @@ class PronunciationTrainerGUI:
         self._speak_word_at(word, 1.0, f"Playing example '{word.strip()}'...")
 
     def on_take_scored(self, phrase: str, score: float, graded: bool = False):
-        """Record a scored take into the session tally and refresh the status bar.
+        """Record a scored take into the session tally and refresh the ring.
 
         Called by the view once a take has a user-facing score. The tally
-        itself (distinct-phrase count, running average, grade formatting)
-        lives in SessionState (mimora/session.py); this handler only pushes
-        the returned values into the status bar.
+        itself (distinct-phrase count, running average and its scale) lives
+        in SessionState (mimora/session.py); this handler only pushes the
+        returned numbers into the hero card's progress ring.
         """
         stats = self.session.record_take(phrase, score, graded)
         if stats is not None:
@@ -1364,11 +1393,12 @@ class PronunciationTrainerGUI:
         lifecycle.hard_exit()
 
     def run(self):
+        # No code after mainloop(): both exit paths (quit_app, restart_app)
+        # end in lifecycle.hard_exit(), so control never returns here. Log
+        # handlers are deliberately left to the OS - closing them during
+        # shutdown produced 'I/O operation on closed file' noise from daemon
+        # threads still logging.
         self.root.mainloop()
-        # Flush and close log handlers only after the UI (and quit_app) is done.
-        # Closing them inside quit_app produced 'I/O operation on closed file'
-        # noise from daemon threads still logging during the shutdown itself.
-        logging.shutdown()
 
 
 if __name__ == "__main__":

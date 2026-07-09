@@ -41,15 +41,15 @@ class SessionState:
         self._history: deque = deque(maxlen=history_limit)
 
     def record_take(self, phrase: str, score: float,
-                    graded: bool = False) -> Optional[tuple[int, str]]:
+                    graded: bool = False) -> Optional[tuple[int, float, float]]:
         """Fold one scored take into the session tally.
 
-        Returns ``(distinct_phrase_count, average_text)`` for the status
-        bar, or None for a blank phrase (nothing to record). ``graded`` says
-        which scale ``score`` is on: True for the phoneme engine's 0-5 grade
-        axis (average shown as "3.8/5" - one decimal, whole numbers would
-        hide movement on the coarse scale), False for a raw 0-100 score
-        (shown as "78").
+        Returns ``(distinct_phrase_count, average, maximum)`` for the
+        progress ring, or None for a blank phrase (nothing to record).
+        ``graded`` says which scale ``score`` is on: True for the phoneme
+        engine's 0-5 grade axis (maximum 5), False for a raw 0-100 score
+        (maximum 100). Plain numbers on purpose: the ring formats them
+        itself, and a display string would have to be parsed back.
         """
         phrase = (phrase or "").strip()
         if not phrase:
@@ -58,8 +58,7 @@ class SessionState:
         self._score_sum += score
         self._attempts += 1
         average = self._score_sum / self._attempts
-        average_text = f"{average:.1f}/5" if graded else f"{average:.0f}"
-        return len(self._phrases), average_text
+        return len(self._phrases), average, (5.0 if graded else 100.0)
 
     def add_history_entry(self, record: dict) -> list:
         """Append *record* to the bounded history and return the full list.

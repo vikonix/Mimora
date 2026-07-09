@@ -315,15 +315,23 @@ def chat_completions(request: ChatCompletionRequest):
     with _inference_lock:
         if _model is None:
             raise HTTPException(status_code=503, detail="Model not loaded.")
-        result = _model.create_chat_completion(
-            messages=messages,
-            temperature=request.temperature,
-            max_tokens=request.max_tokens,
-            top_p=request.top_p,
-            stream=False,
-            # Fresh seed per request - see the comment in _stream_chat().
-            seed=random.randint(0, 2**31 - 1),
-        )
+        try:
+            result = _model.create_chat_completion(
+                messages=messages,
+                temperature=request.temperature,
+                max_tokens=request.max_tokens,
+                top_p=request.top_p,
+                stream=False,
+                # Fresh seed per request - see the comment in _stream_chat().
+                seed=random.randint(0, 2**31 - 1),
+            )
+        except Exception as exc:
+            # Mirror the care the streaming path takes on a llama_cpp failure:
+            # without this the client gets a bare 500 with no body and the
+            # cause never reaches the log.
+            logging.exception("Chat completion failed:")
+            raise HTTPException(status_code=500,
+                                detail=f"Generation failed: {exc}") from exc
     return result
 
 

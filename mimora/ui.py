@@ -736,25 +736,17 @@ class TrainerView:
     def update_status(self, text: str, color: str = THEME["text_dim"]):
         self.status_label.configure(text=text, fg=color)
 
-    def update_session_stats(self, count: int, average_text: str):
+    def update_session_stats(self, count: int, average: float, maximum: float):
         """Show the session tally in the hero card's progress ring.
 
-        ``count`` is the number of distinct phrases practiced this run and
-        ``average_text`` the already-formatted mean over every scored attempt
-        (both supplied by the controller, which owns the session data and knows
-        the scale: "3.8/5" for graded takes, "78" for raw-percent ones).
-
-        The ring needs the average as numbers, so the display string is parsed
-        back into value/maximum here: "3.8/5" -> (3.8, 5); a bare "78" (the raw
-        engine) -> (78, 100). This keeps SessionState's single formatted output
-        as the source of truth while the ring stays a plain numeric gauge.
+        ``count`` is the number of distinct phrases practiced this run,
+        ``average`` the running mean over every scored attempt and ``maximum``
+        its scale (5 for graded takes, 100 for raw-percent ones) - plain
+        numbers straight from SessionState.record_take. The ring formats the
+        value itself from the scale (see ProgressRing.set_progress), so no
+        display string has to be parsed back here.
         """
-        if "/" in average_text:
-            value_text, max_text = average_text.split("/", 1)
-            value, maximum = float(value_text), float(max_text)
-        else:
-            value, maximum = float(average_text), 100.0
-        self._hero.set_progress(value, maximum, count)
+        self._hero.set_progress(average, maximum, count)
 
     def clear_previous_result(self):
         """Reset the per-take indicators before a new recording starts.

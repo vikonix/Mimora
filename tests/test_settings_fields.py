@@ -11,9 +11,27 @@ from the project root with:
     python -m unittest tests.test_settings_fields
 """
 
+import importlib
 import unittest
 
-from mimora import config
+# These tests validate the field model against the BUILT-IN defaults, not
+# against this machine's config/settings.json or hardware_config.json: a valid
+# but unusual local value would otherwise fail the suite although the code is
+# correct (a flaky "unit" test under discover). read_json is stubbed to "no
+# overrides" while mimora.config builds its module constants, then restored;
+# the reload covers the case where another test module (or an earlier import
+# in this process) already built config from the real files. settings_window
+# reads config lazily per field, so it sees the default-built module.
+from mimora import loader as _loader
+
+_real_read_json = _loader.read_json
+_loader.read_json = lambda path: {}
+try:
+    from mimora import config
+    importlib.reload(config)
+finally:
+    _loader.read_json = _real_read_json
+
 from mimora.settings_window import all_fields, build_sections
 
 VALID_KINDS = {"bool", "choice", "number", "text", "path"}

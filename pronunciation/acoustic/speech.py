@@ -311,8 +311,9 @@ def _phonemize_word(word: str) -> tuple:
     """Phonemize one word (each phonemize call spawns espeak, so cache results;
     words repeat both across attempts at a phrase and across phrases).
 
-    The espeak accent is fixed for the process (set once via configure() before
-    any analysis), so it does not need to be part of the cache key.
+    The cache key is the word alone even though the result depends on the
+    espeak accent: configure() clears this cache whenever the language
+    changes, so a stale-accent entry can never be served.
     """
     try:
         return tuple(phonemize(word, language=get_config().espeak_language,
@@ -634,8 +635,21 @@ def compute_pronunciation_score(acoustic_per_step: float,
 
 
 def clean_transcription(text: str) -> str:
-    """Lower-case, strip punctuation and collapse whitespace in a transcription."""
+    """Lower-case, strip punctuation and collapse whitespace in a transcription.
+
+    Only ``[a-z' ]`` survives: digits and non-ASCII letters are dropped along
+    with punctuation ("2" vs the ASR's "two", "mañana" -> "maana"), which
+    inflates the word error rate when the expected text contains them. The
+    English ASR checkpoint cannot emit such characters anyway, so the loss is
+    logged (not fixed) - it makes a surprising score on such a phrase
+    traceable in the log.
+    """
     text = text.lower().strip()
+    lost = sorted(set(re.findall(r"[0-9]|[^\x00-\x7f]", text)))
+    if lost:
+        logging.info("[acoustic] clean_transcription dropped %r from %r - "
+                     "digits/non-ASCII are outside the scoring alphabet",
+                     "".join(lost), text)
     text = re.sub(r"[^a-zA-Z' ]+", "", text)
     return " ".join(text.split()).strip()
 
@@ -690,7 +704,7 @@ def _append_calibration_sample(record: Dict[str, Any]) -> None:
 
 def analyze(user_audio: np.ndarray,
             expected_text: str,
-            reference_audio: np.ndarray,
+            reference_audio: Optional[np.ndarray] = None,
             user_sr: int = TARGET_SAMPLE_RATE,
             reference_sr: int = KOKORO_SAMPLE_RATE,
             voice: Optional[str] = None,
@@ -700,7 +714,12 @@ def analyze(user_audio: np.ndarray,
     Args:
         user_audio: user's recorded waveform (1-D float32; from the recording path).
         expected_text: the reference phrase the user was asked to repeat.
-        reference_audio: Kokoro-synthesised reference waveform for the same phrase.
+        reference_audio: Kokoro-synthesised reference waveform for the same
+            phrase. Optional only to mirror the phoneme/none signature
+            ("Public API mirrors acoustic/ exactly"): THIS engine cannot score
+            without it - the acoustic component is a comparison against the
+            reference - so None raises a ValueError instead of the TypeError a
+            positional-only signature used to produce.
         user_sr: sample rate of ``user_audio`` (recording path is 16 kHz).
         reference_sr: sample rate of ``reference_audio`` (Kokoro is 24 kHz).
         voice: Kokoro voice the reference was synthesized with. Only recorded in
@@ -715,6 +734,10 @@ def analyze(user_audio: np.ndarray,
     Returns:
         PronunciationResult with score, per-word errors, prosody and transcription.
     """
+    if reference_audio is None:
+        raise ValueError(
+            "the acoustic engine requires reference_audio: its score is a "
+            "comparison against the reference recording")
     _ensure_loaded()
 
     # Trim silent padding: user takes have button-press pauses (with the noise

@@ -325,7 +325,12 @@ class AudioRecorder:
                         processed = total
                         rms = float(np.sqrt(np.mean(np.square(block)))) if block.size else 0.0
                         now = time.time()
-                        if rms >= config.SILENCE_THRESHOLD:
+                        # Strictly above: with ">=" a zero threshold would make
+                        # even digital silence (rms exactly 0.0) count as speech
+                        # and permanently disarm the auto-stop. The validated
+                        # minimum in config.py is above zero for the same
+                        # reason; both layers have to fail before that happens.
+                        if rms > config.SILENCE_THRESHOLD:
                             speech_started = True
                             last_voice_time = now
                         if now - last_level_emit >= self.LEVEL_EMIT_INTERVAL_SEC:

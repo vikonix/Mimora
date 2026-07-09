@@ -440,6 +440,11 @@ class HeroCard:
         if getter is None:
             getter = lambda: widget.cget("text")
         widget.bind("<Button-3>", lambda event: self._show_copy_menu(event, getter))
+        # Tk/aqua (macOS) reports the right mouse button as Button-2; on the
+        # other platforms Button-2 is the middle button and stays unbound.
+        if widget.tk.call("tk", "windowingsystem") == "aqua":
+            widget.bind("<Button-2>",
+                        lambda event: self._show_copy_menu(event, getter))
 
     def _show_copy_menu(self, event, getter: Callable[[], str]):
         """Pop up a one-item 'Copy' menu for the clicked widget, if it has text."""

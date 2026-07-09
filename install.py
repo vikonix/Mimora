@@ -290,8 +290,7 @@ class Confirmer:
             return self._prompt_installed()
         return self._prompt_fresh()
 
-    @staticmethod
-    def _ask(prompt: str) -> str:
+    def _ask(self, prompt: str) -> str:
         """Read one answer, making sure the question is actually visible.
 
         A preceding download shows a tqdm progress bar that writes to stderr and
@@ -302,7 +301,15 @@ class Confirmer:
         """
         sys.stdout.flush()
         sys.stderr.flush()
-        return input("\n" + prompt).strip().lower()
+        try:
+            return input("\n" + prompt).strip().lower()
+        except EOFError:
+            # stdin is closed or redirected (CI, piped input) and the questions
+            # can never be answered: abort cleanly instead of crashing with a
+            # traceback on every prompt.
+            self._log.log("    stdin closed (no TTY) - cannot prompt. "
+                          "Use --yes for unattended installs. Aborting.")
+            raise SystemExit(1)
 
     def _prompt_fresh(self) -> bool:
         """Not yet installed: default Yes, 's' skips, 'n' aborts."""
@@ -554,8 +561,15 @@ def check_virtualenv(log: Logger, args: argparse.Namespace) -> None:
 
     sys.stdout.flush()
     sys.stderr.flush()
-    answer = input("\n    Install into this GLOBAL interpreter anyway? "
-                   "[N]o-abort / [y]es: ").strip().lower()
+    try:
+        answer = input("\n    Install into this GLOBAL interpreter anyway? "
+                       "[N]o-abort / [y]es: ").strip().lower()
+    except EOFError:
+        # stdin is closed or redirected (CI, piped input): the question can
+        # never be answered, and the safe default is the same as answering "no".
+        log.log("    stdin closed (no TTY) - cannot prompt. Aborting - activate "
+                "a virtual environment and re-run.")
+        raise SystemExit(1)
     if answer not in ("y", "yes"):
         log.log("    Aborted - activate a virtual environment and re-run.")
         raise SystemExit(1)
@@ -894,7 +908,7 @@ def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
         if pkg_cmd:
             if confirmer.confirm("Install espeak-ng via the system package "
                                  "manager (needs sudo).", " ".join(pkg_cmd)):
-                run_or_fail(pkg_cmd, log, report, "espeak-ng")
+                _install_espeak_soft(pkg_cmd, log, report)
                 return
             report.add("espeak-ng", SKIPPED)
             return
@@ -905,7 +919,7 @@ def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
             brew_cmd = ["brew", "install", "espeak-ng"]
             if confirmer.confirm("Install espeak-ng via Homebrew.",
                                  " ".join(brew_cmd)):
-                run_or_fail(brew_cmd, log, report, "espeak-ng")
+                _install_espeak_soft(brew_cmd, log, report)
                 return
             report.add("espeak-ng", SKIPPED)
             return
@@ -918,6 +932,22 @@ def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
         log.log("    PHONEMIZER_ESPEAK_LIBRARY to the installed libespeak-ng DLL).")
 
     report.add("espeak-ng", MANUAL, "install separately, see log")
+
+
+def _install_espeak_soft(cmd: list[str], log: Logger, report: StepReport) -> None:
+    """Run the espeak-ng package install without aborting the installer.
+
+    espeak-ng is only needed by the phoneme engine, and both declining the
+    install and the Windows path merely record SKIPPED/MANUAL - so a package
+    manager failure (no sudo rights, repo trouble) must not kill the whole
+    install either.
+    """
+    if run_command(cmd, log):
+        report.add("espeak-ng", DONE)
+        return
+    log.log("    Package install failed. Install espeak-ng manually later;")
+    log.log("    everything except the phoneme engine works without it.")
+    report.add("espeak-ng", MANUAL, "package install failed, see log")
 
 
 def _linux_espeak_command() -> list[str] | None:

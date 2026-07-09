@@ -8,8 +8,10 @@ name = "mimora"
 dynamic = ["version"]
 description = "Local, offline pronunciation trainer: Kokoro TTS prompts, Wav2Vec2 scoring, local LLM phrase generation."
 readme = "README.md"
-# Tested on 3.11 and 3.12; 3.13+ not yet supported (as of June 2026).
-requires-python = ">=3.11,<3.13"
+# Tested on 3.11 and 3.12. No upper bound on purpose, matching install.py:
+# newer interpreters get a warning there (WHEEL_TESTED_MAX), and the
+# binary-only dependency install fails loudly if wheels are missing.
+requires-python = ">=3.11"
 license = { file = "LICENSE" }
 
 # The app is run from the project root (`python main.py`) and is not meant to

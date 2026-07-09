@@ -65,6 +65,11 @@ LISTING_URL = INDEX_URL + "/llama-cpp-python/"
 SMOKE_INCONCLUSIVE = 3
 SMOKE_LOAD_FAILED = 4
 
+# Upper bound on one smoke-test run. A deadlock in native code would otherwise
+# hang the whole sweep forever; 30 minutes is far beyond any legitimate model
+# load plus the tiny test generation, even on a slow machine.
+SMOKE_TIMEOUT_S = 30 * 60
+
 # Newest CPU wheel known to use only an AVX2 baseline (no AVX512). Wheels above
 # this (0.3.29+) are built with AVX512 and crash with 0xC000001D on CPUs that
 # lack it, so on such a CPU the sweep starts here instead of wasting time on
@@ -164,11 +169,12 @@ def install_version(version: str, extra_index_url: str) -> bool:
     return True
 
 
-def run_smoke_test(model: str | None) -> int:
+def run_smoke_test(model: str | None) -> int | None:
     """Run the smoke test in a child process; return its exit code.
 
     The child's exit code IS the verdict: 0 works, 3 inconclusive (cannot test),
     4 the build would not load on this CPU, any other nonzero a hard crash.
+    None means the child hung past SMOKE_TIMEOUT_S and was killed.
     """
     cmd = [sys.executable, str(SMOKE_TEST)]
     if model:
@@ -176,7 +182,10 @@ def run_smoke_test(model: str | None) -> int:
     _say(f"  $ {' '.join(cmd)}")
     # No capture: let the child stream straight through so a crash and its code
     # are plainly visible in the console and the parent log alike.
-    proc = subprocess.run(cmd)
+    try:
+        proc = subprocess.run(cmd, timeout=SMOKE_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return None
     return proc.returncode
 
 
@@ -231,14 +240,24 @@ def main() -> int:
 
     rejected: list[str] = []
     skipped: list[str] = []
+    # The version currently sitting in the venv: each successful pip install
+    # replaces the previous one, so after a failed sweep this is the last
+    # REJECTED version - the final message must warn about that.
+    left_installed: str | None = None
     for version in candidates:
         _say(f"\n=== llama-cpp-python {version} ===")
         if not install_version(version, args.extra_index_url):
             _say(f"  install failed (no compatible wheel?) -> skip {version}")
             skipped.append(version)
             continue
+        left_installed = version
 
         code = run_smoke_test(args.model)
+        if code is None:
+            _say(f"  smoke test HUNG for over {SMOKE_TIMEOUT_S // 60} min and "
+                 f"was killed -> {version} rejected.")
+            rejected.append(version)
+            continue
         if code == 0:
             _say(f"\nWORKING: llama-cpp-python {version} runs on this CPU and is "
                  "now installed in this venv.")
@@ -250,6 +269,9 @@ def main() -> int:
             # versions is pointless until the setup problem is fixed.
             _say("  smoke test INCONCLUSIVE (setup problem, not a CPU verdict); "
                  "fix that and re-run. Stopping.")
+            _say(f"NOTE: llama-cpp-python {version} is left installed in this "
+                 "venv UNTESTED - the sweep could not check whether it runs "
+                 "on this CPU.")
             return 2
         if code == SMOKE_LOAD_FAILED:
             _say(f"  model would not load -> {version} rejected (build likely "
@@ -264,6 +286,12 @@ def main() -> int:
         _say(f"  rejected: {', '.join(rejected)}")
     if skipped:
         _say(f"  skipped:  {', '.join(skipped)}")
+    if left_installed:
+        _say(f"WARNING: llama-cpp-python {left_installed} - a version that FAILED "
+             "the test - is still installed in this venv. Reinstall a chosen "
+             "version explicitly, e.g.:")
+        _say("  pip install --force-reinstall --only-binary :all: "
+             f"llama-cpp-python==<version> --extra-index-url {args.extra_index_url}")
     _say("Try a larger --max-tries, or build from source with AVX512 disabled.")
     return 1
 

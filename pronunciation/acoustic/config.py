@@ -54,9 +54,17 @@ def configure(cfg: AnalyzerConfig) -> None:
     """Install the analyzer configuration for this process.
 
     Call once at startup, before ``load_models()``/``analyze()``. Subsequent
-    analysis reads whatever is active here.
+    analysis reads whatever is active here. Reconfiguring with a different
+    ``espeak_language`` is safe: the per-word phonemization cache (keyed by
+    word only) is dropped so no phonemes of the old accent survive.
     """
     global _active
+    if cfg.espeak_language != _active.espeak_language:
+        # Deferred import: speech.py imports this module, so a top-level
+        # import here would be circular. By the time configure() is callable
+        # the package __init__ has already imported speech anyway.
+        from . import speech
+        speech._phonemize_word.cache_clear()
     _active = cfg
 
 

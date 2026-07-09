@@ -233,8 +233,8 @@ def build_sections() -> tuple:
             Field("silence_threshold", "Silence threshold (RMS)", "number",
                   lambda: config.user_setting("silence_threshold",
                                               config.SILENCE_THRESHOLD),
-                  minimum=0.0,
-                  help="Chunk RMS at or above this counts as speech."),
+                  minimum=0.001,
+                  help="Chunk RMS above this counts as speech."),
         )),
     )
 

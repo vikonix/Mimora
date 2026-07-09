@@ -94,14 +94,21 @@ class TestPureLogic(unittest.TestCase):
         # 1 s at 24 kHz -> ~1 s at 16 kHz.
         self.assertAlmostEqual(len(out), 16_000, delta=50)
 
-    def test_result_has_spec_fields(self):
+    def test_result_spec_required_fields_and_extras_defaults(self):
+        # The four spec fields (score, word_errors, prosody, transcription)
+        # are required: an engine must fill them, so leaving them out must be
+        # a construction error, not a silent default.
+        with self.assertRaises(TypeError):
+            speech.PronunciationResult(score=88.0)
+        # The extras default so an engine fills only what it computes: a
+        # result is not passed until said so, carries no feedback text, and
+        # counts as scored (only the "none" engine flips that off).
         result = speech.PronunciationResult(
             score=88.0, word_errors=[], prosody={"f0": [], "energy": []},
             transcription="hello world")
-        self.assertTrue(hasattr(result, "score"))
-        self.assertTrue(hasattr(result, "word_errors"))
-        self.assertTrue(hasattr(result, "prosody"))
-        self.assertTrue(hasattr(result, "transcription"))
+        self.assertFalse(result.passed)
+        self.assertEqual(result.feedback, "")
+        self.assertTrue(result.scored)
 
     # --- word_level_diff: target-vs-ASR alignment --------------------------
     def test_word_diff_empty_on_exact_match(self):

@@ -16,7 +16,7 @@
   "max_record_seconds": 20,
   "_silence_timeout": "Seconds of continuous silence (after speech has begun) before the take auto-stops. Minimum 0.5.",
   "silence_timeout": 3.0,
-  "_silence_threshold": "RMS level (0..1) at or above which a chunk counts as speech rather than silence. Raise it only if a noisy room keeps the take from stopping.",
+  "_silence_threshold": "RMS level (0..1) strictly above which a chunk counts as speech rather than silence. Minimum 0.001. Raise it only if a noisy room keeps the take from stopping.",
   "silence_threshold": 0.01,
   "_save_recordings": "Diagnostic recording dumps: when true, every take writes the spoken reference (model.wav), the raw mic capture (raw.wav), the normalized signal (normalized.wav) and the phrase text (phrase.txt) to records/, each overwritten per take so only the latest is kept. Off by default: it puts your voice on disk on every attempt.",
   "save_recordings": false,

@@ -234,6 +234,12 @@ _apply_model_calibration(_load_model_calibration(_DEFAULT_LANG))
 # _ensure_calibration() to (re)load even when the language is the default.
 _loaded_lang: Optional[str] = None
 _loaded_user: Optional[str] = None
+# Serializes the reload itself: a calibration (re)load rewrites many module
+# globals, and two concurrent first calls would interleave those writes. The
+# lock does NOT make analyze() reading the globals mid-reload safe - in the
+# app the GUI serializes analyze() calls; library users switching languages
+# concurrently with analysis still race (documented limitation).
+_calibration_lock = threading.Lock()
 
 
 def _ensure_calibration() -> None:
@@ -244,6 +250,11 @@ def _ensure_calibration() -> None:
     (written by calibrate.py) overrides the model default. Reloads only when the
     language or user actually changes, so steady-state analysis pays nothing.
     """
+    with _calibration_lock:
+        _ensure_calibration_locked()
+
+
+def _ensure_calibration_locked() -> None:
     global _loaded_lang, _loaded_user, PHONEME_GOOD
     cfg = get_config()
     lang = _lang_key(cfg.espeak_language)
@@ -842,9 +853,13 @@ def align_and_score(reference: List[str], spoken: List[str],
 # Reference recognition cache (ceiling-mode GOOD anchor + retry reuse).
 # The same reference take is scored on every retry of a phrase; recognizing it once
 # mirrors acoustic's _reference_features. Keyed by content hash + sample rate; the
-# cache is tiny and self-clearing, so it never grows on a long session.
+# cache is tiny and self-clearing, so it never grows on a long session. The lock
+# mirrors acoustic's _reference_cache_lock: in the app, analyze() calls are already
+# serialized by the GUI's is_processing_audio guard, but the package is also
+# documented as an autonomous library, where concurrent calls are legal.
 # =====================================================================
 _ref_cache: Dict[Tuple[bytes, Tuple[int, ...], int], List[str]] = {}
+_ref_cache_lock = threading.Lock()
 
 
 def _recognize_reference(reference_audio: np.ndarray, reference_sr: int,
@@ -852,13 +867,17 @@ def _recognize_reference(reference_audio: np.ndarray, reference_sr: int,
     """Recognized phonemes of the reference take, cached by content + sample rate."""
     arr = np.asarray(reference_audio, dtype=np.float32)
     key = (waveform_digest(arr), arr.shape, reference_sr)
-    cached = _ref_cache.get(key)
+    with _ref_cache_lock:
+        cached = _ref_cache.get(key)
     if cached is not None:
         return cached
+    # Recognition runs outside the lock (it is the expensive part); a
+    # concurrent duplicate at worst recomputes the same value.
     spoken = _spoken_from_wav(_prepare_waveform(reference_audio, reference_sr), device)
-    if len(_ref_cache) >= 8:
-        _ref_cache.clear()
-    _ref_cache[key] = spoken
+    with _ref_cache_lock:
+        if len(_ref_cache) >= 8:
+            _ref_cache.clear()
+        _ref_cache[key] = spoken
     return spoken
 
 
