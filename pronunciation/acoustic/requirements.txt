@@ -8,10 +8,15 @@
 #   macOS   : brew install espeak-ng
 #   Linux   : sudo apt-get install espeak-ng
 
-# >=5.3 closes CVE-2026-4372 (config-injection RCE); kept in sync with the root requirements.txt.
-transformers>=5.3
-torch>=2.0.0
-torchaudio>=2.0.0
+# >=5.3 closes CVE-2026-4372 (config-injection RCE); kept in sync with the root
+# requirements.txt. The markers below relax torch/transformers/torchaudio/numpy
+# on Intel macOS (x86_64) - see the "Intel macOS note" in the root requirements.txt.
+transformers>=5.3; platform_system != 'Darwin' or platform_machine != 'x86_64'
+transformers>=4.44,<5; platform_system == 'Darwin' and platform_machine == 'x86_64'
+torch>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'
+torch==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'
+torchaudio>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'
+torchaudio==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'
 librosa>=0.10.0
 scipy>=1.10.0
 scikit-learn>=1.2.0
@@ -25,5 +30,6 @@ python-Levenshtein>=0.21.0
 soundfile>=0.12.0
 # Cap kept in sync with the root requirements.txt: numba (via librosa) supports
 # NumPy <= 2.4, so 2.5 breaks librosa.resample at runtime. Drop when numba
-# supports NumPy 2.5.
-numpy>=1.24.0,<2.5
+# supports NumPy 2.5. Intel macOS needs <2 for torch 2.2.2 (see root note).
+numpy>=1.24.0,<2.5; platform_system != 'Darwin' or platform_machine != 'x86_64'
+numpy>=1.24.0,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'

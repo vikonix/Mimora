@@ -1,16 +1,31 @@
 # Core dependencies
-# Upper bound: numba (pulled in by librosa) supports NumPy <= 2.4. Without the
-# cap pip installs NumPy 2.5 and librosa.resample fails at runtime with
+#
+# Intel macOS (x86_64) note: PyTorch published no wheel newer than 2.2.2 for
+# that platform (dropped after early 2024). torch 2.2.2 was built against NumPy
+# 1.x and is rejected by transformers 5.x (which needs torch>=2.4), so the three
+# packages below carry PEP 508 markers that relax the pins on Intel macOS only:
+# torch==2.2.2, NumPy<2, transformers<5. This accepts CVE-2026-4372 on Intel Mac
+# (a local desktop app loading only trusted models) in exchange for a working
+# stack. Every other platform keeps the hardened pins. The pronunciation/*
+# requirements repeat these three packages and carry the same markers - if you
+# change one, change all of them or pip's resolver will conflict.
+#
+# NumPy upper bound: numba (pulled in by librosa) supports NumPy <= 2.4. Without
+# the cap pip installs NumPy 2.5 and librosa.resample fails at runtime with
 # "Numba needs NumPy 2.4 or less". Drop the cap once numba supports NumPy 2.5.
-numpy>=1.24.0,<2.5
+numpy>=1.24.0,<2.5; platform_system != 'Darwin' or platform_machine != 'x86_64'
+numpy>=1.24.0,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'
 soundfile>=0.12.0
 sounddevice>=0.4.6
 kokoro>=0.3.0
 openai>=1.0.0
-torch>=2.0.0
+torch>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'
+torch==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'
 # transformers>=5.3 closes CVE-2026-4372 (config-injection RCE; no 4.x fix exists).
 # 5.x needs torch>=2.7 (torch.float8_e8m0fnu) - satisfied by the installed cu128 torch 2.11.
-transformers>=5.3
+# Intel macOS falls back to the newest 4.x (see the platform note above).
+transformers>=5.3; platform_system != 'Darwin' or platform_machine != 'x86_64'
+transformers>=4.44,<5; platform_system == 'Darwin' and platform_machine == 'x86_64'
 
 # Themed ttk widgets (mimora/ui.py imports it as a drop-in "ttk"); the base
 # theme is picked from the Mimora color theme, colors still come from
