@@ -1186,10 +1186,13 @@ class PronunciationTrainerGUI:
 
             # Play the just-recorded audio back to the user right away, before the
             # (slower) pronunciation analysis runs (stop_event was installed by
-            # trigger_recording_stop; see PlaybackController.new_event).
-            self.root.after(0, self.view.enter_playing, "Playing your recording...")
-            self.playback.play_with_face(self.last_user_audio,
-                                         config.AUDIO_SAMPLE_RATE, stop_event)
+            # trigger_recording_stop; see PlaybackController.new_event). Skipped
+            # when self-playback is turned off in Settings - go straight to
+            # analysis then.
+            if config.PLAYBACK_OWN_RECORDING:
+                self.root.after(0, self.view.enter_playing, "Playing your recording...")
+                self.playback.play_with_face(self.last_user_audio,
+                                             config.AUDIO_SAMPLE_RATE, stop_event)
             self.root.after(0, self.view.enter_analyzing)
 
             analyze_start = time.perf_counter()

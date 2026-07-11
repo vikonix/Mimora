@@ -56,6 +56,7 @@ _KNOWN_USER_KEYS = {
     "user_name",
     "phrase_length",
     "reference_speed",
+    "playback_own_recording",
     "save_recordings",
     "show_prosody",
     "show_face",
@@ -81,7 +82,7 @@ USER_SETTING_DEFAULTS = {
     "voice": None,
     "color_theme": "dark",
     "pronunciation_score_threshold": 70.0,
-    "phoneme_good_mode": "ceiling",
+    "phoneme_good_mode": "global",
     "max_record_seconds": 20,
     "llm_backend": "local_server",
     "external_model_path": "models/llama-3.2-3b-instruct-q4_k_m.gguf",
@@ -93,6 +94,7 @@ USER_SETTING_DEFAULTS = {
     "user_name": "",
     "phrase_length": "full",
     "reference_speed": 1.0,
+    "playback_own_recording": True,
     "save_recordings": False,
     "show_prosody": False,
     "show_face": True,
@@ -244,6 +246,13 @@ SILENCE_THRESHOLD = _num("silence_threshold", 0.01, minimum=0.001)
 # default: the dumps put the user's voice on disk on every attempt, so they
 # are opt-in for debugging rather than always-on.
 SAVE_RECORDINGS = _bool("save_recordings", False)
+
+# Play the just-recorded take back to the user before analysis
+# ("playback_own_recording"): the learner hears their own attempt right away,
+# then the score follows. On by default. Turning it off skips straight to
+# analysis (useful on slow machines, or when the extra playback is unwanted);
+# the manual "listen to your recording" control is unaffected either way.
+PLAYBACK_OWN_RECORDING = _bool("playback_own_recording", True)
 
 # Model warm-up at startup ("warm_up"): when true every loaded model runs one
 # dummy pass right after loading, so the first real take pays no first-call
@@ -413,15 +422,16 @@ if _user_voice is not None:
 KOKORO_VOICES = _ACCENT["voices"]
 
 # Reference playback speed ("reference_speed"), chosen in Settings and
-# persisted on change. The Settings selector is built from these choices, so the
-# valid values and the visible options can never drift apart.
-REFERENCE_SPEED_CHOICES = (1.0, 0.9, 0.8)
-REFERENCE_SPEED = float(_num("reference_speed", 1.0))
-if REFERENCE_SPEED not in REFERENCE_SPEED_CHOICES:
-    print(f"[config] settings.json: reference_speed must be one of "
-          f"{REFERENCE_SPEED_CHOICES}, got {REFERENCE_SPEED!r}; using 1.0",
-          file=sys.stderr)
-    REFERENCE_SPEED = 1.0
+# persisted on change. The Settings control is a slider over a continuous
+# range (rather than a few fixed steps), so REFERENCE_SPEED_MIN/MAX define
+# both the valid bounds and the slider extent - they can never drift apart.
+# REFERENCE_SPEED_STEP is the slider's snap granularity.
+REFERENCE_SPEED_MIN = 0.7
+REFERENCE_SPEED_MAX = 1.4
+REFERENCE_SPEED_STEP = 0.05
+REFERENCE_SPEED = float(_num("reference_speed", 1.0,
+                             minimum=REFERENCE_SPEED_MIN,
+                             maximum=REFERENCE_SPEED_MAX))
 
 # The one-tap slow replay (the "Slow ▶" button next to Reference) plays one
 # step slower than the normal reference: REFERENCE_SPEED - REFERENCE_SLOW_DELTA.
@@ -455,18 +465,19 @@ if not isinstance(ENGINE, str) or ENGINE not in ENGINE_CHOICES:
 # read from settings.json ("phoneme_good_mode"); only affects ENGINE == "phoneme":
 #   "global"  - one calibrated PHONEME_GOOD anchor for every phrase; the 0-5
 #               bucket cutpoints were fit under this anchor, so scores and
-#               buckets stay consistent.
+#               buckets stay consistent. The default: it needs no extra
+#               recognizer pass, so analysis is ~2x faster on the first take of
+#               each phrase (notably on CPU-only Intel Macs).
 #   "ceiling" - per-phrase anchor = the TTS reference's own recognized per-phone
-#               distance, so a flawless read maps to 100 for each phrase (the
-#               default). Costs an extra recognizer pass over the reference per
-#               phrase and shifts scores away from the global anchor the buckets
-#               were calibrated for.
+#               distance, so a flawless read maps to 100 for each phrase. Costs
+#               an extra recognizer pass over the reference per phrase and shifts
+#               scores away from the global anchor the buckets were calibrated for.
 PHONEME_GOOD_MODE_CHOICES = ("global", "ceiling")
-PHONEME_GOOD_MODE = _USER.get("phoneme_good_mode", "ceiling")
+PHONEME_GOOD_MODE = _USER.get("phoneme_good_mode", "global")
 if PHONEME_GOOD_MODE not in PHONEME_GOOD_MODE_CHOICES:
     print(f"[config] settings.json: phoneme_good_mode must be 'global' or "
-          f"'ceiling', got {PHONEME_GOOD_MODE!r}; using 'ceiling'", file=sys.stderr)
-    PHONEME_GOOD_MODE = "ceiling"
+          f"'ceiling', got {PHONEME_GOOD_MODE!r}; using 'global'", file=sys.stderr)
+    PHONEME_GOOD_MODE = "global"
 
 # =====================================================================
 # Acoustic + transcription model used by the pronunciation/acoustic/ module.

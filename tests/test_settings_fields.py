@@ -34,7 +34,7 @@ finally:
 
 from mimora.settings_window import all_fields, build_sections
 
-VALID_KINDS = {"bool", "choice", "number", "text", "path"}
+VALID_KINDS = {"bool", "choice", "number", "scale", "text", "path"}
 
 # Settings bound at startup (engine wiring, Kokoro pipeline, theme, LLM
 # subprocess): the window must mark exactly these as restart-only. A field
@@ -43,7 +43,6 @@ VALID_KINDS = {"bool", "choice", "number", "text", "path"}
 EXPECTED_RESTART_KEYS = {
     "english_accent",
     "engine",
-    "pronunciation_score_threshold",
     "phoneme_good_mode",
     "color_theme",
     "llm_backend",
@@ -134,6 +133,20 @@ class FieldValueTests(unittest.TestCase):
                 self.assertGreaterEqual(value, field.minimum, field.key)
             if field.maximum is not None:
                 self.assertLessEqual(value, field.maximum, field.key)
+
+    def test_scale_fields_are_numeric_and_bounded(self):
+        # A slider needs both bounds (they define its extent) and a current
+        # value inside them, or the thumb has nowhere valid to sit.
+        for field in all_fields():
+            if field.kind != "scale":
+                continue
+            value = field.get_value()
+            self.assertIsInstance(value, (int, float),
+                                  f"{field.key!r} value is not a number")
+            self.assertIsNotNone(field.minimum, f"{field.key!r} lacks minimum")
+            self.assertIsNotNone(field.maximum, f"{field.key!r} lacks maximum")
+            self.assertGreaterEqual(value, field.minimum, field.key)
+            self.assertLessEqual(value, field.maximum, field.key)
 
     def test_path_fields_declare_file_types(self):
         for field in all_fields():

@@ -73,6 +73,8 @@ class Field:
         "bool"   - Checkbutton
         "choice" - read-only Combobox over choices()
         "number" - Entry validated against minimum/maximum (int when integer)
+        "scale"  - Scale slider over [minimum, maximum], snapped to step and
+                   committed on release; shows the live value beside it
         "text"   - free-text Entry
         "path"   - read-only Entry + Browse... file picker
     get_value returns the current effective value from config (called when the
@@ -81,6 +83,7 @@ class Field:
     restart field also carries runtime_value - the validated constant the
     running process was started with - so the pending-restart hint reflects
     "saved differs from running", even across window close/reopen.
+    step is the snap granularity of a "scale" slider (ignored by other kinds).
     """
     key: str
     label: str
@@ -94,6 +97,7 @@ class Field:
     runtime_value: Optional[Callable[[], object]] = None
     file_types: tuple = ()
     help: str = ""
+    step: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -138,13 +142,20 @@ def build_sections() -> tuple:
                                               config.PHRASE_LENGTH),
                   choices=lambda: config.PHRASE_LENGTH_CHOICES,
                   help="full = whole sentence, fragment = 2-4 words."),
-            Field("reference_speed", "Reference speed", "choice",
+            Field("reference_speed", "Reference speed", "scale",
                   lambda: config.user_setting("reference_speed",
                                               config.REFERENCE_SPEED),
-                  choices=lambda: config.REFERENCE_SPEED_CHOICES,
+                  minimum=config.REFERENCE_SPEED_MIN,
+                  maximum=config.REFERENCE_SPEED_MAX,
+                  step=config.REFERENCE_SPEED_STEP,
                   help="Normal reference playback speed. The Slow ▶ "
                        "button next to Reference plays 0.1 below this "
                        "(e.g. 0.9 -> 0.8)."),
+            Field("playback_own_recording", "Play back your recording", "bool",
+                  lambda: config.user_setting("playback_own_recording",
+                                              config.PLAYBACK_OWN_RECORDING),
+                  help="Hear your take played back before the score. "
+                       "Off skips straight to analysis."),
             Field("practice_text_file", "Practice text file", "path",
                   lambda: config.user_setting("practice_text_file",
                                               config.PRACTICE_TEXT_FILE),
@@ -157,20 +168,14 @@ def build_sections() -> tuple:
                   choices=lambda: config.ENGINE_CHOICES, restart=True,
                   runtime_value=lambda: config.ENGINE,
                   help="phoneme = default; none = scoring off (fast start)."),
-            Field("pronunciation_score_threshold", "Pass threshold", "number",
-                  lambda: config.user_setting(
-                      "pronunciation_score_threshold",
-                      config.PRONUNCIATION_SCORE_THRESHOLD),
-                  minimum=0, maximum=100, restart=True,
-                  runtime_value=lambda: config.PRONUNCIATION_SCORE_THRESHOLD,
-                  help="Score (0-100) at which a take is accepted."),
             Field("phoneme_good_mode", "Phoneme anchor mode", "choice",
                   lambda: config.user_setting("phoneme_good_mode",
                                               config.PHONEME_GOOD_MODE),
                   choices=lambda: config.PHONEME_GOOD_MODE_CHOICES,
                   restart=True,
                   runtime_value=lambda: config.PHONEME_GOOD_MODE,
-                  help="ceiling = a flawless read maps to 100 per phrase."),
+                  help="global = one calibrated anchor (default, faster); "
+                       "ceiling = a flawless read maps to 100 per phrase."),
         )),
         Section("Appearance", (
             Field("color_theme", "Color theme", "choice",
@@ -281,6 +286,7 @@ class SettingsWindow:
         self._restart_pending = {}    # key -> label of touched restart fields
         self._vars = {}               # key -> tk.Variable
         self._widgets = {}            # key -> main control widget
+        self._scale_labels = {}       # key -> value label beside a "scale" slider
         self._committed = {}          # key -> last committed value
         self._fields = {f.key: f for f in all_fields()}
 
@@ -338,6 +344,12 @@ class SettingsWindow:
         try:
             if field.kind == "bool":
                 var.set(bool(value))
+            elif field.kind == "scale":
+                snapped = self._scale_snap(field, float(value))
+                var.set(snapped)
+                label = self._scale_labels.get(key)
+                if label is not None:
+                    label.config(text=self._display_value(field, snapped))
             else:
                 var.set(self._display_value(field, value))
             self._committed[key] = value
@@ -473,6 +485,37 @@ class SettingsWindow:
                 return container
             return combo
 
+        if field.kind == "scale":
+            frame = tk.Frame(parent, bg=THEME["bg_main"])
+            snapped = self._scale_snap(field, float(value))
+            var = tk.DoubleVar(value=snapped)
+            scale = self._ttk.Scale(
+                frame, from_=field.minimum, to=field.maximum,
+                orient=tk.HORIZONTAL, variable=var,
+                command=lambda _v, f=field: self._on_scale_move(f))
+            scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            value_lbl = tk.Label(
+                frame, text=self._display_value(field, snapped),
+                font=(FONT_FAMILY, FONT_SIZE_SMALL), fg=THEME["text_accent"],
+                bg=THEME["bg_main"], width=4, anchor=tk.E)
+            value_lbl.pack(side=tk.LEFT, padx=(8, 0))
+            # Commit the snapped value only when the drag ends, not on every
+            # pixel of movement (each commit persists and re-previews the speed).
+            scale.bind("<ButtonRelease-1>",
+                       lambda e, f=field: self._commit_scale(f))
+            # Tk's Scale binds the wheel to nudge the value; as with the
+            # comboboxes, redirect it to scrolling the settings column so a
+            # scroll-past never silently changes (and persists) the setting.
+            def _wheel_scrolls_column(event):
+                self._on_mousewheel(event)
+                return "break"
+            for sequence in WHEEL_EVENTS:
+                scale.bind(sequence, _wheel_scrolls_column)
+            self._vars[field.key] = var
+            self._widgets[field.key] = scale
+            self._scale_labels[field.key] = value_lbl
+            return frame
+
         if field.kind in ("number", "text"):
             var = tk.StringVar(value=self._display_value(field, value))
             entry = tk.Entry(
@@ -598,6 +641,8 @@ class SettingsWindow:
             if field.integer:
                 return str(int(value))
             return f"{float(value):g}"
+        if field.kind == "scale":
+            return f"{float(value):g}"
         return str(value)
 
     def _emit(self, field: Field, value):
@@ -692,6 +737,40 @@ class SettingsWindow:
         voice = self._vars["voice"].get()
         if voice:
             self._cb.on_preview_voice(voice)
+
+    def _scale_snap(self, field: Field, value: float) -> float:
+        """Clamp *value* to [minimum, maximum] and snap it to the field's step.
+
+        The slider itself is continuous; snapping keeps the persisted value on
+        the discrete grid the user expects (e.g. 0.05 steps for reference
+        speed) instead of an arbitrary float like 0.9137.
+        """
+        lo, hi = field.minimum, field.maximum
+        value = max(lo, min(hi, value))
+        if field.step:
+            value = round(round((value - lo) / field.step) * field.step + lo, 6)
+            value = max(lo, min(hi, value))
+        return value
+
+    def _on_scale_move(self, field: Field):
+        """Refresh the value label live as the slider is dragged (no commit)."""
+        snapped = self._scale_snap(field, float(self._vars[field.key].get()))
+        label = self._scale_labels.get(field.key)
+        if label is not None:
+            label.config(text=self._display_value(field, snapped))
+
+    def _commit_scale(self, field: Field):
+        """Snap the thumb to the discrete value and commit it (drag finished)."""
+        snapped = self._scale_snap(field, float(self._vars[field.key].get()))
+        self._updating = True
+        try:
+            self._vars[field.key].set(snapped)  # pull the thumb onto the grid
+        finally:
+            self._updating = False
+        label = self._scale_labels.get(field.key)
+        if label is not None:
+            label.config(text=self._display_value(field, snapped))
+        self._emit(field, snapped)
 
     def _commit_entry(self, field: Field):
         """Validate and commit a number/text Entry when editing finishes."""
