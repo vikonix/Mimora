@@ -74,7 +74,8 @@ class Field:
         "choice" - read-only Combobox over choices()
         "number" - Entry validated against minimum/maximum (int when integer)
         "scale"  - Scale slider over [minimum, maximum], snapped to step and
-                   committed on release; shows the live value beside it
+                   committed when a mouse drag or key step ends; shows the
+                   live value beside it
         "text"   - free-text Entry
         "path"   - read-only Entry + Browse... file picker
     get_value returns the current effective value from config (called when the
@@ -503,6 +504,13 @@ class SettingsWindow:
             # pixel of movement (each commit persists and re-previews the speed).
             scale.bind("<ButtonRelease-1>",
                        lambda e, f=field: self._commit_scale(f))
+            # The scale is keyboard-operable too (arrows/Home/End via the Tk
+            # class bindings, which fire on KeyPress); commit on KeyRelease,
+            # otherwise a value stepped by keyboard shows on screen but is
+            # never persisted. Non-stepping keys commit the unchanged value,
+            # which _emit drops as a no-op.
+            scale.bind("<KeyRelease>",
+                       lambda e, f=field: self._commit_scale(f))
             # Tk's Scale binds the wheel to nudge the value; as with the
             # comboboxes, redirect it to scrolling the settings column so a
             # scroll-past never silently changes (and persists) the setting.
@@ -760,7 +768,12 @@ class SettingsWindow:
             label.config(text=self._display_value(field, snapped))
 
     def _commit_scale(self, field: Field):
-        """Snap the thumb to the discrete value and commit it (drag finished)."""
+        """Snap the thumb to the discrete value and commit it.
+
+        Runs when an interaction ends: mouse drag released, or a keyboard
+        step (arrows/Home/End) released. Idempotent - committing the already
+        committed value is dropped by _emit.
+        """
         snapped = self._scale_snap(field, float(self._vars[field.key].get()))
         self._updating = True
         try:

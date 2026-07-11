@@ -24,6 +24,11 @@ phonemizer-fork>=3.3.0
 # Articulatory feature distance for the phoneme substitution cost (the one dep the
 # acoustic core does not need).
 panphon>=0.20.0
+# transformers needs protobuf to parse the sentencepiece model when it builds the
+# wav2vec2 phoneme (fast) tokenizer. Usually pulled in transitively, but pin it so
+# a minimal standalone resolve does not fail with "requires the protobuf library".
+# Kept in sync with the root requirements.txt.
+protobuf>=3.20.0
 # Intel macOS needs <2 for torch 2.2.2 (see root requirements.txt note).
 numpy>=1.24.0; platform_system != 'Darwin' or platform_machine != 'x86_64'
 numpy>=1.24.0,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'

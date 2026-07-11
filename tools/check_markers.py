@@ -50,26 +50,33 @@ def main() -> int:
     for rel_path in REQUIREMENTS_FILES:
         path = REPO_ROOT / rel_path
         print(f"\n== {rel_path} ==")
-        # package name -> set of environments it is active in (to spot gaps/overlaps).
-        coverage: dict[str, set[str]] = {}
+        # package name -> environment -> number of active lines. Each marked
+        # package must resolve to exactly ONE line per environment: zero means
+        # pip installs nothing there, two+ means conflicting specifiers.
+        coverage: dict[str, dict[str, int]] = {}
         for raw in path.read_text(encoding="utf-8").splitlines():
             line = raw.strip()
             if not any(line.startswith(pkg) for pkg in MARKED_PACKAGES):
                 continue
             req = Requirement(line)  # raises on an invalid marker/specifier
             envs = active_environments(req)
-            coverage.setdefault(req.name, set()).update(envs)
+            counts = coverage.setdefault(req.name, dict.fromkeys(ENVIRONMENTS, 0))
+            for env in envs:
+                counts[env] += 1
             print(f"  {req.name:14} {str(req.specifier):14} -> {envs}")
 
-        # Each marked package must resolve to exactly one line in every environment.
-        for pkg, covered in coverage.items():
-            missing = set(ENVIRONMENTS) - covered
+        for pkg, counts in coverage.items():
+            missing = sorted(env for env, n in counts.items() if n == 0)
+            overlapping = sorted(env for env, n in counts.items() if n > 1)
             if missing:
                 ok = False
-                print(f"  !! {pkg}: no line active in {sorted(missing)}")
+                print(f"  !! {pkg}: no line active in {missing}")
+            if overlapping:
+                ok = False
+                print(f"  !! {pkg}: more than one line active in {overlapping}")
 
-    print("\nAll requirement lines parsed successfully." if ok
-          else "\nProblems found - see the !! lines above.")
+    print("\nOK: every marked package resolves to exactly one line per environment."
+          if ok else "\nProblems found - see the !! lines above.")
     return 0 if ok else 1
 
 
