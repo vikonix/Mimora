@@ -235,6 +235,9 @@ def load_models() -> None:
         if _model is not None and _model_ctc is not None and _processor is not None:
             return
 
+        from pronunciation.common.compat import allow_torch_load_for_trusted_models
+
+        allow_torch_load_for_trusted_models()
         cfg = get_config()
         _processor = Wav2Vec2Processor.from_pretrained(cfg.model_name)
 

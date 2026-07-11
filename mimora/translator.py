@@ -80,6 +80,9 @@ class TranslatorManager:
                 return
             from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
+            from pronunciation.common.compat import allow_torch_load_for_trusted_models
+
+            allow_torch_load_for_trusted_models()
             name = config.NLLB_TRANSLATOR_MODEL_NAME
             logging.info("Loading translator model %s on %s...", name, self._device)
             tokenizer = AutoTokenizer.from_pretrained(name)

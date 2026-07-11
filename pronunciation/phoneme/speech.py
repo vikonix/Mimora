@@ -414,7 +414,10 @@ def load_models() -> None:
             return
         from transformers import AutoModelForCTC, AutoProcessor
 
+        from pronunciation.common.compat import allow_torch_load_for_trusted_models
+
         _ensure_phonemizer_detected()
+        allow_torch_load_for_trusted_models()
         cfg = get_config()
         _processor = AutoProcessor.from_pretrained(cfg.model_name)
         _model = AutoModelForCTC.from_pretrained(cfg.model_name).to(cfg.device).eval()
