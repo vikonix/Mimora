@@ -29,6 +29,7 @@ from mimora import config
 # a restart because it was bound at startup.
 LIVE_CONFIG_ATTRS = {
     "save_recordings": ("SAVE_RECORDINGS", bool),
+    "random_voice": ("RANDOM_VOICE", bool),
     "playback_own_recording": ("PLAYBACK_OWN_RECORDING", bool),
     "max_record_seconds": ("MAX_RECORD_SECONDS", float),
     "silence_timeout": ("SILENCE_TIMEOUT", float),

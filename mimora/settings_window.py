@@ -152,6 +152,12 @@ def build_sections() -> tuple:
                   help="Normal reference playback speed. The Slow ▶ "
                        "button next to Reference plays 0.1 below this "
                        "(e.g. 0.9 -> 0.8)."),
+            Field("random_voice", "Random voice per phrase", "bool",
+                  lambda: config.user_setting("random_voice",
+                                              config.RANDOM_VOICE),
+                  help="Each new phrase speaks with a different voice of "
+                       "the current accent. The Voice choice above is kept "
+                       "and used again when this is off."),
             Field("playback_own_recording", "Play back your recording", "bool",
                   lambda: config.user_setting("playback_own_recording",
                                               config.PLAYBACK_OWN_RECORDING),

@@ -16,6 +16,7 @@ the whole app. Run this module to start the trainer:
     python main.py
 """
 
+import random
 import time
 import threading
 from typing import Optional
@@ -537,6 +538,24 @@ class PronunciationTrainerGUI:
         except AttributeError:
             return config.KOKORO_VOICE
 
+    def _next_reference_voice(self) -> str:
+        """Voice for the next phrase: the selected one, or a fresh random one.
+
+        With random_voice on, picks among the active accent's voices excluding
+        the voice the current reference was synthesized with, so every phrase
+        audibly changes voice. The pick is ephemeral - it is never persisted
+        and never touches the "voice" setting, which resumes when the option
+        is turned off (see config.RANDOM_VOICE).
+        """
+        if not config.RANDOM_VOICE:
+            return self._selected_voice()
+        candidates = [v for v in config.KOKORO_VOICES if v != self.current_voice]
+        if not candidates:
+            return self._selected_voice()
+        voice = random.choice(candidates)
+        logging.info(f"Random voice for the next phrase: {voice}.")
+        return voice
+
     def _selected_translation_language(self) -> str:
         """Return the selected translation-language label, or "" when off."""
         try:
@@ -780,7 +799,7 @@ class PronunciationTrainerGUI:
         # stop event is installed here too (see PlaybackController.new_event).
         length = self._selected_length()
         language = self._selected_translation_language()
-        voice = self._selected_voice()
+        voice = self._next_reference_voice()
         speed = self._selected_speed()
         self.playback.stop()  # silence any current playback first
         stop_event = self.playback.new_event()

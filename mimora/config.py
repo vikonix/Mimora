@@ -56,6 +56,7 @@ _KNOWN_USER_KEYS = {
     "user_name",
     "phrase_length",
     "reference_speed",
+    "random_voice",
     "playback_own_recording",
     "save_recordings",
     "show_prosody",
@@ -94,6 +95,7 @@ USER_SETTING_DEFAULTS = {
     "user_name": "",
     "phrase_length": "full",
     "reference_speed": 1.0,
+    "random_voice": False,
     "playback_own_recording": True,
     "save_recordings": False,
     "show_prosody": False,
@@ -246,6 +248,14 @@ SILENCE_THRESHOLD = _num("silence_threshold", 0.01, minimum=0.001)
 # default: the dumps put the user's voice on disk on every attempt, so they
 # are opt-in for debugging rather than always-on.
 SAVE_RECORDINGS = _bool("save_recordings", False)
+
+# Random reference voice ("random_voice"): when true, every new phrase picks a
+# fresh voice from the active accent's list (never the one just heard), instead
+# of the fixed "voice" setting. The pick is ephemeral - it is never written to
+# settings.json, so the chosen "voice" survives turning this off. Off by
+# default. Note: a voice's data is downloaded on its first use, so the first
+# pick of an unused voice delays that one generation.
+RANDOM_VOICE = _bool("random_voice", False)
 
 # Play the just-recorded take back to the user before analysis
 # ("playback_own_recording"): the learner hears their own attempt right away,
