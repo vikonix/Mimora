@@ -83,6 +83,25 @@ Work on:    colder
 - For GPU acceleration: an NVIDIA GPU with a CUDA-enabled PyTorch build.
 - **espeak-ng** (native binary, required by the phonemizer) - installed separately, see below.
 
+### macOS notes
+
+**Apple Silicon** Macs run the same pinned stack as Windows and Linux. **Intel
+Macs (x86_64)** are supported too, but with an automatic fallback: PyTorch
+publishes no macOS x86_64 wheel newer than **torch 2.2.2**, and that torch cannot
+run `transformers >= 5`. The requirements files therefore carry environment
+markers that, on Intel macOS only, install a relaxed stack automatically -
+**torch 2.2.2, transformers 4.x, NumPy < 2** - with no manual steps. The
+trade-off is that this fallback forgoes the `transformers >= 5.3` fix for
+CVE-2026-4372 and re-enables `torch.load` for the pinned models (the
+CVE-2025-32434 gate, handled in `pronunciation/common/compat.py`), which is
+acceptable for a local app that loads only these fixed, trusted model repos.
+Every other platform keeps the hardened pins.
+
+`tkinter` is bundled by the python.org installer but **not** by Homebrew Python.
+`install.py` installs the matching `python-tk@<version>` formula for the
+interpreter it runs in; if you set things up by hand on Homebrew Python, match
+your version (e.g. `brew install python-tk@3.12` for Homebrew Python 3.12).
+
 ### Models
 
 `install.py` pre-downloads all of these (see [Quick install](#quick-install-script)).
