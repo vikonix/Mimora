@@ -63,9 +63,9 @@ Work on:    colder
 ## Features
 
 - 🎙️ **One-press recording** - press once, speak, and it stops by itself when you go quiet (peak normalization, silence-based auto-stop).
-- 🗣️ **One consistent reference voice** - prompts and the scored reference are spoken by the same Kokoro voice, so you always compare against the same target (no second TTS).
+- 🗣️ **One consistent reference voice** - prompts and the scored reference are spoken by the same Kokoro voice, so you always compare against the same target (no second TTS). Prefer variety? Enable **Random voice per phrase** in the settings.
 - 🧠 **Practice your own material** - paste a paragraph, song, or sentences into the *practice text* panel and the local LLM turns it into an endless stream of phrases to drill.
-- ⚙️ **Settings window** (the gear button) - pick the Kokoro **voice** and playback **speed**, choose the **phrase length** (full phrase or a few words), and set the **translation language** shown under the phrase. A **user name** selects the per-user scoring calibration.
+- ⚙️ **Settings window** (the gear button) - pick the Kokoro **voice** and playback **speed** (or let **Random voice per phrase** speak every new phrase with a different voice of the accent), choose the **phrase length** (full phrase or a few words), and set the **translation language** shown under the phrase. A **user name** selects the per-user scoring calibration.
 - 📊 **Objective scoring with two interchangeable engines**, selected by `ENGINE` in `mimora/config.py`. The default **phoneme** engine scores espeak reference phonemes against a wav2vec2 phoneme recognizer (feature-weighted edit distance, mapped to a calibrated 0-5 grade). The **acoustic** engine combines per-step cosine DTW over Wav2Vec2 embeddings (40%) with phoneme (30%) and word (30%) error rates. Both are length-invariant and calibratable to your voice (`python pronunciation/<engine>/calibrate.py`).
 - 🔁 **Replay reference vs. your recording** to hear the difference.
 - 😀 **Articulation face** - a schematic mouth opens and closes with the speech as a reference or your recording plays, and shows a smiley reflecting your score while idle.
@@ -284,6 +284,7 @@ Key options in [`mimora/config.py`](mimora/config.py) (overridable via [`config/
 | `PHRASE_GEN_WINDOW_REPEATS` | `5` | Phrases generated per window position before it slides forward by half its size. |
 | `LLM_BACKEND` | `local_server` | `local_server` (auto-started subprocess) or `lm-studio`. |
 | `MAX_RECORD_SECONDS` | `20` | Safety cap on recording length. |
+| `RANDOM_VOICE` | `False` | Speak every new phrase with a fresh random voice of the active accent (never the one just heard). The `voice` setting is kept and used again when this is off. |
 
 ---
 
