@@ -36,8 +36,13 @@ ttkbootstrap>=1.10,<2
 
 # NLLB-200 offline translator (mimora/translator.py). The model is loaded
 # through transformers (above) on torch; sentencepiece backs the NLLB tokenizer
-# (used by the slow-tokenizer path and the standard NLLB setup).
+# (used by the slow-tokenizer path and the standard NLLB setup). protobuf is
+# required by transformers to parse the sentencepiece model when it builds the
+# fast tokenizer (both NLLB and the wav2vec2 phoneme tokenizer hit this path);
+# it is usually pulled in transitively, but pin it so the phoneme engine does
+# not fail with "requires the protobuf library" on a minimal resolve.
 sentencepiece>=0.1.99
+protobuf>=3.20.0
 
 # Face widget (mimora/face_widget.py): frames are drawn supersampled with
 # Pillow and downscaled for antialiasing. Pillow was already installed as a

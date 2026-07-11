@@ -370,6 +370,38 @@ _model = None
 _load_lock = threading.Lock()
 
 
+def _ensure_phonemizer_detected() -> None:
+    """Make transformers see phonemizer-fork as satisfying its "phonemizer" backend.
+
+    We install ``phonemizer-fork`` (not plain ``phonemizer``) because Kokoro/misaki
+    need its ``EspeakWrapper.set_data_path()``; both share the ``phonemizer`` import
+    namespace and cannot be installed together. transformers>=5 detects it fine
+    (its availability check is import-spec based), but transformers<5 -- which the
+    Intel-macOS stack falls back to, since torch>2.2 has no x86_64 wheel there --
+    checks the *distribution* name and finds ``phonemizer-fork``, not ``phonemizer``,
+    so ``Wav2Vec2PhonemeCTCTokenizer`` refuses to initialise. The fork is a working
+    drop-in, so when it is importable we flip transformers' cached availability flag.
+    No-op when phonemizer is genuinely missing (let transformers raise its own error)
+    or already detected (transformers>=5).
+    """
+    import importlib.util
+
+    if importlib.util.find_spec("phonemizer") is None:
+        return
+    try:
+        from transformers.utils import import_utils as _iu
+    except Exception:
+        return
+    try:
+        if _iu.is_phonemizer_available():
+            return
+    except Exception:
+        return
+    # transformers<5 reads this module-level flag from is_phonemizer_available().
+    if hasattr(_iu, "_phonemizer_available"):
+        _iu._phonemizer_available = True
+
+
 def load_models() -> None:
     """Load the wav2vec2 phoneme weights into memory once. Safe to call repeatedly.
 
@@ -382,6 +414,7 @@ def load_models() -> None:
             return
         from transformers import AutoModelForCTC, AutoProcessor
 
+        _ensure_phonemizer_detected()
         cfg = get_config()
         _processor = AutoProcessor.from_pretrained(cfg.model_name)
         _model = AutoModelForCTC.from_pretrained(cfg.model_name).to(cfg.device).eval()
