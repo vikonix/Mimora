@@ -27,6 +27,7 @@ from mimora.ui_theme import (
     FONT_SIZE_SCORE,
     FONT_SIZE_SUBTITLE,
     THEME,
+    FlatButton,
     Tooltip,
 )
 
@@ -387,7 +388,7 @@ class HeroCard:
         self.workon_caption.configure(text="WORK ON" if phonemes else "")
         for phoneme in phonemes:
             example = example_for(phoneme)
-            badge = tk.Button(self.badges_frame, text=f"/{phoneme}/",
+            badge = FlatButton(self.badges_frame, text=f"/{phoneme}/",
                               font=(FONT_FAMILY, FONT_SIZE_BODY),
                               bg=THEME["bg_accent"], fg=THEME["text_accent"],
                               activebackground=THEME["bg_button"],

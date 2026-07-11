@@ -50,6 +50,7 @@ from mimora.ui_theme import (  # noqa: F401  (re-exported for settings_window)
     FONT_SIZE_TITLE,
     THEME,
     WHEEL_EVENTS,
+    FlatButton,
     bind_hover,
     wheel_scroll_units,
 )
@@ -199,7 +200,7 @@ class TrainerView:
         control row passes a smaller value so its four columns fit the 600px
         window without clipping the last button.
         """
-        button = tk.Button(parent, text=text, command=command,
+        button = FlatButton(parent, text=text, command=command,
                            font=(FONT_FAMILY, FONT_SIZE_BODY, "bold"),
                            bg=THEME["bg_button"], fg=THEME["text_button"],
                            activebackground=THEME["bg_button_active"], activeforeground=THEME["text"],
@@ -254,7 +255,7 @@ class TrainerView:
         # <Enter>/<Leave> pair brightens the glyph and fills the button like a
         # quiet outline-less icon button - otherwise the gear reads as a stray
         # character rather than a control.
-        gear = tk.Button(header_frame, text="⚙",
+        gear = FlatButton(header_frame, text="⚙",
                          command=self._cb.on_settings_clicked,
                          font=(FONT_FAMILY, FONT_SIZE_ICON), bg=THEME["bg_main"],
                          fg=THEME["text_dim"],

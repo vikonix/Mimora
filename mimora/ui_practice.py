@@ -18,6 +18,7 @@ from mimora.ui_theme import (
     FONT_SIZE_BODY,
     FONT_SIZE_SMALL,
     THEME,
+    FlatButton,
     Tooltip,
     bind_hover,
 )
@@ -51,7 +52,7 @@ class PracticePanel:
         # underline + tooltip make the caption read as clickable (same
         # treatment as the prosody caption).
         self.collapsed = tk.BooleanVar(value=config.PRACTICE_TEXT_COLLAPSED)
-        self._caption = tk.Button(
+        self._caption = FlatButton(
             header, text="▾ Practice text:",
             command=self._on_caption_clicked,
             font=(FONT_FAMILY, FONT_SIZE_BODY, "bold"), fg=THEME["text_dim"], bg=THEME["bg_main"],
@@ -69,13 +70,13 @@ class PracticePanel:
         # discoverability: a control visible even while the field still shows the
         # pre-filled welcome text is the clearest signal that the box is editable
         # (reviewers kept reading the box as static help text).
-        self._paste_btn = tk.Button(
+        self._paste_btn = FlatButton(
             header, text="Paste", command=self._paste,
             font=(FONT_FAMILY, FONT_SIZE_SMALL), bg=THEME["bg_accent"], fg=THEME["text_accent"],
             activebackground=THEME["bg_accent_active"], activeforeground=THEME["text_bright"],
             bd=0, width=10, padx=8, pady=1, cursor="hand2")
         self._paste_btn.pack(side=tk.LEFT, padx=(10, 0))
-        self._clear_btn = tk.Button(
+        self._clear_btn = FlatButton(
             header, text="Clear text", command=self._clear,
             font=(FONT_FAMILY, FONT_SIZE_SMALL), bg=THEME["bg_accent"], fg=THEME["text_accent"],
             activebackground=THEME["bg_accent_active"], activeforeground=THEME["text_bright"],

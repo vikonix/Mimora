@@ -40,6 +40,7 @@ from mimora.ui import (
     FONT_SIZE_SMALL,
     THEME,
     WHEEL_EVENTS,
+    FlatButton,
     wheel_scroll_units,
 )
 
@@ -498,7 +499,7 @@ class SettingsWindow:
             entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
             # Show the tail of a long path (the file name matters most).
             entry.xview_moveto(1.0)
-            tk.Button(frame, text="Browse…",
+            FlatButton(frame, text="Browse…",
                       command=lambda f=field: self._browse_path(f),
                       font=(FONT_FAMILY, FONT_SIZE_CAPTION), bg=THEME["bg_accent"],
                       fg=THEME["text_accent"],
@@ -514,7 +515,7 @@ class SettingsWindow:
 
     def _add_preview_button(self, frame):
         """Add the Listen preview button next to the voice combobox."""
-        self._preview_btn = tk.Button(
+        self._preview_btn = FlatButton(
             frame, text="▶ Listen", command=self._preview_voice,
             font=(FONT_FAMILY, FONT_SIZE_CAPTION), bg=THEME["bg_accent"],
             fg=THEME["text_accent"],
@@ -550,7 +551,7 @@ class SettingsWindow:
         button_row.pack(side=tk.TOP, fill=tk.X)
 
         # "Default" resets everything to the built-in defaults (confirmed).
-        tk.Button(button_row, text="Default", command=self._reset_defaults,
+        FlatButton(button_row, text="Default", command=self._reset_defaults,
                   font=(FONT_FAMILY, FONT_SIZE_SMALL), bg=THEME["bg_accent"],
                   fg=THEME["text_accent"],
                   activebackground=THEME["bg_accent_active"],
@@ -558,7 +559,7 @@ class SettingsWindow:
                   bd=0, padx=14, pady=4, cursor="hand2").pack(
             side=tk.LEFT, padx=(12, 0), pady=6)
 
-        tk.Button(button_row, text="Close", command=self._on_close,
+        FlatButton(button_row, text="Close", command=self._on_close,
                   font=(FONT_FAMILY, FONT_SIZE_SMALL, "bold"), bg=THEME["bg_button"],
                   fg=THEME["text_button"],
                   activebackground=THEME["bg_button_active"],
@@ -567,7 +568,7 @@ class SettingsWindow:
             side=tk.RIGHT, padx=12, pady=6)
 
         # "Cancel" undoes everything changed in this window session and closes.
-        tk.Button(button_row, text="Cancel", command=self._cancel,
+        FlatButton(button_row, text="Cancel", command=self._cancel,
                   font=(FONT_FAMILY, FONT_SIZE_SMALL), bg=THEME["bg_accent"],
                   fg=THEME["text_accent"],
                   activebackground=THEME["bg_accent_active"],
@@ -579,7 +580,7 @@ class SettingsWindow:
         # so it stands apart from the light Cancel button beside it instead of
         # blending into it. A warn/orange fill was avoided: it fails contrast in
         # the dark theme (light orange fill under white text).
-        self._restart_btn = tk.Button(
+        self._restart_btn = FlatButton(
             button_row, text="Restart now", command=self._restart_now,
             font=(FONT_FAMILY, FONT_SIZE_SMALL, "bold"), bg=THEME["bg_button"],
             fg=THEME["text_button"],

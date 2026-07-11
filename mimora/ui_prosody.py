@@ -17,6 +17,7 @@ from mimora.ui_theme import (
     FONT_SIZE_BODY,
     FONT_SIZE_CAPTION,
     THEME,
+    FlatButton,
     Tooltip,
     bind_hover,
 )
@@ -46,7 +47,7 @@ class ProsodyPanel:
         # caption read as clickable, not as a decorated label (reviewers took
         # the arrow for a technical artifact).
         self.show_prosody = tk.BooleanVar(value=config.SHOW_PROSODY)
-        self._caption = tk.Button(
+        self._caption = FlatButton(
             self.frame, text="▾ Intonation & stress",
             command=self._on_caption_clicked,
             font=(FONT_FAMILY, FONT_SIZE_BODY, "bold"), fg=THEME["text_dim"], bg=THEME["bg_main"],

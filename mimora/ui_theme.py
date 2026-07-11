@@ -103,6 +103,135 @@ def wheel_scroll_units(event) -> int:
     return -1 if delta > 0 else 1  # macOS: small per-event deltas
 
 
+class FlatButton(tk.Label):
+    """A flat, fully colour-controllable button built on :class:`tk.Label`.
+
+    On macOS the classic :class:`tk.Button` is drawn by the native Aqua engine,
+    which ignores the ``bg``/``activebackground`` options - every button renders
+    as a white system button regardless of the THEME colour passed, so the app's
+    purple buttons came out almost white on Mac. :class:`tk.Label` honours
+    ``bg``/``fg`` on every platform, so this emulates the slice of the tk.Button
+    API the view relies on - ``command``, ``state`` (normal/disabled), the
+    ``active*`` press colours and ``disabledforeground`` - on top of a Label.
+    The result is identical on Windows/Linux and finally-purple on macOS.
+
+    Faithful to tk.Button semantics: the label shows its ``active*`` colours
+    while pressed and fires ``command`` on release *inside* the widget; a
+    disabled button neither highlights nor fires. ``config(state=...)`` and
+    ``widget["state"]`` work as before, so callers need no changes beyond the
+    class name. Only ``<ButtonPress-1>``/``<ButtonRelease-1>``/``<Leave>`` are
+    bound here (not ``<Enter>``), leaving :func:`bind_hover` free to add a hover
+    treatment on the same widget without clashing.
+    """
+
+    def __init__(self, parent, command=None, activebackground=None,
+                 activeforeground=None, disabledforeground=None,
+                 state=tk.NORMAL, **kwargs):
+        self._command = command
+        self._normal_bg = kwargs.get("bg", kwargs.get("background"))
+        self._normal_fg = kwargs.get("fg", kwargs.get("foreground"))
+        self._active_bg = activebackground if activebackground is not None else self._normal_bg
+        self._active_fg = activeforeground if activeforeground is not None else self._normal_fg
+        self._disabled_fg = disabledforeground if disabledforeground is not None else self._normal_fg
+        self._state = state
+        self._pressed = False
+        super().__init__(parent, **kwargs)
+        self.bind("<ButtonPress-1>", self._on_press, add="+")
+        self.bind("<ButtonRelease-1>", self._on_release, add="+")
+        self.bind("<Leave>", self._on_leave, add="+")
+        self._apply_state()
+
+    def _paint(self, bg, fg):
+        """Set bg/fg on the underlying Label, skipping any unset (None) colour."""
+        opts = {}
+        if bg is not None:
+            opts["bg"] = bg
+        if fg is not None:
+            opts["fg"] = fg
+        if opts:
+            tk.Label.configure(self, **opts)
+
+    def _apply_state(self):
+        """Repaint in the resting look for the current enabled/disabled state."""
+        self._pressed = False
+        fg = self._disabled_fg if self._state == tk.DISABLED else self._normal_fg
+        self._paint(self._normal_bg, fg)
+
+    def _on_press(self, _event=None):
+        if self._state == tk.DISABLED:
+            return
+        self._pressed = True
+        self._paint(self._active_bg, self._active_fg)
+
+    def _on_release(self, event=None):
+        was_pressed = self._pressed
+        self._apply_state()  # restore the resting look (also clears _pressed)
+        if self._state == tk.DISABLED or not was_pressed:
+            return
+        # tk.Button fires only when the release lands inside the widget.
+        if event is not None and not (
+                0 <= event.x < self.winfo_width()
+                and 0 <= event.y < self.winfo_height()):
+            return
+        if self._command is not None:
+            self._command()
+
+    def _on_leave(self, _event=None):
+        # Dragging off a pressed button drops the pressed look and cancels the
+        # click, matching tk.Button.
+        if self._pressed:
+            self._apply_state()
+
+    def configure(self, cnf=None, **kw):
+        """Accept the tk.Button-only options this view sets at runtime.
+
+        ``command``/``activebackground``/``activeforeground``/
+        ``disabledforeground``/``state`` are intercepted (a Label would reject
+        them); ``bg``/``fg`` updates are mirrored into the resting-colour store
+        so hover/press stay consistent. Everything else falls through to Label.
+        """
+        if cnf:
+            kw = {**cnf, **kw}
+        if "command" in kw:
+            self._command = kw.pop("command")
+        if "activebackground" in kw:
+            self._active_bg = kw.pop("activebackground")
+        if "activeforeground" in kw:
+            self._active_fg = kw.pop("activeforeground")
+        if "disabledforeground" in kw:
+            self._disabled_fg = kw.pop("disabledforeground")
+        if "state" in kw:
+            self._state = kw.pop("state")
+        if "bg" in kw:
+            self._normal_bg = kw["bg"]
+        if "background" in kw:
+            self._normal_bg = kw["background"]
+        if "fg" in kw:
+            self._normal_fg = kw["fg"]
+        if "foreground" in kw:
+            self._normal_fg = kw["foreground"]
+        if kw:
+            tk.Label.configure(self, **kw)
+        self._apply_state()
+
+    config = configure
+
+    def cget(self, key):
+        if key == "state":
+            return self._state
+        if key == "command":
+            return self._command
+        if key == "activebackground":
+            return self._active_bg
+        if key == "activeforeground":
+            return self._active_fg
+        if key == "disabledforeground":
+            return self._disabled_fg
+        return tk.Label.cget(self, key)
+
+    __getitem__ = cget
+
+
 def bind_hover(widget, enter: dict, leave: dict) -> None:
     """Give a widget a hover state: ``config(**enter)`` on ``<Enter>``,
     ``config(**leave)`` on ``<Leave>``.
