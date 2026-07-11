@@ -6,8 +6,9 @@ Intel macOS (x86_64) gets a relaxed stack (torch==2.2.2, NumPy<2, transformers
 marked line and prints which simulated environments it activates in, so a
 mistake (an overlapping or missing marker) is obvious without running pip.
 
-Pure string parsing - no network, no installs - safe to run on any OS. Run from
-the repository root so the relative requirements paths resolve:
+Pure string parsing - no network, no installs - safe to run on any OS. The
+requirements paths are resolved against the repository root derived from this
+file's location, so the working directory does not matter:
 
     python tools/check_markers.py
 """

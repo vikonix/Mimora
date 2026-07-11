@@ -75,6 +75,18 @@ def allow_torch_load_for_trusted_models() -> None:
             "(torch %s < 2.6; models ship only .bin, no safetensors).",
             _installed_torch_version(),
         )
+    else:
+        # Unexpected transformers layout (no check_torch_load_is_safe found).
+        # Either the gate does not exist in this version - loading will just
+        # work - or it lives elsewhere and from_pretrained will still refuse
+        # .bin checkpoints; say so, or that failure looks inexplicable.
+        logging.getLogger(__name__).warning(
+            "Intel-macOS fallback: found no check_torch_load_is_safe to disable "
+            "(torch %s < 2.6). If loading fails with a torch.load/CVE-2025-32434 "
+            "error, the installed transformers version keeps the gate in an "
+            "unexpected module.",
+            _installed_torch_version(),
+        )
     _handled = True
 
 

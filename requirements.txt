@@ -2,7 +2,8 @@
 #
 # Intel macOS (x86_64) note: PyTorch published no wheel newer than 2.2.2 for
 # that platform (dropped after early 2024). torch 2.2.2 was built against NumPy
-# 1.x and is rejected by transformers 5.x (which needs torch>=2.4), so the three
+# 1.x and is rejected by transformers 5.x (which needs torch>=2.7, see the
+# comment at the transformers pin below), so the three
 # packages below carry PEP 508 markers that relax the pins on Intel macOS only:
 # torch==2.2.2, NumPy<2, transformers<5. This accepts CVE-2026-4372 on Intel Mac
 # (a local desktop app loading only trusted models) in exchange for a working

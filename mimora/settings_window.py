@@ -419,13 +419,19 @@ class SettingsWindow:
 
         if field.kind == "bool":
             var = tk.BooleanVar(value=bool(value))
+            # highlightthickness=1 keeps Tk's native focus ring: drawn in
+            # highlightcolor (accent) while focused, in highlightbackground
+            # (the window bg - invisible) otherwise, so tabbing onto the
+            # checkbox is visible, as with the sliders.
             control = tk.Checkbutton(
                 parent, text=field.label, variable=var,
                 command=lambda f=field, v=var: self._emit(f, bool(v.get())),
                 font=(FONT_FAMILY, FONT_SIZE_SMALL), fg=THEME["text"], bg=THEME["bg_main"],
                 activebackground=THEME["bg_main"],
                 activeforeground=THEME["text"],
-                selectcolor=THEME["bg_panel"], bd=0, highlightthickness=0,
+                selectcolor=THEME["bg_panel"], bd=0, highlightthickness=1,
+                highlightbackground=THEME["bg_main"],
+                highlightcolor=THEME["accent"],
                 cursor="hand2", anchor=tk.W)
             control.grid(row=row, column=0, columnspan=2, sticky=tk.W,
                          padx=14, pady=2)
@@ -487,7 +493,11 @@ class SettingsWindow:
             return combo
 
         if field.kind == "scale":
-            frame = tk.Frame(parent, bg=THEME["bg_main"])
+            # The 1px highlight ring doubles as the slider's focus indicator
+            # (see the FocusIn/FocusOut binds below); invisible while unfocused.
+            frame = tk.Frame(parent, bg=THEME["bg_main"],
+                             highlightthickness=1,
+                             highlightbackground=THEME["bg_main"])
             snapped = self._scale_snap(field, float(value))
             var = tk.DoubleVar(value=snapped)
             scale = self._ttk.Scale(
@@ -495,6 +505,23 @@ class SettingsWindow:
                 orient=tk.HORIZONTAL, variable=var,
                 command=lambda _v, f=field: self._on_scale_move(f))
             scale.pack(side=tk.LEFT, fill=tk.X, expand=True)
+            # The ttkbootstrap themes draw no visible focus ring on a scale,
+            # so a keyboard user tabbing onto it gets no cue: paint the row's
+            # ring in the accent colour while the slider holds focus.
+            scale.bind("<FocusIn>", lambda e: frame.config(
+                highlightbackground=THEME["accent"]), add="+")
+            scale.bind("<FocusOut>", lambda e: frame.config(
+                highlightbackground=THEME["bg_main"]), add="+")
+            # The TScale class bindings step arrows by a fixed 1.0 unit - more
+            # than this slider's whole range, so an arrow press slammed the
+            # value to min/max. Rebind them to one snap step ("break" stops
+            # the class binding); Home/End (min/max) stay as the class has them.
+            for arrows, direction in ((("Left", "Down"), -1),
+                                      (("Right", "Up"), +1)):
+                for arrow in arrows:
+                    scale.bind(f"<KeyPress-{arrow}>",
+                               lambda e, f=field, d=direction:
+                                   self._step_scale(f, d))
             value_lbl = tk.Label(
                 frame, text=self._display_value(field, snapped),
                 font=(FONT_FAMILY, FONT_SIZE_SMALL), fg=THEME["text_accent"],
@@ -766,6 +793,27 @@ class SettingsWindow:
         label = self._scale_labels.get(field.key)
         if label is not None:
             label.config(text=self._display_value(field, snapped))
+
+    def _step_scale(self, field: Field, direction: int) -> str:
+        """Nudge a scale one snap step by keyboard (replaces the class binding,
+        whose fixed 1.0-unit step is wider than the whole slider range).
+
+        Only moves the thumb and the value label; the commit happens on the
+        shared <KeyRelease> binding, same as the mouse path. Returns "break"
+        so the TScale class binding does not also fire.
+        """
+        step = field.step or (field.maximum - field.minimum) / 20
+        value = self._scale_snap(
+            field, float(self._vars[field.key].get()) + direction * step)
+        self._updating = True
+        try:
+            self._vars[field.key].set(value)
+        finally:
+            self._updating = False
+        label = self._scale_labels.get(field.key)
+        if label is not None:
+            label.config(text=self._display_value(field, value))
+        return "break"
 
     def _commit_scale(self, field: Field):
         """Snap the thumb to the discrete value and commit it.

@@ -119,9 +119,18 @@ class FlatButton(tk.Label):
     while pressed and fires ``command`` on release *inside* the widget; a
     disabled button neither highlights nor fires. ``config(state=...)`` and
     ``widget["state"]`` work as before, so callers need no changes beyond the
-    class name. Only ``<ButtonPress-1>``/``<ButtonRelease-1>``/``<Leave>`` are
+    class name. Only mouse button 1, ``<Leave>`` and the space/Return keys are
     bound here (not ``<Enter>``), leaving :func:`bind_hover` free to add a hover
     treatment on the same widget without clashing.
+
+    Keyboard, also as tk.Button: the button sits in the Tab order (a disabled
+    one is skipped) and space activates it - Return too, as a convenience
+    tk.Button lacks. The 1px highlight ring is the focus indicator: painted in
+    the button's own colour (invisible) while unfocused, in the theme accent
+    while focused - toggled explicitly on <FocusIn>/<FocusOut> rather than
+    left to highlightcolor, whose focused-state rendering is platform-shaky
+    for a Label. tk.Button's default highlightthickness is also 1, so the
+    geometry the layouts were tuned around is unchanged.
     """
 
     def __init__(self, parent, command=None, activebackground=None,
@@ -135,17 +144,42 @@ class FlatButton(tk.Label):
         self._disabled_fg = disabledforeground if disabledforeground is not None else self._normal_fg
         self._state = state
         self._pressed = False
+        self._focused = False
+        kwargs.setdefault("takefocus", 1)
+        kwargs.setdefault("highlightthickness", 1)
+        kwargs.setdefault("highlightcolor", THEME["accent"])
         super().__init__(parent, **kwargs)
         self.bind("<ButtonPress-1>", self._on_press, add="+")
         self.bind("<ButtonRelease-1>", self._on_release, add="+")
         self.bind("<Leave>", self._on_leave, add="+")
+        self.bind("<FocusIn>", lambda _e: self._paint_ring(True), add="+")
+        self.bind("<FocusOut>", lambda _e: self._paint_ring(False), add="+")
+        # Keyboard activation: press shows the active colours, release fires
+        # (no inside-the-widget check - there is no pointer to track).
+        for key in ("space", "Return"):
+            self.bind(f"<KeyPress-{key}>", self._on_press, add="+")
+            self.bind(f"<KeyRelease-{key}>",
+                      lambda _e: self._on_release(None), add="+")
         self._apply_state()
 
+    def _paint_ring(self, focused: bool):
+        """Show the focus ring in the accent colour, hide it into the fill."""
+        self._focused = focused
+        ring = THEME["accent"] if focused else self._normal_bg
+        if ring is not None:
+            tk.Label.configure(self, highlightbackground=ring)
+
     def _paint(self, bg, fg):
-        """Set bg/fg on the underlying Label, skipping any unset (None) colour."""
+        """Set bg/fg on the underlying Label, skipping any unset (None) colour.
+
+        While unfocused, the focus-ring strip (highlightbackground) follows the
+        fill so the ring stays invisible; while focused it keeps the accent.
+        """
         opts = {}
         if bg is not None:
             opts["bg"] = bg
+            if not self._focused:
+                opts["highlightbackground"] = bg
         if fg is not None:
             opts["fg"] = fg
         if opts:
@@ -156,6 +190,9 @@ class FlatButton(tk.Label):
         self._pressed = False
         fg = self._disabled_fg if self._state == tk.DISABLED else self._normal_fg
         self._paint(self._normal_bg, fg)
+        # A disabled tk.Button drops out of the Tab order; mirror that.
+        tk.Label.configure(
+            self, takefocus=0 if self._state == tk.DISABLED else 1)
 
     def _on_press(self, _event=None):
         if self._state == tk.DISABLED:

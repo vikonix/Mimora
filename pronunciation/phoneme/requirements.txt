@@ -29,6 +29,8 @@ panphon>=0.20.0
 # a minimal standalone resolve does not fail with "requires the protobuf library".
 # Kept in sync with the root requirements.txt.
 protobuf>=3.20.0
-# Intel macOS needs <2 for torch 2.2.2 (see root requirements.txt note).
-numpy>=1.24.0; platform_system != 'Darwin' or platform_machine != 'x86_64'
+# Caps kept in sync with the root requirements.txt: numba (via librosa, above)
+# supports NumPy <= 2.4, so 2.5 breaks librosa at runtime - drop when numba
+# supports 2.5. Intel macOS needs <2 for torch 2.2.2 (see the root note).
+numpy>=1.24.0,<2.5; platform_system != 'Darwin' or platform_machine != 'x86_64'
 numpy>=1.24.0,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'

@@ -698,7 +698,19 @@ def step_check_tkinter(
                                  "for Homebrew Python - the python.org "
                                  "installer bundles it already).",
                                  " ".join(brew_cmd)):
-                run_or_fail(brew_cmd, log, report, "tkinter")
+                if run_command(brew_cmd, log):
+                    report.add("tkinter", DONE)
+                    return
+                # Homebrew keeps python-tk@X.Y formulas only for the Python
+                # versions it currently ships, so the pinned name can simply
+                # not exist for this interpreter. Fall back to the bare
+                # formula: it targets Homebrew's default Python, which may or
+                # may not be this one, but it is the only remaining shot.
+                log.log(f"    brew install python-tk@{py_ver} failed (the "
+                        "formula may not exist for this Python version); "
+                        "trying the unpinned python-tk formula.")
+                run_or_fail(["brew", "install", "python-tk"], log, report,
+                            "tkinter", note="fallback: unpinned python-tk")
                 return
             report.add("tkinter", SKIPPED)
             return
