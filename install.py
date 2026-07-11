@@ -688,7 +688,12 @@ def step_check_tkinter(
 
     elif system == "Darwin":
         if shutil.which("brew"):
-            brew_cmd = ["brew", "install", "python-tk"]
+            # Pin the formula to the running interpreter's version. Bare
+            # "python-tk" resolves to Homebrew's current default Python
+            # (e.g. python-tk@3.14), which installs _tkinter for the wrong
+            # interpreter and leaves this 3.x venv still failing to import it.
+            py_ver = f"{sys.version_info.major}.{sys.version_info.minor}"
+            brew_cmd = ["brew", "install", f"python-tk@{py_ver}"]
             if confirmer.confirm("Install tkinter via Homebrew (only needed "
                                  "for Homebrew Python - the python.org "
                                  "installer bundles it already).",
