@@ -40,6 +40,11 @@ _USER = loader.read_json(CONFIG_DIR / "settings.json")
 
 _KNOWN_USER_KEYS = {
     "engine",
+    "practice_language",
+    "accent",
+    # Legacy: superseded by practice_language + accent. Still honored as a read
+    # fallback for the variant so an existing settings.json keeps working; the
+    # settings window migrates it to the new keys in a later stage.
     "english_accent",
     "voice",
     "color_theme",
@@ -79,6 +84,10 @@ for _key in _USER:
 # external_n_ctx is machine-derived by hardware detection (restart applies it).
 USER_SETTING_DEFAULTS = {
     "engine": "phoneme",
+    "practice_language": "english",
+    "accent": "american",
+    # Legacy alias of "accent" (see _KNOWN_USER_KEYS); kept in sync with it while
+    # the settings window still writes the old key.
     "english_accent": "american",
     "voice": None,
     "color_theme": "dark",
@@ -159,14 +168,13 @@ def default_user_settings() -> dict:
     """Resolved built-in defaults, ready to apply live after a reset.
 
     Resolves the None placeholders in USER_SETTING_DEFAULTS where possible
-    (voice -> the default accent's default voice) and makes the path defaults
+    (voice -> the default variant's default voice) and makes the path defaults
     absolute; keys with no resolvable literal (external_n_ctx) are omitted -
     hardware detection supplies them on the next start.
     """
     values = {key: value for key, value in USER_SETTING_DEFAULTS.items()
               if value is not None}
-    values["voice"] = accent_default_voice(
-        USER_SETTING_DEFAULTS["english_accent"])
+    values["voice"] = accent_default_voice(USER_SETTING_DEFAULTS["accent"])
     values["practice_text_file"] = str(BASE_DIR / values["practice_text_file"])
     values["external_model_path"] = str(BASE_DIR / values["external_model_path"])
     return values
@@ -211,10 +219,9 @@ MODEL_CACHE_DIR = BASE_DIR / "model_cache"
 loader.ensure_dir(MODEL_CACHE_DIR)
 os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 
-# =====================================================================
-# Language Configuration
-# =====================================================================
-TARGET_LANGUAGE = "English"
+# Language configuration (LANGUAGE_PROFILES, the selected practice language and
+# variant, and the derived TARGET_LANGUAGE / ESPEAK_LANGUAGE / KOKORO_* / voice
+# constants) lives below, after the settings-file accessors it depends on.
 
 # =====================================================================
 # Controls
@@ -333,103 +340,179 @@ EXTERNAL_N_CTX = int(_num("external_n_ctx",
                                   _HW.get("EXTERNAL_N_CTX", 2048), minimum=256))
 
 # =====================================================================
-# English Accent
+# Language & variant profiles
 # =====================================================================
-# Target English accent, read from settings.json ("english_accent") at startup.
-# Changing it requires a restart: the Kokoro pipeline language, the
-# default/selectable voices, and the espeak language used to build the
-# reference phonemes are all wired from this profile at load time (there is no
-# runtime switch).
-#   "american" - General American
-#   "british"  - British (Received Pronunciation)
-ENGLISH_ACCENT = _USER.get("english_accent", "american")
-
-# Per-accent settings. Voice prefixes: 'af_'/'bf_' = female, 'am_'/'bm_' = male
-# (a = American, b = British). A voice's data is downloaded on first use and
-# cached locally. The espeak_language must match the accent so pronunciation is
-# scored against phonemes of the same dialect (see pronunciation/acoustic/speech.py).
-_ACCENT_PROFILES = {
-    "american": {
-        "kokoro_lang_code": "a",
-        "espeak_language": "en-us",
-        "default_voice": "af_heart",
-        "voices": [
-            "af_heart", "af_bella", "af_nicole", "af_sarah", "af_sky",
-            "am_adam", "am_michael", "am_echo", "am_eric", "am_liam",
-        ],
-    },
-    "british": {
-        "kokoro_lang_code": "b",
-        "espeak_language": "en-gb",
-        "default_voice": "bf_emma",
-        "voices": [
-            "bf_emma", "bf_alice", "bf_isabella", "bf_lily",
-            "bm_george", "bm_daniel", "bm_fable", "bm_lewis",
-        ],
+# The practice language is DATA, not an assumption spread through the code.
+# Every language is one entry in LANGUAGE_PROFILES; adding a language is adding
+# a record here (plus engine calibration), never a new `if language == ...`.
+#
+# A profile describes:
+#   display_name       - shown in the window title and settings;
+#   flores_code        - FLORES-200 source code for the NLLB translator
+#                        (mimora/translator.py), e.g. "eng_Latn";
+#   default_variant    - the variant used when settings.json names none;
+#   engines            - pronunciation engines available for this language.
+#                        Availability is a language property: the acoustic
+#                        engine is English-only ASR, so a non-English profile
+#                        omits it (see available_engines);
+#   practice_text_file - default source text, relative to the project root;
+#   variants           - the former "accents": a display key -> Kokoro/espeak
+#                        wiring. Voice prefixes: 'af_'/'bf_' = female,
+#                        'am_'/'bm_' = male (a = American, b = British). A
+#                        voice's data is downloaded on first use and cached
+#                        locally; espeak_language must match the variant so
+#                        pronunciation is scored against phonemes of the same
+#                        dialect (see pronunciation/phoneme/speech.py).
+#
+# Only English is defined today (variants american/british). Spanish and the
+# code-ready future languages arrive as further entries. The phrase-generation
+# prompts and the voice-preview phrase move into the profile in a later stage,
+# together with the code that reads them (mimora/llm.py, settings_window.py).
+LANGUAGE_PROFILES = {
+    "english": {
+        "display_name": "English",
+        "flores_code": "eng_Latn",
+        "default_variant": "american",
+        "engines": ("phoneme", "acoustic", "none"),
+        "practice_text_file": "texts/practice_text.txt",
+        "variants": {
+            "american": {
+                "kokoro_lang_code": "a",
+                "espeak_language": "en-us",
+                "default_voice": "af_heart",
+                "voices": [
+                    "af_heart", "af_bella", "af_nicole", "af_sarah", "af_sky",
+                    "am_adam", "am_michael", "am_echo", "am_eric", "am_liam",
+                ],
+            },
+            "british": {
+                "kokoro_lang_code": "b",
+                "espeak_language": "en-gb",
+                "default_voice": "bf_emma",
+                "voices": [
+                    "bf_emma", "bf_alice", "bf_isabella", "bf_lily",
+                    "bm_george", "bm_daniel", "bm_fable", "bm_lewis",
+                ],
+            },
+        },
     },
 }
 
+
+def language_choices() -> tuple:
+    """Practice-language keys selectable in the UI, in definition order."""
+    return tuple(LANGUAGE_PROFILES)
+
+
+def _variants_of(language: str) -> dict:
+    """Variant map of *language*, or {} for an unknown language."""
+    profile = LANGUAGE_PROFILES.get(language)
+    return profile["variants"] if profile else {}
+
+
+def available_engines(language: str = None) -> tuple:
+    """Pronunciation engines available for *language* (default: the active one).
+
+    Engine availability is a property of the language profile: a non-English
+    language omits the English-only acoustic engine, so the settings window can
+    offer only the engines that actually work for the chosen language.
+    """
+    profile = LANGUAGE_PROFILES.get(language or PRACTICE_LANGUAGE)
+    return tuple(profile["engines"]) if profile else ()
+
+
 def accent_choices() -> tuple:
-    """Accent names selectable in the UI, in their definition order."""
-    return tuple(_ACCENT_PROFILES)
+    """Variant names of the active language, in their definition order.
+
+    Kept single-argument (over the active language) for the settings window,
+    which moves to the language/variant model in a later stage.
+    """
+    return tuple(_variants_of(PRACTICE_LANGUAGE))
 
 
 def accent_voices(accent: str) -> tuple:
-    """Voices belonging to *accent*, or () for an unknown accent.
+    """Voices belonging to *accent* of the active language, or () if unknown.
 
     Public accessor for the settings window: it lets the voice list follow the
-    accent selector without reaching into the private _ACCENT_PROFILES dict.
+    variant selector without reaching into LANGUAGE_PROFILES directly.
     """
-    profile = _ACCENT_PROFILES.get(accent)
-    return tuple(profile["voices"]) if profile else ()
+    variant = _variants_of(PRACTICE_LANGUAGE).get(accent)
+    return tuple(variant["voices"]) if variant else ()
 
 
 def accent_default_voice(accent: str) -> str:
-    """Default voice of *accent*, or "" for an unknown accent.
+    """Default voice of *accent* of the active language, or "" if unknown.
 
-    Used when the accent selector changes: the persisted voice must belong to
-    the newly selected accent, so it is reset to that accent's default.
+    Used when the variant selector changes: the persisted voice must belong to
+    the newly selected variant, so it is reset to that variant's default.
     """
-    profile = _ACCENT_PROFILES.get(accent)
-    return profile["default_voice"] if profile else ""
+    variant = _variants_of(PRACTICE_LANGUAGE).get(accent)
+    return variant["default_voice"] if variant else ""
 
 
-# A typo in the hand-edited settings.json must not crash startup - warn and
-# fall back to the default accent instead.
-# (isinstance guards the dict lookup: an unhashable value such as a list
-# would otherwise raise TypeError instead of falling back.)
-if not isinstance(ENGLISH_ACCENT, str) or ENGLISH_ACCENT not in _ACCENT_PROFILES:
-    print(f"[config] settings.json: unknown english_accent {ENGLISH_ACCENT!r} "
-          f"(expected one of {sorted(_ACCENT_PROFILES)}); using 'american'",
-          file=sys.stderr)
-    ENGLISH_ACCENT = "american"
-_ACCENT = _ACCENT_PROFILES[ENGLISH_ACCENT]
+# --- Active practice language ----------------------------------------
+# Practice language, read from settings.json ("practice_language"). A typo must
+# not crash startup - warn and fall back to the default language instead.
+PRACTICE_LANGUAGE = _USER.get("practice_language", "english")
+if not isinstance(PRACTICE_LANGUAGE, str) \
+        or PRACTICE_LANGUAGE not in LANGUAGE_PROFILES:
+    print(f"[config] settings.json: unknown practice_language "
+          f"{PRACTICE_LANGUAGE!r} (expected one of {sorted(LANGUAGE_PROFILES)}); "
+          f"using 'english'", file=sys.stderr)
+    PRACTICE_LANGUAGE = "english"
+_LANG_PROFILE = LANGUAGE_PROFILES[PRACTICE_LANGUAGE]
 
-# espeak language code ("en-us"/"en-gb") used by the pronunciation analyzer to
-# phonemize the reference text. Read by pronunciation/acoustic/speech.py.
-ESPEAK_LANGUAGE = _ACCENT["espeak_language"]
+# Display name shown in the window title and settings.
+TARGET_LANGUAGE = _LANG_PROFILE["display_name"]
+
+# --- Active variant (formerly "accent") ------------------------------
+# Variant within the language, read from settings.json ("accent"); the legacy
+# key "english_accent" is honored as a fallback so an existing settings.json
+# keeps working. Changing the variant requires a restart: the Kokoro pipeline
+# language, the default/selectable voices, and the espeak language used to build
+# the reference phonemes are all wired from the variant at load time.
+#   English variants: "american" (General American), "british" (RP).
+_variant_map = _LANG_PROFILE["variants"]
+ACCENT = _USER.get("accent", _USER.get("english_accent"))
+if ACCENT is None:
+    ACCENT = _LANG_PROFILE["default_variant"]
+elif not isinstance(ACCENT, str) or ACCENT not in _variant_map:
+    # (isinstance guards the dict lookup: an unhashable value such as a list
+    # would otherwise raise TypeError instead of falling back.)
+    print(f"[config] settings.json: unknown accent {ACCENT!r} for "
+          f"{PRACTICE_LANGUAGE} (expected one of {sorted(_variant_map)}); "
+          f"using {_LANG_PROFILE['default_variant']!r}", file=sys.stderr)
+    ACCENT = _LANG_PROFILE["default_variant"]
+# Backward-compatible alias: the settings window still reads config.ENGLISH_ACCENT
+# until it moves to the language/variant model in a later stage.
+ENGLISH_ACCENT = ACCENT
+_VARIANT = _variant_map[ACCENT]
+
+# espeak language code ("en-us"/"en-gb"/...) used by the pronunciation analyzer
+# to phonemize the reference text. Read by the pronunciation engines.
+ESPEAK_LANGUAGE = _VARIANT["espeak_language"]
 
 # =====================================================================
 # Text-to-Speech (Kokoro) Settings
 # =====================================================================
-# Derived from the selected accent above ('a' = American, 'b' = British).
-KOKORO_LANG_CODE = _ACCENT["kokoro_lang_code"]
+# Kokoro pipeline language of the active variant ('a' = American, 'b' = British).
+KOKORO_LANG_CODE = _VARIANT["kokoro_lang_code"]
 
-# Default voice: the accent's default, unless settings.json names another voice
-# of the same accent ("voice": null keeps the accent default). A voice from the
-# other accent is rejected - it would not match KOKORO_LANG_CODE.
-KOKORO_VOICE = _ACCENT["default_voice"]
+# Default voice: the variant's default, unless settings.json names another voice
+# of the same variant ("voice": null keeps the variant default). A voice from a
+# different variant is rejected - it would not match KOKORO_LANG_CODE.
+KOKORO_VOICE = _VARIANT["default_voice"]
 _user_voice = _USER.get("voice")
 if _user_voice is not None:
-    if _user_voice in _ACCENT["voices"]:
+    if _user_voice in _VARIANT["voices"]:
         KOKORO_VOICE = _user_voice
     else:
         print(f"[config] settings.json: voice {_user_voice!r} is not a known "
-              f"{ENGLISH_ACCENT} voice; using {KOKORO_VOICE!r}", file=sys.stderr)
+              f"{ACCENT} voice; using {KOKORO_VOICE!r}", file=sys.stderr)
 
 # Voices the user can pick from in the UI. All belong to the same lang_code, so
 # switching between them needs no pipeline reload.
-KOKORO_VOICES = _ACCENT["voices"]
+KOKORO_VOICES = _VARIANT["voices"]
 
 # Reference playback speed ("reference_speed"), chosen in Settings and
 # persisted on change. The Settings control is a slider over a continuous
@@ -470,6 +553,16 @@ if not isinstance(ENGINE, str) or ENGINE not in ENGINE_CHOICES:
     print(f"[config] settings.json: unknown engine {ENGINE!r} "
           f"(expected one of {ENGINE_CHOICES}); using 'phoneme'", file=sys.stderr)
     ENGINE = "phoneme"
+# Engine availability is per-language (see available_engines): an engine valid
+# in general but not offered for the active language falls back to that
+# language's first available engine. For English all three are available, so
+# this is a no-op there.
+_available_engines = available_engines(PRACTICE_LANGUAGE)
+if _available_engines and ENGINE not in _available_engines:
+    print(f"[config] settings.json: engine {ENGINE!r} is not available for "
+          f"{PRACTICE_LANGUAGE} (available: {_available_engines}); "
+          f"using {_available_engines[0]!r}", file=sys.stderr)
+    ENGINE = _available_engines[0]
 
 # GOOD-anchor mode for the phoneme engine (see pronunciation/phoneme/config.py),
 # read from settings.json ("phoneme_good_mode"); only affects ENGINE == "phoneme":
@@ -516,9 +609,10 @@ PRONUNCIATION_ACOUSTIC_GOOD = 0.20
 # Source text shown in the input panel at startup. The LLM builds practice
 # phrases from whatever text the user has in that panel. Read from
 # settings.json ("practice_text_file"); a relative path resolves against the
-# project root.
+# project root. The default is the active language's profile text, so each
+# language ships its own starter text without a code change.
 PRACTICE_TEXT_FILE = _path("practice_text_file",
-                                BASE_DIR / "texts" / "practice_text.txt")
+                                BASE_DIR / _LANG_PROFILE["practice_text_file"])
 
 # One short phrase is generated per request (non-streaming).
 PHRASE_GEN_TEMPERATURE = 0.7
