@@ -17,6 +17,7 @@ path selection) and the constants tied to that behaviour.
 """
 
 import logging
+import sys
 
 import sounddevice as sd
 
@@ -74,7 +75,15 @@ def reset_portaudio():
     is skipped while any stream is still open (see stream_opened/stream_closed);
     an open stream also proves PortAudio is currently healthy, so the heal is
     not needed then.
+
+    Windows-only: the disconnect it heals is a Windows/NVIDIA phenomenon, and
+    on macOS repeated Pa_Terminate/Pa_Initialize cycles are known to leave
+    CoreAudio in a state where a later stream.stop() hangs forever (record
+    thread stuck after "Stopping audio recording...").
     """
+    if sys.platform != "win32":
+        logging.debug("PortAudio reset skipped: non-Windows platform.")
+        return
     if _open_streams > 0:
         logging.debug("PortAudio reset skipped: %d stream(s) still open.",
                       _open_streams)

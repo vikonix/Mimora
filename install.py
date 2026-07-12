@@ -803,18 +803,62 @@ def step_gpu_torch(
     run_or_fail(cmd, log, report, "torch (CUDA)", series)
 
 
+def _ensure_cmake_macos(
+    log: Logger, confirmer: Confirmer, report: StepReport
+) -> bool:
+    """Make sure the cmake binary exists before the macOS source build.
+
+    The llama-cpp-python sdist builds its native library via scikit-build-core,
+    which invokes cmake; without it pip fails mid-build with a confusing
+    backend error. Checked only right before the build actually runs (not in
+    Step 0) so machines that skip the build are never asked to install it.
+    Returns True when cmake is available; a failed Homebrew install aborts the
+    run via run_or_fail (the build is doomed without it).
+    """
+    if shutil.which("cmake"):
+        log.log("    cmake found on PATH.")
+        report.add("cmake", DONE, "already present")
+        return True
+
+    log.log("    cmake NOT found on PATH (required to build llama-cpp-python).")
+    if not shutil.which("brew"):
+        log.log("    Homebrew not found. Install cmake manually (brew.sh or "
+                "cmake.org), then re-run install.py.")
+        report.add("cmake", MANUAL, "install manually, see log")
+        return False
+
+    brew_cmd = ["brew", "install", "cmake"]
+    if not confirmer.confirm("Install cmake via Homebrew (needed to compile "
+                             "llama-cpp-python).", " ".join(brew_cmd)):
+        report.add("cmake", SKIPPED)
+        return False
+    run_or_fail(brew_cmd, log, report, "cmake")
+    return True
+
+
 def step_cpu_llama(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
-    """Install the prebuilt CPU wheel of llama-cpp-python.
+    """Install the CPU build of llama-cpp-python.
 
     Recent llama-cpp-python releases publish no CPU wheel on PyPI (only an
     sdist), and Step 4 installs requirements with --only-binary, which forbids
-    a source build. abetlen's wheel index ships a CPU-only build, so we pull it
-    here - BEFORE Step 4 - and the requirements.txt constraint is then already
-    satisfied, so pip never reaches for the missing PyPI wheel.
+    a source build. The package is therefore installed here - BEFORE Step 4 -
+    so the requirements.txt constraint is already satisfied and pip never
+    reaches for the missing PyPI wheel. How it is installed depends on the OS:
+
+    * macOS on Apple Silicon: build from the PyPI sdist. abetlen's
+      GitHub-hosted wheels can arrive corrupted through corporate proxies
+      (Bad CRC-32 / zlib errors at install time - pip can't detect it earlier
+      because that index publishes no hashes), and a source build on Apple
+      Silicon enables Metal GPU acceleration, which the generic CPU wheel
+      lacks anyway. Needs cmake (checked below) and the Xcode Command Line
+      Tools. Intel Macs deliberately stay on the wheel path: Metal does not
+      apply there, and the older x86_64 wheels are known to install and work.
+    * elsewhere: pull the prebuilt CPU-only wheel from abetlen's index.
     """
-    index = LLAMA_INDEX_URL.format(series="cpu")
+    build_from_source = (sys.platform == "darwin"
+                         and platform.machine() == "arm64")
     # Presence-only check: metadata can't tell a CPU build from a CUDA one, so
     # any installed llama-cpp-python triggers the reinstall/skip prompt.
     installed = is_installed("llama-cpp-python")
@@ -827,22 +871,43 @@ def step_cpu_llama(
     # the dependencies are already present from the prior install.
     reinstall_flags = (["--upgrade", "--force-reinstall", "--no-deps"]
                        if installed else [])
-    # --only-binary forbids a source build: --extra-index-url merely *adds*
-    # abetlen's index to PyPI, and pip picks the highest version across both.
-    # PyPI's latest release is often newer than abetlen's prebuilt CPU wheel and
-    # ships only an sdist, so without this flag pip would compile it from source.
-    # --extra-index-url (not --index-url) keeps PyPI reachable for other deps.
-    cmd = PIP + ["install", *reinstall_flags, "--no-cache-dir",
-                 "--only-binary", ":all:",
-                 "llama-cpp-python", "--extra-index-url", index]
-    desc = ("Install prebuilt CPU wheel of llama-cpp-python from abetlen's "
-            "index (no CPU wheel exists on PyPI; avoids a doomed source build).")
+
+    if build_from_source:
+        # --no-binary pins the source path even if a macOS wheel ever appears
+        # on PyPI; dependencies still install as wheels (the flag names only
+        # this package). pip picks the sdist from the default index - abetlen's
+        # index is deliberately not used here (see docstring).
+        cmd = PIP + ["install", *reinstall_flags, "--no-cache-dir",
+                     "--no-binary", "llama-cpp-python", "llama-cpp-python"]
+        desc = ("Build llama-cpp-python from source (PyPI sdist; enables Metal "
+                "on Apple Silicon). Needs cmake and the Xcode Command Line "
+                "Tools; the compile takes several minutes.")
+    else:
+        index = LLAMA_INDEX_URL.format(series="cpu")
+        # --only-binary forbids a source build: --extra-index-url merely *adds*
+        # abetlen's index to PyPI, and pip picks the highest version across both.
+        # PyPI's latest release is often newer than abetlen's prebuilt CPU wheel
+        # and ships only an sdist, so without this flag pip would compile it
+        # from source.
+        # --extra-index-url (not --index-url) keeps PyPI reachable for other deps.
+        cmd = PIP + ["install", *reinstall_flags, "--no-cache-dir",
+                     "--only-binary", ":all:",
+                     "llama-cpp-python", "--extra-index-url", index]
+        desc = ("Install prebuilt CPU wheel of llama-cpp-python from abetlen's "
+                "index (no CPU wheel exists on PyPI; avoids a doomed source build).")
+
     if installed:
         log.log(f"    llama-cpp-python already installed "
                 f"({dist_version('llama-cpp-python')}).")
     if not confirmer.confirm(desc, " ".join(cmd), installed=installed):
         report.add("llama-cpp-python (CPU)", SKIPPED,
                    "already installed" if installed else "")
+        return
+    # cmake is checked only once the build is actually going to run, so a
+    # skipped/already-installed step never triggers a needless Homebrew prompt.
+    if build_from_source and not _ensure_cmake_macos(log, confirmer, report):
+        report.add("llama-cpp-python (CPU)", MANUAL,
+                   "install cmake, then re-run install.py")
         return
     run_or_fail(cmd, log, report, "llama-cpp-python (CPU)")
 
