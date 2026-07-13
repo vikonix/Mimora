@@ -112,6 +112,33 @@ class Section:
     fields: tuple
 
 
+def _pending_language() -> str:
+    """The persisted practice language: what the next start will run with.
+
+    The window edits the SAVED configuration, so every per-language choice
+    list (accent, voice, engine, translation targets) follows the saved
+    language rather than the running one - the two differ when the window is
+    reopened after saving a language change but before the restart. Building
+    the lists from the running language would then show a persisted value
+    (e.g. "castilian") among another language's choices.
+    """
+    return config.user_setting("practice_language", config.PRACTICE_LANGUAGE)
+
+
+def _pending_accent() -> str:
+    """The persisted variant, validated against the pending language.
+
+    A persisted accent that does not belong to the pending language (possible
+    after hand-editing settings.json) falls back to that language's default
+    variant - mirroring the startup validation in config.
+    """
+    language = _pending_language()
+    accent = config.user_setting("accent", config.ACCENT)
+    if accent not in config.accent_choices(language):
+        accent = config.default_accent(language)
+    return accent
+
+
 def build_sections() -> tuple:
     """The full settings model: every editable key, grouped and ordered.
 
@@ -139,16 +166,19 @@ def build_sections() -> tuple:
             # language has a single variant (nothing to choose).
             Field("accent", "Accent", "choice",
                   lambda: config.user_setting("accent", config.ACCENT),
-                  choices=config.accent_choices, restart=True,
+                  choices=lambda: config.accent_choices(_pending_language()),
+                  restart=True,
                   runtime_value=lambda: config.ACCENT,
                   help="Regional variant of the language."),
             Field("voice", "Voice", "choice",
                   lambda: config.user_setting("voice", config.KOKORO_VOICE),
-                  choices=lambda: config.accent_voices(config.ACCENT)),
+                  choices=lambda: config.accent_voices(_pending_accent(),
+                                                       _pending_language())),
             Field("translation_language", "Translation", "choice",
                   lambda: config.user_setting("translation_language",
                                               config.TRANSLATION_LANGUAGE),
-                  choices=config.translation_targets,
+                  choices=lambda: config.translation_targets(
+                      _pending_language()),
                   help="Empty = translation off."),
             Field("phrase_length", "Phrase length", "choice",
                   lambda: config.user_setting("phrase_length",
@@ -186,7 +216,9 @@ def build_sections() -> tuple:
         Section("Pronunciation", (
             Field("engine", "Scoring engine", "choice",
                   lambda: config.user_setting("engine", config.ENGINE),
-                  choices=config.available_engines, restart=True,
+                  choices=lambda: config.available_engines(
+                      _pending_language()),
+                  restart=True,
                   runtime_value=lambda: config.ENGINE,
                   help="phoneme = default; none = scoring off (fast start). "
                        "Only engines available for the language are shown."),
@@ -431,18 +463,18 @@ class SettingsWindow:
         for section in build_sections():
             row = self._add_section_header(inner, section.title, row)
             for field in section.fields:
-                # The variant selector is hidden when the language has a single
-                # variant: there is nothing to choose (see the "accent" field).
-                # Still record its running value so restart-pending and Cancel
-                # compare against the real variant, not a missing one (otherwise
-                # a single-variant language shows a spurious "Applies after
-                # restart: Accent" the moment the window opens). The hidden
-                # field cannot be edited, so its value is whatever the process
-                # runs with (runtime_value) - seeding that guarantees no pending.
-                if field.key == "accent" and len(config.accent_choices()) <= 1:
-                    self._committed[field.key] = (
-                        field.runtime_value() if field.runtime_value
-                        else field.get_value())
+                # The variant selector is hidden when the PENDING (saved)
+                # language has a single variant: there is nothing to choose
+                # (see the "accent" field). Still record its saved value so
+                # restart-pending and Cancel compare against a real variant,
+                # not a missing one. The saved value (get_value) is used, not
+                # the runtime one: for a saved-but-not-restarted language
+                # change the hidden variant genuinely awaits the restart, so
+                # it must count as pending; when nothing was changed the two
+                # agree and no pending is shown.
+                if field.key == "accent" and \
+                        len(config.accent_choices(_pending_language())) <= 1:
+                    self._committed[field.key] = field.get_value()
                     continue
                 row = self._add_field_row(inner, field, row)
 
@@ -799,7 +831,8 @@ class SettingsWindow:
         self._sync_preview_state()
 
     def _apply_language_change(self, language: str):
-        """Language switched (restart-only): repoint the variant and voice lists.
+        """Language switched (restart-only): repoint every per-language list
+        (variant, voice, engine, translation targets).
 
         The persisted variant and voice must belong to the persisted language,
         or the next startup rejects them and falls back with a warning. The new
@@ -826,6 +859,26 @@ class SettingsWindow:
             default_voice = config.accent_default_voice(default_variant, language)
             self._vars["voice"].set(default_voice)
             self._emit(self._fields["voice"], default_voice)
+        # The engine and translation-target lists are per-language too. An
+        # engine the new language does not offer resets to its first available
+        # one (mirroring the startup fallback in config); a translation target
+        # equal to the new language resets to "off" - translating a phrase
+        # into its own language is pointless and would be rejected at startup.
+        engines = config.available_engines(language)
+        engine_combo = self._widgets.get("engine")
+        if engine_combo is not None and engines:
+            engine_combo.configure(values=engines)
+            if self._vars["engine"].get() not in engines:
+                self._vars["engine"].set(engines[0])
+                self._emit(self._fields["engine"], engines[0])
+                self._sync_engine_dependent_state()
+        targets = config.translation_targets(language)
+        translation_combo = self._widgets.get("translation_language")
+        if translation_combo is not None:
+            translation_combo.configure(values=targets)
+            if self._vars["translation_language"].get() not in targets:
+                self._vars["translation_language"].set("")
+                self._emit(self._fields["translation_language"], "")
         self._sync_preview_state()
 
     def _sync_engine_dependent_state(self):
@@ -1065,13 +1118,27 @@ class SettingsWindow:
         for field in all_fields():
             if field.key in defaults:
                 self.set_value(field.key, defaults[field.key])
-        # The voice list must match the default variant now shown - resolved
-        # within the default language, not the running one (a reset from Spanish
-        # still shows the English default variant's voices).
+        # Every per-language list must match the default language now shown -
+        # resolved within the default language, not the running one (a reset
+        # from Spanish still shows the English default variant's voices and
+        # every English engine).
+        default_language = defaults.get("practice_language")
         combo = self._widgets.get("voice")
         if combo is not None:
             combo.configure(values=config.accent_voices(
-                defaults["accent"], defaults.get("practice_language")))
+                defaults["accent"], default_language))
+        accent_combo = self._widgets.get("accent")
+        if accent_combo is not None:
+            accent_combo.configure(
+                values=config.accent_choices(default_language))
+        engine_combo = self._widgets.get("engine")
+        if engine_combo is not None:
+            engine_combo.configure(
+                values=config.available_engines(default_language))
+        translation_combo = self._widgets.get("translation_language")
+        if translation_combo is not None:
+            translation_combo.configure(
+                values=config.translation_targets(default_language))
         self._sync_preview_state()
         self._sync_experimental_notice()
         # Only the defaults that differ from the running values actually
