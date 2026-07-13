@@ -86,8 +86,9 @@ USER_SETTING_DEFAULTS = {
     "engine": "phoneme",
     "practice_language": "english",
     "accent": "american",
-    # Legacy alias of "accent" (see _KNOWN_USER_KEYS); kept in sync with it while
-    # the settings window still writes the old key.
+    # Legacy alias of "accent" (see _KNOWN_USER_KEYS): read-only fallback for
+    # old settings.json files; save_user_setting drops it on the first save of
+    # either new language key. Nothing writes it anymore.
     "english_accent": "american",
     "voice": None,
     "color_theme": "dark",
@@ -431,6 +432,19 @@ LANGUAGE_PROFILES = {
         # Throwaway text to prime the NLLB translator's source tokenizer
         # (mimora/translator.py warm_up); any short phrase in the source language.
         "translator_warmup": "Hello.",
+        # Startup greeting spoken once the app is ready (main.py
+        # _greet_and_start), in the practiced language. The named form carries
+        # a {name} placeholder; the anonymous form is used when no user name is
+        # set (a "{name}"-less template avoids a dangling "Hola, !").
+        "greeting_named": "Hello {name}, listen and repeat.",
+        "greeting_anonymous": "Hello, listen and repeat.",
+        # Shown in the source panel when the practice-text file cannot be read
+        # (main.py _load_practice_text), in the practiced language. The button
+        # name stays English - the UI language is English by design.
+        "practice_text_fallback": (
+            "Hello and welcome to Mimora. Edit this text and click "
+            "New phrase to begin."
+        ),
         "variants": {
             "american": {
                 "kokoro_lang_code": "a",
@@ -501,6 +515,13 @@ LANGUAGE_PROFILES = {
         },
         "preview_phrase": "¡Hola! Así es como sueno. Vamos a practicar juntos.",
         "translator_warmup": "Hola.",
+        "greeting_named": "¡Hola, {name}! Escucha y repite.",
+        "greeting_anonymous": "¡Hola! Escucha y repite.",
+        # The button name stays English - the UI language is English by design.
+        "practice_text_fallback": (
+            "Hola y bienvenido a Mimora. Edita este texto y pulsa "
+            "New phrase para empezar."
+        ),
         "variants": {
             "castilian": {
                 "kokoro_lang_code": "e",
@@ -783,6 +804,10 @@ PRONUNCIATION_ACOUSTIC_GOOD = 0.20
 PRACTICE_TEXT_FILE = _path("practice_text_file",
                                 BASE_DIR / _LANG_PROFILE["practice_text_file"])
 
+# Shown in the source panel instead when PRACTICE_TEXT_FILE cannot be read
+# (main.py _load_practice_text), in the practiced language (from the profile).
+PRACTICE_TEXT_FALLBACK = _LANG_PROFILE["practice_text_fallback"]
+
 # One short phrase is generated per request (non-streaming). Temperature and the
 # token budgets are language-independent tuning; the prompts and asks are
 # language text, so they come from the active profile (see LANGUAGE_PROFILES).
@@ -814,6 +839,12 @@ PHRASE_GEN_FRAGMENT_MAX_TOKENS = 16
 # Voice-preview phrase (settings_window.py "Listen" button) in the practiced
 # language, from the active profile.
 PREVIEW_PHRASE = _LANG_PROFILE["preview_phrase"]
+
+# Startup greeting (main.py _greet_and_start) in the practiced language, from
+# the active profile: GREETING_NAMED carries a {name} placeholder, filled with
+# the user name; GREETING_ANONYMOUS is the ready form for an empty name.
+GREETING_NAMED = _LANG_PROFILE["greeting_named"]
+GREETING_ANONYMOUS = _LANG_PROFILE["greeting_anonymous"]
 
 # Phrase length selected in the UI ("phrase_length"), persisted on change:
 # "full" → complete sentence, "fragment" → 2-4 word fragment (see
@@ -899,9 +930,14 @@ def translation_targets(language: str = None) -> tuple:
 
 
 TRANSLATION_LANGUAGE = _USER.get("translation_language", "")
-if TRANSLATION_LANGUAGE not in TRANSLATION_LANGUAGES:
+# Validated against translation_targets(), not TRANSLATION_LANGUAGES: the
+# practiced language is a member of the latter but not a sensible target, so a
+# stale setting left over from practicing another language (e.g. "Spanish"
+# after switching the practice language to Spanish) falls back to "off" like
+# every other invalid value instead of translating a phrase into itself.
+if TRANSLATION_LANGUAGE not in translation_targets():
     print(f"[config] settings.json: translation_language must be one of "
-          f"{TRANSLATION_LANGUAGES}, got {TRANSLATION_LANGUAGE!r}; using '' "
+          f"{translation_targets()}, got {TRANSLATION_LANGUAGE!r}; using '' "
           f"(translation off)", file=sys.stderr)
     TRANSLATION_LANGUAGE = ""
 

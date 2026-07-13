@@ -445,7 +445,9 @@ class PronunciationTrainerGUI:
                 text = f.read()
         except Exception as e:
             logging.warning(f"Could not read practice text file: {e}")
-            text = "Hello and welcome to Mimora. Edit this text and click New phrase to begin."
+            # Fallback text comes from the active language profile, so it is
+            # in the practiced language (config.LANGUAGE_PROFILES).
+            text = config.PRACTICE_TEXT_FALLBACK
 
         self.view.set_practice_text(text.strip())
 
@@ -523,7 +525,10 @@ class PronunciationTrainerGUI:
         so a TTS hiccup cannot leave the app stuck without a phrase.
         """
         try:
-            greeting = f"Hello {name}, listen and repeat." if name else "Hello, listen and repeat."
+            # Greeting text comes from the active language profile, so it is
+            # spoken in the practiced language (config.LANGUAGE_PROFILES).
+            greeting = (config.GREETING_NAMED.format(name=name) if name
+                        else config.GREETING_ANONYMOUS)
             self.root.after(0, self.view.append_system_msg, greeting)
             audio = self.tts_mgr.synthesize(greeting, voice=voice)
             if audio.size > 0:

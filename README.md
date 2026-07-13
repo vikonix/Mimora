@@ -33,7 +33,14 @@ Anyone working on clearer speech in a new language - language learners, accent r
 
 ## Supported languages
 
-**English** is supported today. **Spanish** is next on the roadmap. (The translation panel already renders the practice phrase in 200+ languages - that is the translation shown beside the phrase, not the practice language itself.)
+The practice language is chosen in the settings window (**Language**, applies after a restart); each language may offer regional variants (**Accent**).
+
+| Language | Variants | Scoring engines |
+|---|---|---|
+| **English** | American, British | `phoneme` (default, calibrated), `acoustic`, `none` |
+| **Spanish** (Peninsular / Castilian) | Castilian | `phoneme` (**experimental** - no Spanish calibration yet, scoring falls back to the English calibration until it lands), `none` |
+
+The English-only `acoustic` engine is not offered for Spanish. French and Italian are next on the roadmap. (The translation panel already renders the practice phrase in 200+ languages - that is the translation shown beside the phrase, not the practice language itself.)
 
 ---
 
@@ -65,7 +72,7 @@ Work on:    colder
 - 🎙️ **One-press recording** - press once, speak, and it stops by itself when you go quiet (peak normalization, silence-based auto-stop).
 - 🗣️ **One consistent reference voice** - prompts and the scored reference are spoken by the same Kokoro voice, so you always compare against the same target (no second TTS). Prefer variety? Enable **Random voice per phrase** in the settings.
 - 🧠 **Practice your own material** - paste a paragraph, song, or sentences into the *practice text* panel and the local LLM turns it into an endless stream of phrases to drill.
-- ⚙️ **Settings window** (the gear button) - pick the Kokoro **voice** and playback **speed** (or let **Random voice per phrase** speak every new phrase with a different voice of the accent), choose the **phrase length** (full phrase or a few words), and set the **translation language** shown under the phrase. A **user name** selects the per-user scoring calibration.
+- ⚙️ **Settings window** (the gear button) - pick the practice **language** and its **accent** (both apply after a restart), the Kokoro **voice** and playback **speed** (or let **Random voice per phrase** speak every new phrase with a different voice of the current language - needs at least two voices), choose the **phrase length** (full phrase or a few words), and set the **translation language** shown under the phrase. A **user name** selects the per-user scoring calibration.
 - 📊 **Objective scoring with two interchangeable engines**, selected by `ENGINE` in `mimora/config.py`. The default **phoneme** engine scores espeak reference phonemes against a wav2vec2 phoneme recognizer (feature-weighted edit distance, mapped to a calibrated 0-5 grade). The **acoustic** engine combines per-step cosine DTW over Wav2Vec2 embeddings (40%) with phoneme (30%) and word (30%) error rates. Both are length-invariant and calibratable to your voice (`python pronunciation/<engine>/calibrate.py`).
 - 🔁 **Replay reference vs. your recording** to hear the difference.
 - 😀 **Articulation face** - a schematic mouth opens and closes with the speech as a reference or your recording plays, and shows a smiley reflecting your score while idle.
@@ -273,18 +280,20 @@ Key options in [`mimora/config.py`](mimora/config.py) (overridable via [`config/
 
 | Setting | Default | Description |
 |---|---|---|
-| `ENGINE` | `phoneme` | Active scoring engine: `phoneme` (**default**) or `acoustic`. Code-only, set in `mimora/config.py`. |
+| `ENGINE` | `phoneme` | Active scoring engine: `phoneme` (**default**), `acoustic` or `none`. Only engines available for the practice language are offered (settings.json `"engine"`). |
+| `PRACTICE_LANGUAGE` | `english` | Practice language (settings.json `"practice_language"`, restart to apply). One entry in `LANGUAGE_PROFILES`; adding a language is adding a profile record plus an engine calibration. |
+| `ACCENT` | per language | Regional variant of the practice language (settings.json `"accent"`, restart to apply): `american`/`british` for English, `castilian` for Spanish. The legacy `"english_accent"` key is still read as a fallback and migrated on the next save. |
 | `WAV2VEC2_PHONEME_MODEL_NAME` | `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | Phoneme-ASR model for the **default** `phoneme` engine (emits espeak-style IPA). |
 | `WAV2VEC2_MODEL_NAME` | `facebook/wav2vec2-large-960h` | Embedding/transcription model used only by the `acoustic` engine. |
 | `WAV2VEC2_DEVICE` | `DEVICE` (cuda/cpu) | Device for the active engine's Wav2Vec2 model. Set to `"cpu"` to avoid VRAM contention with llama_cpp / Kokoro. |
 | `PRONUNCIATION_SCORE_THRESHOLD` | `70.0` | Score (0-100) required to pass a phrase. |
-| `PRACTICE_TEXT_FILE` | `texts/practice_text.txt` | Source text pre-loaded into the input panel. |
+| `PRACTICE_TEXT_FILE` | per language | Source text pre-loaded into the input panel; defaults to the active language's starter text (`texts/practice_text.txt` for English, `texts/practice_text_es.txt` for Spanish). |
 | `PHRASE_GEN_TEMPERATURE` / `PHRASE_GEN_MAX_TOKENS` | `0.7` / `40` | Phrase-generation sampling. |
 | `PHRASE_GEN_WINDOW_SENTENCES` | `5` | Sentences of the source text sent to the model per request (sliding window). |
 | `PHRASE_GEN_WINDOW_REPEATS` | `5` | Phrases generated per window position before it slides forward by half its size. |
 | `LLM_BACKEND` | `local_server` | `local_server` (auto-started subprocess) or `lm-studio`. |
 | `MAX_RECORD_SECONDS` | `20` | Safety cap on recording length. |
-| `RANDOM_VOICE` | `False` | Speak every new phrase with a fresh random voice of the active accent (never the one just heard). The `voice` setting is kept and used again when this is off. |
+| `RANDOM_VOICE` | `False` | Speak every new phrase with a fresh random voice of the active language/variant (never the one just heard). Needs at least two voices. The `voice` setting is kept and used again when this is off. |
 
 ---
 
@@ -370,7 +379,7 @@ Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by
 
 ## Known limitations
 
-- **Practice language is English for now.** The `acoustic` engine is English-only (English ASR model + phonemizer `en-us`). The default `phoneme` engine uses a multilingual IPA recognizer and is planned to be calibrated for other languages in future releases (Spanish next). (The translation panel already targets many languages - that is the practice phrase's translation, not the practice language itself.)
+- **Spanish `phoneme` scoring is experimental for now.** The default `phoneme` engine uses a multilingual IPA recognizer, but its scoring calibration is per-language; the Spanish calibration is planned for a later release, so until it lands Spanish scoring falls back to the English calibration (usable, not tuned - the app logs a startup warning and the settings window shows a notice). The `acoustic` engine is English-only (English ASR model) and is not offered for other languages. (The translation panel already targets many languages - that is the practice phrase's translation, not the practice language itself.)
 - The transcription-based word errors only surface mistakes the ASR actually "hears"; subtle distortions where the word is still recognized may not appear in the word list (the default phoneme engine's IPA edit distance, or the acoustic engine's DTW, plus prosody partially compensate).
 - Scoring is **heuristic** and depends on your voice and microphone. After a practice session, re-anchor the active engine to your data: `python pronunciation/phoneme/calibrate.py` (default engine) or `python pronunciation/acoustic/calibrate.py` (acoustic engine); `--dry-run` previews the change. Every attempt's raw components are logged to `logs/phoneme_samples.jsonl` (or `logs/acoustic_samples.jsonl`) and `logs/main.log` for inspection.
 
