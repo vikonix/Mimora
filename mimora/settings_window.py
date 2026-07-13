@@ -327,6 +327,8 @@ class SettingsWindow:
         # Phoneme-only fields start greyed out unless the phoneme engine is the
         # one currently selected (see _sync_engine_dependent_state).
         self._sync_engine_dependent_state()
+        # Show the experimental notice if the running engine+language warrants it.
+        self._sync_experimental_notice()
         # Snapshot for Cancel: the values every field had when the window
         # opened (committed values are filled during _build_body).
         self._opened_values = dict(self._committed)
@@ -384,6 +386,10 @@ class SettingsWindow:
         # which engine-specific fields are inert and grey them accordingly.
         if key == "engine":
             self._sync_engine_dependent_state()
+        # The same replay paths change engine/language/variant, so keep the
+        # experimental notice in step with them too.
+        if key in ("engine", "practice_language", "accent"):
+            self._sync_experimental_notice()
 
     # ------------------------------------------------------------------
     # Window construction
@@ -427,7 +433,16 @@ class SettingsWindow:
             for field in section.fields:
                 # The variant selector is hidden when the language has a single
                 # variant: there is nothing to choose (see the "accent" field).
+                # Still record its running value so restart-pending and Cancel
+                # compare against the real variant, not a missing one (otherwise
+                # a single-variant language shows a spurious "Applies after
+                # restart: Accent" the moment the window opens). The hidden
+                # field cannot be edited, so its value is whatever the process
+                # runs with (runtime_value) - seeding that guarantees no pending.
                 if field.key == "accent" and len(config.accent_choices()) <= 1:
+                    self._committed[field.key] = (
+                        field.runtime_value() if field.runtime_value
+                        else field.get_value())
                     continue
                 row = self._add_field_row(inner, field, row)
 
@@ -655,6 +670,16 @@ class SettingsWindow:
                                        justify=tk.LEFT)
         self._restart_label.pack(side=tk.TOP, anchor=tk.W, padx=12, pady=(2, 0))
 
+        # Marks the phoneme engine as experimental for the selected language
+        # (no committed model calibration - see config.engine_experimental).
+        # A dedicated label so it never competes with the validation/preview
+        # status or the restart hint. Text is set by _sync_experimental_notice.
+        self._experimental_label = tk.Label(
+            footer, text="", font=(FONT_FAMILY, FONT_SIZE_CAPTION),
+            fg=THEME["warn"], bg=THEME["bg_panel"],
+            wraplength=self._WIDTH - 24, justify=tk.LEFT)
+        self._experimental_label.pack(side=tk.TOP, anchor=tk.W, padx=12, pady=(2, 0))
+
         # Button row: full-width strip below the hint rows.
         button_row = tk.Frame(footer, bg=THEME["bg_panel"])
         button_row.pack(side=tk.TOP, fill=tk.X)
@@ -743,6 +768,9 @@ class SettingsWindow:
             self._apply_language_change(value)
         elif field.key == "engine":
             self._sync_engine_dependent_state()
+        # Engine, language and variant all feed the experimental judgement.
+        if field.key in ("engine", "practice_language", "accent"):
+            self._sync_experimental_notice()
 
     def _selected_language(self) -> str:
         """The language chosen in the window (may differ from the running one)."""
@@ -782,11 +810,15 @@ class SettingsWindow:
         """
         default_variant = config.default_accent(language)
         accent_combo = self._widgets.get("accent")
-        if accent_combo is not None and "accent" in self._fields:
+        if accent_combo is not None:
             accent_combo.configure(values=config.accent_choices(language))
-            if "accent" in self._vars:
-                self._vars["accent"].set(default_variant)
-            self._emit(self._fields["accent"], default_variant)
+        if "accent" in self._vars:
+            self._vars["accent"].set(default_variant)
+        # Persist the variant of the new language even when the variant combobox
+        # is not shown (a single-variant running language hides it): otherwise
+        # settings.json keeps the previous language's variant and the next start
+        # rejects it with a fallback warning.
+        self._emit(self._fields["accent"], default_variant)
         voices = config.accent_voices(default_variant, language)
         combo = self._widgets.get("voice")
         if combo is not None and voices:
@@ -814,6 +846,29 @@ class SettingsWindow:
         # A readonly combobox toggles between "readonly" (usable, closed list)
         # and "disabled" (greyed); "normal" would wrongly allow free typing.
         combo.configure(state="readonly" if engine == "phoneme" else "disabled")
+
+    # Text of the experimental notice (see _sync_experimental_notice); kept as a
+    # constant so the notice can be recognized and cleared.
+    _EXPERIMENTAL_NOTICE = ("The phoneme engine is experimental for this "
+                            "language: no tuned calibration yet, scoring falls "
+                            "back to English.")
+
+    def _sync_experimental_notice(self):
+        """Show or clear the experimental notice for the selected engine+language.
+
+        The phoneme engine scores against a per-language calibration; a language
+        without one committed runs on the English fallback - usable, not tuned.
+        config.engine_experimental() judges this from the selected (not only the
+        running) values, so the notice appears as soon as the user picks an
+        uncalibrated language or the phoneme engine, before any restart.
+        """
+        engine = self._vars["engine"].get() if "engine" in self._vars \
+            else config.ENGINE
+        language = self._selected_language()
+        accent = self._vars["accent"].get() if "accent" in self._vars else None
+        experimental = config.engine_experimental(engine, language, accent)
+        self._experimental_label.config(
+            text=self._EXPERIMENTAL_NOTICE if experimental else "")
 
     # Footer hint shown while the preview button is disabled; kept as a
     # constant so _sync_preview_state can recognize (and clear) its own text.
@@ -1010,11 +1065,15 @@ class SettingsWindow:
         for field in all_fields():
             if field.key in defaults:
                 self.set_value(field.key, defaults[field.key])
-        # The voice list must match the default variant now shown.
+        # The voice list must match the default variant now shown - resolved
+        # within the default language, not the running one (a reset from Spanish
+        # still shows the English default variant's voices).
         combo = self._widgets.get("voice")
         if combo is not None:
-            combo.configure(values=config.accent_voices(defaults["accent"]))
+            combo.configure(values=config.accent_voices(
+                defaults["accent"], defaults.get("practice_language")))
         self._sync_preview_state()
+        self._sync_experimental_notice()
         # Only the defaults that differ from the running values actually
         # need a restart (a machine already on defaults needs none).
         self._refresh_restart_pending()

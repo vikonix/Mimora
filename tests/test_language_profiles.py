@@ -270,10 +270,15 @@ class TranslationTargetTests(_ConfigTestBase):
         self.assertNotIn(self.config.TARGET_LANGUAGE,
                          self.config.translation_targets())
 
-    def test_english_practice_keeps_the_base_list(self):
-        # English is not in the base list today, so nothing is removed.
-        self.assertEqual(self.config.translation_targets(),
-                         self.config.TRANSLATION_LANGUAGES)
+    def test_english_practice_drops_english_target(self):
+        # English is now a base target (for practicing other languages), so
+        # English practice removes it while keeping every other choice.
+        targets = self.config.translation_targets()
+        self.assertNotIn("English", targets)
+        self.assertEqual(
+            targets,
+            tuple(label for label in self.config.TRANSLATION_LANGUAGES
+                  if label != "English"))
 
 
 class PhonemeExampleTests(_ConfigTestBase):

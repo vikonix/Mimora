@@ -382,6 +382,15 @@ class PronunciationTrainerGUI:
             engine.configure()
             engine.load_models()
             logging.info("Pronunciation engine ready (engine=%s).", engine.name())
+            # The phoneme engine runs without a calibration tuned for this
+            # language (it falls back to English): usable, but flagged as
+            # experimental so scores are read with that caveat. The settings
+            # window shows the same notice (settings_window.py).
+            if config.PHONEME_EXPERIMENTAL:
+                logging.warning(
+                    "Phoneme engine is EXPERIMENTAL for %s: no model calibration "
+                    "for this language yet, scoring falls back to the English "
+                    "calibration.", config.TARGET_LANGUAGE)
 
             # Translator (NLLB) is loaded only when a language is selected at
             # startup, so a session with translation off pays no RAM/time cost.

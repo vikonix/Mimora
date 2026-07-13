@@ -98,11 +98,62 @@ _ENGLISH_EXAMPLES: dict[str, str] = {
     "w": "wet",
 }
 
+# Peninsular (Castilian) Spanish table, keyed by the espeak-ng ``es`` IPA
+# inventory the phoneme engine phonemizes into. The example words are common
+# and each clearly carries its sound. The intervocalic spirants (β, ð, ɣ) and
+# the two rhotics (tap ɾ vs trill r) are the sounds an English speaker most
+# often misses, so each has its own entry. NOTE: the engine may fold or refine
+# this inventory once the Spanish calibration (tasks/spanish_language_task.md)
+# lands; this table is built from the symbols espeak emits today and should be
+# reconciled with the final fold when that task completes.
+_SPANISH_EXAMPLES: dict[str, str] = {
+    # --- Vowels (five pure vowels) ---
+    "a": "casa",
+    "e": "mesa",
+    "i": "vida",
+    "o": "sol",
+    "u": "luna",
+    # --- Glides ---
+    "j": "bien",
+    "w": "bueno",
+    # --- Plosives (voiced ones spirantize between vowels) ---
+    "p": "pan",
+    "b": "barco",
+    "β": "lobo",
+    "t": "tres",
+    "d": "dos",
+    "ð": "nada",
+    "k": "casa",
+    "ɡ": "gato",
+    "g": "gato",
+    "ɣ": "lago",
+    # --- Affricate ---
+    "tʃ": "chico",
+    "ʧ": "chico",
+    # --- Fricatives (θ = Castilian c/z; x = j/g; ʝ = y/ll) ---
+    "f": "café",
+    "θ": "zapato",
+    "s": "sopa",
+    "x": "jamón",
+    "ʝ": "yo",
+    # --- Nasals ---
+    "m": "mano",
+    "n": "no",
+    "ɲ": "niño",
+    # --- Laterals ---
+    "l": "lado",
+    "ʎ": "llave",
+    # --- Rhotics (tap vs trill) ---
+    "ɾ": "pero",
+    "r": "perro",
+}
+
 # Per-language registry: language key (as in config.LANGUAGE_PROFILES) -> its
 # {IPA symbol: example word} table. example_for() selects the table by the
-# active practice language; Spanish and other languages add their own entry.
+# active practice language; further languages add their own entry.
 PHONEME_EXAMPLES_BY_LANGUAGE: dict[str, dict[str, str]] = {
     "english": _ENGLISH_EXAMPLES,
+    "spanish": _SPANISH_EXAMPLES,
 }
 
 # Marks espeak may attach to a symbol that do not change which example applies:

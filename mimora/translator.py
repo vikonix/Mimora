@@ -29,6 +29,7 @@ from mimora import config
 # practiced (config.SOURCE_FLORES_CODE). A label not in this map -- including the
 # empty "translation off" choice -- yields no translation (translate() returns "").
 _FLORES_CODES = {
+    "English": "eng_Latn",
     "Russian": "rus_Cyrl",
     "Ukrainian": "ukr_Cyrl",
     "Spanish": "spa_Latn",

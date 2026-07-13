@@ -174,7 +174,12 @@ def default_user_settings() -> dict:
     """
     values = {key: value for key, value in USER_SETTING_DEFAULTS.items()
               if value is not None}
-    values["voice"] = accent_default_voice(USER_SETTING_DEFAULTS["accent"])
+    # Resolve the default voice within the DEFAULT language/variant, not the
+    # active one: a reset from a non-English language still restores the English
+    # default (american) voice, so the lookup must name that language explicitly
+    # (accent_default_voice defaults to the running language otherwise).
+    values["voice"] = accent_default_voice(
+        USER_SETTING_DEFAULTS["accent"], USER_SETTING_DEFAULTS["practice_language"])
     values["practice_text_file"] = str(BASE_DIR / values["practice_text_file"])
     values["external_model_path"] = str(BASE_DIR / values["external_model_path"])
     return values
@@ -376,8 +381,9 @@ EXTERNAL_N_CTX = int(_num("external_n_ctx",
 # Besides the wiring above, a profile also carries the language-specific text
 # the app used to hardcode: the phrase-generation prompts and asks, the
 # voice-preview phrase and the translator warm-up text (see the english entry).
-# Only English is defined today (variants american/british); Spanish and the
-# code-ready future languages arrive as further entries.
+# English (variants american/british) and Peninsular Spanish (variant castilian)
+# are defined; the code-ready future languages (French, Italian) arrive as
+# further entries with no code change beyond engine calibration.
 LANGUAGE_PROFILES = {
     "english": {
         "display_name": "English",
@@ -446,6 +452,64 @@ LANGUAGE_PROFILES = {
             },
         },
     },
+    "spanish": {
+        "display_name": "Spanish",
+        "flores_code": "spa_Latn",
+        # Only Peninsular (Castilian) Spanish is defined; a Latin-American
+        # variant (es-419) would be a second entry under "variants".
+        "default_variant": "castilian",
+        # The acoustic engine is English-only ASR, so Spanish omits it: only the
+        # text-only phoneme engine and the no-op none engine are offered. The
+        # phoneme engine runs experimental until a Spanish model calibration
+        # (es_model_calibration.json) is committed - see engine_experimental().
+        "engines": ("phoneme", "none"),
+        "practice_text_file": "texts/practice_text_es.txt",
+        # Phrase-generation prompts: the instructions stay in English (they steer
+        # the model), only the TARGET language named inside each string is
+        # Spanish - mirroring the english entry above.
+        "phrase_gen": {
+            "system": (
+                "You generate short Spanish sentences for pronunciation practice. "
+                "Reply with exactly ONE natural spoken sentence of 4 to 8 words, easy to read aloud. "
+                "Use only plain words and a single final period - no quotation marks, no numbering, "
+                "no extra commentary. Output ONLY the sentence itself, with nothing before or after it: "
+                "do not add a lead-in such as 'Here's a sentence' or 'Sure', and never put a colon before "
+                "the sentence. Write in natural Peninsular (Castilian) Spanish, using the appropriate "
+                "accents (á, é, í, ó, ú, ñ) and inverted opening marks (¿ ¡) where they belong. "
+                "Base the sentence on the topic and vocabulary of the text the user provides."
+            ),
+            "fragment_system": (
+                "You generate very short Spanish fragments for pronunciation practice. "
+                "Reply with exactly ONE natural fragment of 2 to 4 words that is NOT a complete "
+                "sentence - such as a sentence opening, a prepositional phrase, or the start of a "
+                "question. Examples: dame eso; sobre la mesa; de dónde eres. "
+                "Use only plain lowercase words - no final period, no quotation marks, no numbering, "
+                "no extra commentary. Output ONLY the fragment itself, with nothing before or after it: "
+                "do not add a lead-in such as 'Here's a fragment' or 'Sure', and never put a colon before "
+                "the fragment. Write in natural Peninsular (Castilian) Spanish, using the appropriate "
+                "accents (á, é, í, ó, ú, ñ) where they belong. "
+                "Base the fragment on the topic and vocabulary of the text the user provides."
+            ),
+            "full_ask": (
+                "Give me ONE short Spanish sentence to practice pronunciation, "
+                "based on this text."
+            ),
+            "fragment_ask": (
+                "Give me ONE short Spanish fragment of 2 to 4 words (NOT a complete "
+                "sentence) to practice pronunciation, based on this text."
+            ),
+        },
+        "preview_phrase": "¡Hola! Así es como sueno. Vamos a practicar juntos.",
+        "translator_warmup": "Hola.",
+        "variants": {
+            "castilian": {
+                "kokoro_lang_code": "e",
+                "espeak_language": "es",
+                "default_voice": "ef_dora",
+                "voices": ["ef_dora", "em_alex", "em_santa"],
+            },
+        },
+    },
 }
 
 
@@ -469,6 +533,44 @@ def available_engines(language: str = None) -> tuple:
     """
     profile = LANGUAGE_PROFILES.get(language or PRACTICE_LANGUAGE)
     return tuple(profile["engines"]) if profile else ()
+
+
+# Committed phoneme model calibrations live next to the engine, one per espeak
+# language ("en_model_calibration.json", "es_model_calibration.json", ...). The
+# key is the espeak language with any dialect suffix dropped ("en-us" -> "en"),
+# matching pronunciation/phoneme/speech.py _lang_key.
+_PHONEME_CALIBRATION_DIR = BASE_DIR / "pronunciation" / "phoneme"
+
+
+def engine_experimental(engine: str = None, language: str = None,
+                        accent: str = None) -> bool:
+    """True when *engine* on *language*'s *accent* runs without proper calibration.
+
+    Only the phoneme engine can be experimental: it scores against a committed
+    ``<lang>_model_calibration.json`` selected by the variant's espeak language.
+    When that file is absent the engine still runs, but on the English
+    calibration fallback (pronunciation/phoneme/speech.py) - usable, yet not
+    tuned for the language, so it must be flagged rather than passing silently.
+    The acoustic engine is never flagged (it is only offered where it is valid)
+    and none does no scoring. Arguments default to the active configuration, so
+    the settings window can ask about the selected-but-not-yet-running language.
+    This is a data rule (a missing calibration file), not a per-language branch:
+    an English calibration always exists, so English is never experimental.
+    """
+    engine = engine or ENGINE
+    if engine != "phoneme":
+        return False
+    language = language or PRACTICE_LANGUAGE
+    accent = accent or (ACCENT if language == PRACTICE_LANGUAGE
+                        else default_accent(language))
+    variant = _variants_of(language).get(accent)
+    if not variant:
+        return False
+    lang_key = (variant["espeak_language"] or "").split("-")[0]
+    if not lang_key:
+        return False
+    calibration = _PHONEME_CALIBRATION_DIR / f"{lang_key}_model_calibration.json"
+    return not calibration.is_file()
 
 
 def accent_choices(language: str = None) -> tuple:
@@ -624,6 +726,13 @@ if _available_engines and ENGINE not in _available_engines:
           f"using {_available_engines[0]!r}", file=sys.stderr)
     ENGINE = _available_engines[0]
 
+# True when the active engine/language runs the phoneme engine without a
+# committed model calibration for its language (see engine_experimental): the
+# engine falls back to the English calibration, which is usable but not tuned.
+# The app logs a startup warning and the settings window marks it (main.py,
+# settings_window.py). English always has a calibration, so this is False there.
+PHONEME_EXPERIMENTAL = engine_experimental()
+
 # GOOD-anchor mode for the phoneme engine (see pronunciation/phoneme/config.py),
 # read from settings.json ("phoneme_good_mode"); only affects ENGINE == "phoneme":
 #   "global"  - one calibrated PHONEME_GOOD anchor for every phrase; the 0-5
@@ -770,8 +879,8 @@ if loader.models_cached(Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):
 # the default, so the panel and the extra translation work stay opt-in. The
 # label is mapped to a FLORES-200 code for NLLB (see mimora/translator.py) and
 # persisted via save_user_setting("translation_language", …).
-TRANSLATION_LANGUAGES = ("", "Russian", "Ukrainian", "Spanish", "French",
-                         "German", "Italian", "Chinese", "Japanese")
+TRANSLATION_LANGUAGES = ("", "English", "Russian", "Ukrainian", "Spanish",
+                         "French", "German", "Italian", "Chinese", "Japanese")
 
 
 def translation_targets(language: str = None) -> tuple:
@@ -780,9 +889,9 @@ def translation_targets(language: str = None) -> tuple:
     Translating a phrase into the language it is already in is pointless, so the
     active language's display name is dropped from TRANSLATION_LANGUAGES (the
     "off" choice and every other language stay). *language* defaults to the
-    active practice language. English is not in the base list today, so for
-    English practice this returns the list unchanged; a later stage adds English
-    as a target for practicing other languages.
+    active practice language. English is now a base target (for practicing
+    non-English languages), so English practice drops it here while Spanish
+    practice keeps English and drops Spanish.
     """
     profile = LANGUAGE_PROFILES.get(language or PRACTICE_LANGUAGE)
     own = profile["display_name"] if profile else None
