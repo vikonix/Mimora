@@ -151,7 +151,6 @@ class ActiveSelectionTests(_ConfigTestBase):
         self.assertEqual(config.PRACTICE_LANGUAGE, "english")
         self.assertEqual(config.TARGET_LANGUAGE, "English")
         self.assertEqual(config.ACCENT, "american")
-        self.assertEqual(config.ENGLISH_ACCENT, "american")  # legacy alias
         self.assertEqual(config.KOKORO_LANG_CODE, "a")
         self.assertEqual(config.ESPEAK_LANGUAGE, "en-us")
         self.assertEqual(config.KOKORO_VOICE, "af_heart")
@@ -174,7 +173,6 @@ class LegacyMigrationTests(_ConfigTestBase):
     def test_legacy_english_accent_is_honored(self):
         config = _build_config({"english_accent": "british"})
         self.assertEqual(config.ACCENT, "british")
-        self.assertEqual(config.ENGLISH_ACCENT, "british")
         self.assertEqual(config.KOKORO_LANG_CODE, "b")
 
     def test_new_accent_key_wins_over_legacy(self):
@@ -219,6 +217,84 @@ class KeyRegistryTests(_ConfigTestBase):
         resolved = self.config.default_user_settings()
         self.assertIn(resolved["voice"],
                       self.config.accent_voices(resolved["accent"]))
+
+
+class ProfileTextTests(_ConfigTestBase):
+    """Stage 2: language-specific text lives in the profile and is derived."""
+
+    def setUp(self):
+        self.config = _build_config({})
+
+    def test_phrase_gen_block_is_complete(self):
+        pg = self.config.LANGUAGE_PROFILES["english"]["phrase_gen"]
+        for key in ("system", "fragment_system", "full_ask", "fragment_ask"):
+            self.assertIn(key, pg)
+            self.assertTrue(pg[key].strip(), key)
+
+    def test_derived_prompt_constants_match_profile(self):
+        pg = self.config.LANGUAGE_PROFILES["english"]["phrase_gen"]
+        self.assertEqual(self.config.PHRASE_GEN_SYSTEM_PROMPT, pg["system"])
+        self.assertEqual(self.config.PHRASE_GEN_FRAGMENT_SYSTEM_PROMPT,
+                         pg["fragment_system"])
+        self.assertEqual(self.config.PHRASE_GEN_FULL_ASK, pg["full_ask"])
+        self.assertEqual(self.config.PHRASE_GEN_FRAGMENT_ASK, pg["fragment_ask"])
+
+    def test_preview_warmup_and_flores_are_derived(self):
+        profile = self.config.LANGUAGE_PROFILES["english"]
+        self.assertEqual(self.config.PREVIEW_PHRASE, profile["preview_phrase"])
+        self.assertEqual(self.config.TRANSLATOR_WARMUP,
+                         profile["translator_warmup"])
+        self.assertEqual(self.config.SOURCE_FLORES_CODE, profile["flores_code"])
+
+    def test_every_profile_carries_language_text(self):
+        # A new language must ship all its language text, so enabling it needs
+        # no code branch - only a profile entry.
+        for name, profile in self.config.LANGUAGE_PROFILES.items():
+            self.assertIn("phrase_gen", profile, name)
+            self.assertIn("preview_phrase", profile, name)
+            self.assertIn("translator_warmup", profile, name)
+
+
+class TranslationTargetTests(_ConfigTestBase):
+    def setUp(self):
+        self.config = _build_config({})
+
+    def test_off_choice_and_other_languages_present(self):
+        targets = self.config.translation_targets()
+        self.assertIn("", targets)          # "translation off"
+        self.assertIn("Spanish", targets)   # a valid target for English practice
+
+    def test_active_language_is_excluded(self):
+        # Translating into the practiced language is pointless, so its display
+        # name never appears among the targets.
+        self.assertNotIn(self.config.TARGET_LANGUAGE,
+                         self.config.translation_targets())
+
+    def test_english_practice_keeps_the_base_list(self):
+        # English is not in the base list today, so nothing is removed.
+        self.assertEqual(self.config.translation_targets(),
+                         self.config.TRANSLATION_LANGUAGES)
+
+
+class PhonemeExampleTests(_ConfigTestBase):
+    def setUp(self):
+        self.config = _build_config({})
+
+    def test_example_for_uses_active_language(self):
+        from mimora import phoneme_examples
+        # A known English phone resolves to its example word; stress/length
+        # marks are tolerated (mirrors the engine's symbols).
+        self.assertEqual(phoneme_examples.example_for("i"), "see")
+        self.assertEqual(phoneme_examples.example_for("ˈiː"), "see")
+
+    def test_example_for_unknown_language_returns_none(self):
+        from mimora import phoneme_examples
+        self.assertIsNone(phoneme_examples.example_for("i", language="klingon"))
+
+    def test_registry_has_english_table(self):
+        from mimora import phoneme_examples
+        self.assertIn("english",
+                      phoneme_examples.PHONEME_EXAMPLES_BY_LANGUAGE)
 
 
 if __name__ == "__main__":

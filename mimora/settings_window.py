@@ -85,6 +85,9 @@ class Field:
     running process was started with - so the pending-restart hint reflects
     "saved differs from running", even across window close/reopen.
     step is the snap granularity of a "scale" slider (ignored by other kinds).
+    enabled, when given, is checked at render time; a field that answers False
+    is shown disabled (greyed, non-interactive) - used for settings that do not
+    apply to the running language/variant, e.g. Random voice with one voice.
     """
     key: str
     label: str
@@ -99,6 +102,7 @@ class Field:
     file_types: tuple = ()
     help: str = ""
     step: Optional[float] = None
+    enabled: Optional[Callable[[], bool]] = None
 
 
 @dataclass(frozen=True)
@@ -125,18 +129,26 @@ def build_sections() -> tuple:
             Field("user_name", "Your name", "text",
                   lambda: config.user_setting("user_name", config.USER_NAME),
                   help="Used in the greeting and the per-user calibration."),
-            Field("english_accent", "English accent", "choice",
-                  lambda: config.user_setting("english_accent",
-                                              config.ENGLISH_ACCENT),
+            Field("practice_language", "Language", "choice",
+                  lambda: config.user_setting("practice_language",
+                                              config.PRACTICE_LANGUAGE),
+                  choices=config.language_choices, restart=True,
+                  runtime_value=lambda: config.PRACTICE_LANGUAGE,
+                  help="The language you practice. Changing it needs a restart."),
+            # Regional variant of the language. Hidden by _build_body when the
+            # language has a single variant (nothing to choose).
+            Field("accent", "Accent", "choice",
+                  lambda: config.user_setting("accent", config.ACCENT),
                   choices=config.accent_choices, restart=True,
-                  runtime_value=lambda: config.ENGLISH_ACCENT),
+                  runtime_value=lambda: config.ACCENT,
+                  help="Regional variant of the language."),
             Field("voice", "Voice", "choice",
                   lambda: config.user_setting("voice", config.KOKORO_VOICE),
-                  choices=lambda: config.accent_voices(config.ENGLISH_ACCENT)),
+                  choices=lambda: config.accent_voices(config.ACCENT)),
             Field("translation_language", "Translation", "choice",
                   lambda: config.user_setting("translation_language",
                                               config.TRANSLATION_LANGUAGE),
-                  choices=lambda: config.TRANSLATION_LANGUAGES,
+                  choices=config.translation_targets,
                   help="Empty = translation off."),
             Field("phrase_length", "Phrase length", "choice",
                   lambda: config.user_setting("phrase_length",
@@ -155,9 +167,11 @@ def build_sections() -> tuple:
             Field("random_voice", "Random voice per phrase", "bool",
                   lambda: config.user_setting("random_voice",
                                               config.RANDOM_VOICE),
+                  enabled=lambda: len(config.KOKORO_VOICES) >= 2,
                   help="Each new phrase speaks with a different voice of "
-                       "the current accent. The Voice choice above is kept "
-                       "and used again when this is off."),
+                       "the current language. The Voice choice above is kept "
+                       "and used again when this is off. Needs at least two "
+                       "voices."),
             Field("playback_own_recording", "Play back your recording", "bool",
                   lambda: config.user_setting("playback_own_recording",
                                               config.PLAYBACK_OWN_RECORDING),
@@ -172,9 +186,10 @@ def build_sections() -> tuple:
         Section("Pronunciation", (
             Field("engine", "Scoring engine", "choice",
                   lambda: config.user_setting("engine", config.ENGINE),
-                  choices=lambda: config.ENGINE_CHOICES, restart=True,
+                  choices=config.available_engines, restart=True,
                   runtime_value=lambda: config.ENGINE,
-                  help="phoneme = default; none = scoring off (fast start)."),
+                  help="phoneme = default; none = scoring off (fast start). "
+                       "Only engines available for the language are shown."),
             Field("phoneme_good_mode", "Phoneme anchor mode", "choice",
                   lambda: config.user_setting("phoneme_good_mode",
                                               config.PHONEME_GOOD_MODE),
@@ -265,8 +280,10 @@ def all_fields() -> tuple:
     return tuple(f for section in build_sections() for f in section.fields)
 
 
-# Spoken by the voice-preview button; short and phonetically varied.
-PREVIEW_PHRASE = "Hello! This is how I sound. Let's practice together."
+# Spoken by the voice-preview button; comes from the active language profile
+# (config), so the preview is in the language being practiced. Re-exported here
+# because main.py imports it from this module (the settings-window preview path).
+PREVIEW_PHRASE = config.PREVIEW_PHRASE
 
 
 class SettingsWindow:
@@ -408,6 +425,10 @@ class SettingsWindow:
         for section in build_sections():
             row = self._add_section_header(inner, section.title, row)
             for field in section.fields:
+                # The variant selector is hidden when the language has a single
+                # variant: there is nothing to choose (see the "accent" field).
+                if field.key == "accent" and len(config.accent_choices()) <= 1:
+                    continue
                 row = self._add_field_row(inner, field, row)
 
     def _add_section_header(self, parent, title: str, row: int) -> int:
@@ -441,6 +462,10 @@ class SettingsWindow:
                 cursor="hand2", anchor=tk.W)
             control.grid(row=row, column=0, columnspan=2, sticky=tk.W,
                          padx=14, pady=2)
+            # A field that does not apply to the running language/variant (e.g.
+            # Random voice with a single voice) renders disabled.
+            if field.enabled is not None and not field.enabled():
+                control.configure(state=tk.DISABLED, cursor="")
         else:
             tk.Label(parent, text=field.label, font=(FONT_FAMILY, FONT_SIZE_SMALL),
                      fg=THEME["text_dim"], bg=THEME["bg_main"],
@@ -712,27 +737,63 @@ class SettingsWindow:
         value = next((choice for choice in field.choices()
                       if str(choice) == raw), raw)
         self._emit(field, value)
-        if field.key == "english_accent":
+        if field.key == "accent":
             self._apply_accent_change(value)
+        elif field.key == "practice_language":
+            self._apply_language_change(value)
         elif field.key == "engine":
             self._sync_engine_dependent_state()
 
-    def _apply_accent_change(self, accent: str):
-        """Accent switched: repoint the voice list and reset to its default.
+    def _selected_language(self) -> str:
+        """The language chosen in the window (may differ from the running one)."""
+        return self._vars["practice_language"].get() \
+            if "practice_language" in self._vars else config.PRACTICE_LANGUAGE
 
-        The persisted voice must belong to the persisted accent, otherwise the
+    def _apply_accent_change(self, accent: str):
+        """Variant switched: repoint the voice list and reset to its default.
+
+        The persisted voice must belong to the persisted variant, otherwise the
         next startup rejects it and falls back with a warning. The new voice is
         emitted as a normal change; the controller decides whether it can apply
-        live (it cannot while the running pipeline speaks the old accent).
+        live (it cannot while the running pipeline speaks the old variant). The
+        voice list follows the language selected in the window, which may differ
+        from the running one until a restart.
         """
-        voices = config.accent_voices(accent)
+        language = self._selected_language()
+        voices = config.accent_voices(accent, language)
         combo = self._widgets.get("voice")
         if combo is None or not voices:
             return
         combo.configure(values=voices)
-        default_voice = config.accent_default_voice(accent)
+        default_voice = config.accent_default_voice(accent, language)
         self._vars["voice"].set(default_voice)
         self._emit(self._fields["voice"], default_voice)
+        self._sync_preview_state()
+
+    def _apply_language_change(self, language: str):
+        """Language switched (restart-only): repoint the variant and voice lists.
+
+        The persisted variant and voice must belong to the persisted language,
+        or the next startup rejects them and falls back with a warning. The new
+        language's default variant and voice are emitted as normal changes; they
+        apply live only after the restart into the new language. The variant
+        combobox is present only when the running language has more than one
+        variant (see _build_body), so its repoint is guarded.
+        """
+        default_variant = config.default_accent(language)
+        accent_combo = self._widgets.get("accent")
+        if accent_combo is not None and "accent" in self._fields:
+            accent_combo.configure(values=config.accent_choices(language))
+            if "accent" in self._vars:
+                self._vars["accent"].set(default_variant)
+            self._emit(self._fields["accent"], default_variant)
+        voices = config.accent_voices(default_variant, language)
+        combo = self._widgets.get("voice")
+        if combo is not None and voices:
+            combo.configure(values=voices)
+            default_voice = config.accent_default_voice(default_variant, language)
+            self._vars["voice"].set(default_voice)
+            self._emit(self._fields["voice"], default_voice)
         self._sync_preview_state()
 
     def _sync_engine_dependent_state(self):
@@ -756,18 +817,25 @@ class SettingsWindow:
 
     # Footer hint shown while the preview button is disabled; kept as a
     # constant so _sync_preview_state can recognize (and clear) its own text.
-    _PREVIEW_HINT = "Voice preview needs a restart into the new accent first."
+    _PREVIEW_HINT = ("Voice preview needs a restart into the selected "
+                     "language/variant first.")
 
     def _sync_preview_state(self):
-        """Preview works only for voices of the accent the app is running with.
+        """Preview works only for the language and variant the app is running.
 
-        While disabled, a neutral footer hint explains why (kind="info", not an
-        error - nothing went wrong); it is cleared as soon as the preview is
-        possible again, so switching the accent back does not leave it stale.
+        The Kokoro pipeline speaks one language+variant per run, so a voice of a
+        selected-but-not-yet-running language or variant cannot be previewed
+        until a restart. While disabled, a neutral footer hint explains why
+        (kind="info", not an error - nothing went wrong); it is cleared as soon
+        as the preview is possible again, so switching back does not leave it
+        stale.
         """
-        accent = self._vars["english_accent"].get() \
-            if "english_accent" in self._vars else config.ENGLISH_ACCENT
-        state = tk.NORMAL if accent == config.ENGLISH_ACCENT else tk.DISABLED
+        language = self._selected_language()
+        accent = self._vars["accent"].get() \
+            if "accent" in self._vars else config.ACCENT
+        running = (language == config.PRACTICE_LANGUAGE
+                   and accent == config.ACCENT)
+        state = tk.NORMAL if running else tk.DISABLED
         self._preview_btn.config(state=state)
         if state == tk.DISABLED:
             self._show_status(self._PREVIEW_HINT, kind="info")
@@ -942,11 +1010,10 @@ class SettingsWindow:
         for field in all_fields():
             if field.key in defaults:
                 self.set_value(field.key, defaults[field.key])
-        # The voice list must match the default accent now shown.
+        # The voice list must match the default variant now shown.
         combo = self._widgets.get("voice")
         if combo is not None:
-            combo.configure(values=config.accent_voices(
-                defaults["english_accent"]))
+            combo.configure(values=config.accent_voices(defaults["accent"]))
         self._sync_preview_state()
         # Only the defaults that differ from the running values actually
         # need a restart (a machine already on defaults needs none).

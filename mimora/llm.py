@@ -142,12 +142,11 @@ class LLMManager:
         if is_fragment:
             system_prompt = config.PHRASE_GEN_FRAGMENT_SYSTEM_PROMPT
             max_tokens = config.PHRASE_GEN_FRAGMENT_MAX_TOKENS
-            ask = ("Give me ONE short English fragment of 2 to 4 words (NOT a complete "
-                   "sentence) to practice pronunciation, based on this text.")
+            ask = config.PHRASE_GEN_FRAGMENT_ASK
         else:
             system_prompt = config.PHRASE_GEN_SYSTEM_PROMPT
             max_tokens = config.PHRASE_GEN_MAX_TOKENS
-            ask = "Give me ONE short English sentence to practice pronunciation, based on this text."
+            ask = config.PHRASE_GEN_FULL_ASK
 
         window_text = self._current_window(source_text)
         user_prompt = f"Source text:\n{window_text}\n\n{ask}"

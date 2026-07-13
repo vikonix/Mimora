@@ -19,10 +19,14 @@ from __future__ import annotations
 
 from typing import Optional
 
+from mimora import config
+
 # IPA symbol -> a short, common word that clearly contains the sound. The word
 # is spoken (synthesized) on a badge click and shown in the "as in '...'"
-# tooltip, so each is picked to be unambiguous and easy to hear.
-PHONEME_EXAMPLES: dict[str, str] = {
+# tooltip, so each is picked to be unambiguous and easy to hear. This is the
+# English table; other languages register their own in
+# PHONEME_EXAMPLES_BY_LANGUAGE below.
+_ENGLISH_EXAMPLES: dict[str, str] = {
     # --- Monophthong vowels ---
     "i": "see",
     "iː": "see",
@@ -94,6 +98,13 @@ PHONEME_EXAMPLES: dict[str, str] = {
     "w": "wet",
 }
 
+# Per-language registry: language key (as in config.LANGUAGE_PROFILES) -> its
+# {IPA symbol: example word} table. example_for() selects the table by the
+# active practice language; Spanish and other languages add their own entry.
+PHONEME_EXAMPLES_BY_LANGUAGE: dict[str, dict[str, str]] = {
+    "english": _ENGLISH_EXAMPLES,
+}
+
 # Marks espeak may attach to a symbol that do not change which example applies:
 # primary/secondary stress and (for the length-insensitive fallback) the length
 # mark. Stripped in order by ``example_for`` until a key matches.
@@ -101,24 +112,30 @@ _STRESS_MARKS = "ˈˌ"
 _LENGTH_MARK = "ː"
 
 
-def example_for(phoneme: str) -> Optional[str]:
-    """Example word for an IPA ``phoneme``, or ``None`` when unknown.
+def example_for(phoneme: str, language: str = None) -> Optional[str]:
+    """Example word for an IPA ``phoneme`` in ``language``, or ``None`` if unknown.
 
-    Tries the symbol as given, then with stress marks removed, then also without
-    the length mark - so ``ˈiː`` and ``i`` both resolve to the same example. An
-    unknown symbol returns ``None`` (the caller shows the badge without an
-    example rather than inventing one).
+    ``language`` (a key in PHONEME_EXAMPLES_BY_LANGUAGE) defaults to the active
+    practice language, so the badge tooltip and spoken example match what the
+    user is practicing. Tries the symbol as given, then with stress marks
+    removed, then also without the length mark - so ``ˈiː`` and ``i`` both
+    resolve to the same example. An unknown symbol (or an unknown language)
+    returns ``None`` (the caller shows the badge without an example rather than
+    inventing one).
     """
     if not phoneme:
         return None
+    if language is None:
+        language = config.PRACTICE_LANGUAGE
+    table = PHONEME_EXAMPLES_BY_LANGUAGE.get(language, {})
     candidate = phoneme.strip()
-    if candidate in PHONEME_EXAMPLES:
-        return PHONEME_EXAMPLES[candidate]
+    if candidate in table:
+        return table[candidate]
     stripped = candidate.strip(_STRESS_MARKS)
-    if stripped in PHONEME_EXAMPLES:
-        return PHONEME_EXAMPLES[stripped]
+    if stripped in table:
+        return table[stripped]
     no_length = stripped.replace(_LENGTH_MARK, "")
-    return PHONEME_EXAMPLES.get(no_length)
+    return table.get(no_length)
 
 
-__all__ = ["PHONEME_EXAMPLES", "example_for"]
+__all__ = ["PHONEME_EXAMPLES_BY_LANGUAGE", "example_for"]

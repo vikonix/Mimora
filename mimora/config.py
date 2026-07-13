@@ -186,8 +186,17 @@ def save_user_setting(key: str, value) -> bool:
     Thin wrapper that binds the settings path and the in-memory _USER view to
     loader.save_setting (which preserves hand-edited and "_" comment keys, and
     reports failures instead of raising). Returns True on success.
+
+    Writing either new language key also completes the one-time migration off
+    the legacy "english_accent" key: it is only ever read as a fallback for
+    "accent" (see the active-variant section), so once the new form is persisted
+    the stale legacy key is dropped from the file to avoid it lingering.
     """
-    return loader.save_setting(CONFIG_DIR / "settings.json", key, value, _USER)
+    path = CONFIG_DIR / "settings.json"
+    ok = loader.save_setting(path, key, value, _USER)
+    if ok and key in ("accent", "practice_language") and "english_accent" in _USER:
+        loader.reset_settings(path, {"english_accent"}, _USER)
+    return ok
 
 
 # Display name of the practicing user; shown in the Name field of the UI and
@@ -364,10 +373,11 @@ EXTERNAL_N_CTX = int(_num("external_n_ctx",
 #                        pronunciation is scored against phonemes of the same
 #                        dialect (see pronunciation/phoneme/speech.py).
 #
-# Only English is defined today (variants american/british). Spanish and the
-# code-ready future languages arrive as further entries. The phrase-generation
-# prompts and the voice-preview phrase move into the profile in a later stage,
-# together with the code that reads them (mimora/llm.py, settings_window.py).
+# Besides the wiring above, a profile also carries the language-specific text
+# the app used to hardcode: the phrase-generation prompts and asks, the
+# voice-preview phrase and the translator warm-up text (see the english entry).
+# Only English is defined today (variants american/british); Spanish and the
+# code-ready future languages arrive as further entries.
 LANGUAGE_PROFILES = {
     "english": {
         "display_name": "English",
@@ -375,6 +385,46 @@ LANGUAGE_PROFILES = {
         "default_variant": "american",
         "engines": ("phoneme", "acoustic", "none"),
         "practice_text_file": "texts/practice_text.txt",
+        # Phrase-generation prompts (mimora/llm.py). The instructions stay in
+        # English - they steer the model - while the TARGET language of the
+        # generated phrase is named inside each string, so a new language ships
+        # its own prompts here rather than a code branch. "system" is the full
+        # sentence prompt, "fragment_system" the 2-4 word fragment prompt;
+        # "full_ask"/"fragment_ask" are the per-request user asks.
+        "phrase_gen": {
+            "system": (
+                "You generate short English sentences for pronunciation practice. "
+                "Reply with exactly ONE natural spoken sentence of 4 to 8 words, easy to read aloud. "
+                "Use only plain words and a single final period - no quotation marks, no numbering, "
+                "no extra commentary. Output ONLY the sentence itself, with nothing before or after it: "
+                "do not add a lead-in such as 'Here's a sentence' or 'Sure', and never put a colon before "
+                "the sentence. Base the sentence on the topic and vocabulary of the text the user provides."
+            ),
+            "fragment_system": (
+                "You generate very short English fragments for pronunciation practice. "
+                "Reply with exactly ONE natural fragment of 2 to 4 words that is NOT a complete "
+                "sentence - such as a sentence opening, a prepositional phrase, or the start of a "
+                "question. Examples: give me; on the table; where are you from. "
+                "Use only plain lowercase words - no final period, no quotation marks, no numbering, "
+                "no extra commentary. Output ONLY the fragment itself, with nothing before or after it: "
+                "do not add a lead-in such as 'Here's a fragment' or 'Sure', and never put a colon before "
+                "the fragment. Base the fragment on the topic and vocabulary of the text the user provides."
+            ),
+            "full_ask": (
+                "Give me ONE short English sentence to practice pronunciation, "
+                "based on this text."
+            ),
+            "fragment_ask": (
+                "Give me ONE short English fragment of 2 to 4 words (NOT a complete "
+                "sentence) to practice pronunciation, based on this text."
+            ),
+        },
+        # Spoken by the voice-preview button (settings_window.py); short and
+        # phonetically varied, in the language being practiced.
+        "preview_phrase": "Hello! This is how I sound. Let's practice together.",
+        # Throwaway text to prime the NLLB translator's source tokenizer
+        # (mimora/translator.py warm_up); any short phrase in the source language.
+        "translator_warmup": "Hello.",
         "variants": {
             "american": {
                 "kokoro_lang_code": "a",
@@ -421,32 +471,45 @@ def available_engines(language: str = None) -> tuple:
     return tuple(profile["engines"]) if profile else ()
 
 
-def accent_choices() -> tuple:
-    """Variant names of the active language, in their definition order.
+def accent_choices(language: str = None) -> tuple:
+    """Variant names of *language* (default: the active one), in definition order.
 
-    Kept single-argument (over the active language) for the settings window,
-    which moves to the language/variant model in a later stage.
+    The optional *language* lets the settings window list the variants of the
+    language currently selected in its Language field - which may differ from
+    the running one until a restart. Called with no argument it answers for the
+    active language, keeping the existing single-argument call sites working.
     """
-    return tuple(_variants_of(PRACTICE_LANGUAGE))
+    return tuple(_variants_of(language or PRACTICE_LANGUAGE))
 
 
-def accent_voices(accent: str) -> tuple:
-    """Voices belonging to *accent* of the active language, or () if unknown.
+def default_accent(language: str = None) -> str:
+    """Default variant of *language* (default: the active one), or "" if unknown.
+
+    Used by the settings window when the language selector changes: the variant
+    and voice must be reset to the newly selected language's defaults.
+    """
+    profile = LANGUAGE_PROFILES.get(language or PRACTICE_LANGUAGE)
+    return profile["default_variant"] if profile else ""
+
+
+def accent_voices(accent: str, language: str = None) -> tuple:
+    """Voices of *accent* within *language* (default: active), or () if unknown.
 
     Public accessor for the settings window: it lets the voice list follow the
-    variant selector without reaching into LANGUAGE_PROFILES directly.
+    variant (and language) selector without reaching into LANGUAGE_PROFILES.
     """
-    variant = _variants_of(PRACTICE_LANGUAGE).get(accent)
+    variant = _variants_of(language or PRACTICE_LANGUAGE).get(accent)
     return tuple(variant["voices"]) if variant else ()
 
 
-def accent_default_voice(accent: str) -> str:
-    """Default voice of *accent* of the active language, or "" if unknown.
+def accent_default_voice(accent: str, language: str = None) -> str:
+    """Default voice of *accent* within *language* (default: active), or "".
 
-    Used when the variant selector changes: the persisted voice must belong to
-    the newly selected variant, so it is reset to that variant's default.
+    Used when the variant or language selector changes: the persisted voice
+    must belong to the persisted variant, so it is reset to that variant's
+    default.
     """
-    variant = _variants_of(PRACTICE_LANGUAGE).get(accent)
+    variant = _variants_of(language or PRACTICE_LANGUAGE).get(accent)
     return variant["default_voice"] if variant else ""
 
 
@@ -483,9 +546,6 @@ elif not isinstance(ACCENT, str) or ACCENT not in _variant_map:
           f"{PRACTICE_LANGUAGE} (expected one of {sorted(_variant_map)}); "
           f"using {_LANG_PROFILE['default_variant']!r}", file=sys.stderr)
     ACCENT = _LANG_PROFILE["default_variant"]
-# Backward-compatible alias: the settings window still reads config.ENGLISH_ACCENT
-# until it moves to the language/variant model in a later stage.
-ENGLISH_ACCENT = ACCENT
 _VARIANT = _variant_map[ACCENT]
 
 # espeak language code ("en-us"/"en-gb"/...) used by the pronunciation analyzer
@@ -614,17 +674,16 @@ PRONUNCIATION_ACOUSTIC_GOOD = 0.20
 PRACTICE_TEXT_FILE = _path("practice_text_file",
                                 BASE_DIR / _LANG_PROFILE["practice_text_file"])
 
-# One short phrase is generated per request (non-streaming).
+# One short phrase is generated per request (non-streaming). Temperature and the
+# token budgets are language-independent tuning; the prompts and asks are
+# language text, so they come from the active profile (see LANGUAGE_PROFILES).
 PHRASE_GEN_TEMPERATURE = 0.7
 PHRASE_GEN_MAX_TOKENS = 40
-PHRASE_GEN_SYSTEM_PROMPT = (
-    "You generate short English sentences for pronunciation practice. "
-    "Reply with exactly ONE natural spoken sentence of 4 to 8 words, easy to read aloud. "
-    "Use only plain words and a single final period - no quotation marks, no numbering, "
-    "no extra commentary. Output ONLY the sentence itself, with nothing before or after it: "
-    "do not add a lead-in such as 'Here's a sentence' or 'Sure', and never put a colon before "
-    "the sentence. Base the sentence on the topic and vocabulary of the text the user provides."
-)
+_PHRASE_GEN = _LANG_PROFILE["phrase_gen"]
+PHRASE_GEN_SYSTEM_PROMPT = _PHRASE_GEN["system"]
+# Per-request user asks handed to the LLM (mimora/llm.py) for each phrase length.
+PHRASE_GEN_FULL_ASK = _PHRASE_GEN["full_ask"]
+PHRASE_GEN_FRAGMENT_ASK = _PHRASE_GEN["fragment_ask"]
 # Sliding window over the source text: instead of sending the whole text with
 # every request (which makes a small model converge on one "most likely"
 # sentence), only PHRASE_GEN_WINDOW_SENTENCES consecutive sentences are sent.
@@ -639,18 +698,13 @@ PHRASE_GEN_WINDOW_REPEATS = int(_num("phrase_gen_window_repeats", 5,
 
 # "Few words" mode: generate a short 2-4 word fragment instead of a complete
 # sentence (e.g. "give me", "on the table", "where are you from"). Uses its own
-# system prompt and a tighter token budget.
-PHRASE_GEN_FRAGMENT_SYSTEM_PROMPT = (
-    "You generate very short English fragments for pronunciation practice. "
-    "Reply with exactly ONE natural fragment of 2 to 4 words that is NOT a complete "
-    "sentence - such as a sentence opening, a prepositional phrase, or the start of a "
-    "question. Examples: give me; on the table; where are you from. "
-    "Use only plain lowercase words - no final period, no quotation marks, no numbering, "
-    "no extra commentary. Output ONLY the fragment itself, with nothing before or after it: "
-    "do not add a lead-in such as 'Here's a fragment' or 'Sure', and never put a colon before "
-    "the fragment. Base the fragment on the topic and vocabulary of the text the user provides."
-)
+# system prompt (from the profile) and a tighter token budget.
+PHRASE_GEN_FRAGMENT_SYSTEM_PROMPT = _PHRASE_GEN["fragment_system"]
 PHRASE_GEN_FRAGMENT_MAX_TOKENS = 16
+
+# Voice-preview phrase (settings_window.py "Listen" button) in the practiced
+# language, from the active profile.
+PREVIEW_PHRASE = _LANG_PROFILE["preview_phrase"]
 
 # Phrase length selected in the UI ("phrase_length"), persisted on change:
 # "full" → complete sentence, "fragment" → 2-4 word fragment (see
@@ -675,6 +729,13 @@ NLLB_TRANSLATOR_MODEL_NAME = "facebook/nllb-200-distilled-600M"
 # with Kokoro / Wav2Vec2 / llama_cpp - matching the translator's RAM (not VRAM) budget.
 # hardware detection may pin it to "cuda" on a machine with VRAM to spare.
 TRANSLATOR_DEVICE = _HW.get("TRANSLATOR_DEVICE") or "cpu"
+# The translator's source language is the language being practiced: NLLB
+# tokenizes the source with this FLORES-200 prefix (mimora/translator.py), and
+# it comes from the active profile so it follows the practice language.
+SOURCE_FLORES_CODE = _LANG_PROFILE["flores_code"]
+# Text used to prime the translator's tokenizer on warm-up, in the source
+# language (from the profile).
+TRANSLATOR_WARMUP = _LANG_PROFILE["translator_warmup"]
 
 # =====================================================================
 # Offline-mode gating
@@ -711,6 +772,23 @@ if loader.models_cached(Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):
 # persisted via save_user_setting("translation_language", …).
 TRANSLATION_LANGUAGES = ("", "Russian", "Ukrainian", "Spanish", "French",
                          "German", "Italian", "Chinese", "Japanese")
+
+
+def translation_targets(language: str = None) -> tuple:
+    """Translation-panel choices with the practiced language removed.
+
+    Translating a phrase into the language it is already in is pointless, so the
+    active language's display name is dropped from TRANSLATION_LANGUAGES (the
+    "off" choice and every other language stay). *language* defaults to the
+    active practice language. English is not in the base list today, so for
+    English practice this returns the list unchanged; a later stage adds English
+    as a target for practicing other languages.
+    """
+    profile = LANGUAGE_PROFILES.get(language or PRACTICE_LANGUAGE)
+    own = profile["display_name"] if profile else None
+    return tuple(label for label in TRANSLATION_LANGUAGES if label != own)
+
+
 TRANSLATION_LANGUAGE = _USER.get("translation_language", "")
 if TRANSLATION_LANGUAGE not in TRANSLATION_LANGUAGES:
     print(f"[config] settings.json: translation_language must be one of "

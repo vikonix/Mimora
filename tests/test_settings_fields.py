@@ -41,7 +41,8 @@ VALID_KINDS = {"bool", "choice", "number", "scale", "text", "path"}
 # moving in or out of this set is a deliberate behavior change - update the
 # test together with the field.
 EXPECTED_RESTART_KEYS = {
-    "english_accent",
+    "practice_language",
+    "accent",
     "engine",
     "phoneme_good_mode",
     "color_theme",

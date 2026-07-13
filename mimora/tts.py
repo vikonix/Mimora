@@ -35,18 +35,18 @@ _NULL_EVENT = Event()
 # thread alive for the whole duration of long clips.
 WINSOUND_STOP_GUARD_SECONDS = 0.2
 
-# Language-specific warm-up words to prevent out-of-vocabulary phoneme warnings
+# Language-specific warm-up words to prevent out-of-vocabulary phoneme warnings.
+# Keys are Kokoro v1.0 lang_codes; German ("g") and Russian ("r") are omitted
+# because Kokoro v1.0 ships no voices for them (there is no pipeline to warm).
 KOKORO_WARMUP_WORDS = {
     "a": "Hi.",        # English (American)
     "b": "Hi.",        # English (British)
     "e": "Hola.",      # Spanish
     "f": "Salut.",     # French
-    "g": "Hallo.",     # German
     "h": "नमस्ते",     # Hindi
     "i": "Ciao.",      # Italian
     "j": "こんにちは", # Japanese
     "p": "Olá.",       # Portuguese
-    "r": "Привет.",    # Russian
     "z": "你好",       # Chinese
 }
 

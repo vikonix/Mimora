@@ -24,10 +24,10 @@ import threading
 
 from mimora import config
 
-# English label (as listed in config.TRANSLATION_LANGUAGES) -> FLORES-200 code
-# that NLLB expects as the target language. The source is always English. A
-# label not in this map -- including the empty "translation off" choice -- yields
-# no translation (translate() returns "").
+# Display label (as listed in config.TRANSLATION_LANGUAGES) -> FLORES-200 code
+# that NLLB expects as the target language. The source language is the one being
+# practiced (config.SOURCE_FLORES_CODE). A label not in this map -- including the
+# empty "translation off" choice -- yields no translation (translate() returns "").
 _FLORES_CODES = {
     "Russian": "rus_Cyrl",
     "Ukrainian": "ukr_Cyrl",
@@ -40,7 +40,6 @@ _FLORES_CODES = {
     # so it is not a vocab token and NLLB would silently pick a default language.
     "Japanese": "jpn_Jpan",
 }
-_SOURCE_CODE = "eng_Latn"
 
 # Upper bound on generated translation length. Practice phrases are short (a few
 # words), so this is only a safety cap that keeps a degenerate input from running
@@ -49,7 +48,7 @@ _MAX_NEW_TOKENS = 128
 
 
 class TranslatorManager:
-    """Loads NLLB-200 once and translates English phrases on demand."""
+    """Loads NLLB-200 once and translates practice phrases on demand."""
 
     def __init__(self):
         self.model = None
@@ -108,12 +107,13 @@ class TranslatorManager:
         transient hiccup here must not abort startup.
         """
         try:
-            self.translate("Hello.", config.TRANSLATION_LANGUAGE or "Russian")
+            self.translate(config.TRANSLATOR_WARMUP,
+                           config.TRANSLATION_LANGUAGE or "Russian")
         except Exception:
             logging.exception("Translator warm-up failed (continuing).")
 
     def translate(self, text: str, language_label: str) -> str:
-        """Translate English *text* into the language named by *language_label*.
+        """Translate *text* (in the practiced language) into *language_label*.
 
         Returns the translated string, or "" when there is nothing to do: empty
         input, the "translation off" choice, or a label this engine does not
@@ -131,8 +131,9 @@ class TranslatorManager:
 
             with self._infer_lock:
                 # NLLB tokenizes the source with a language prefix taken from
-                # src_lang, so it must be set before encoding.
-                self.tokenizer.src_lang = _SOURCE_CODE
+                # src_lang, so it must be set before encoding. The source is the
+                # practiced language (config.SOURCE_FLORES_CODE).
+                self.tokenizer.src_lang = config.SOURCE_FLORES_CODE
                 inputs = self.tokenizer(text, return_tensors="pt").to(self._device)
                 # The output language is selected by forcing the first generated
                 # token to the target language code. That code is an ordinary
