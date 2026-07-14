@@ -112,14 +112,15 @@ your version (e.g. `brew install python-tk@3.12` for Homebrew Python 3.12).
 ### Models
 
 `install.py` pre-downloads all of these (see [Quick install](#quick-install-script)).
-Otherwise the four Hugging Face models are fetched automatically on first run,
+Otherwise the Hugging Face models are fetched automatically on first run,
 and only the GGUF chat model must be obtained manually.
 
 | Model | Used by | Notes |
 |---|---|---|
 | `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | pronunciation analysis (**phoneme** engine, default) | espeak IPA phoneme recognizer, ~1.2 GB; via `install.py` or on first run |
 | `facebook/wav2vec2-large-960h` | pronunciation analysis (**acoustic** engine) | ~1.2 GB; via `install.py` or on first run |
-| Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech | via `install.py` or on first run |
+| Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech (English) | via `install.py` or on first run |
+| Supertonic 3 (`Supertone/supertonic-3`) | text-to-speech (Spanish) | ~400 MB into `model_cache/supertonic3/`; via `install.py` or on first run. Weights are **OpenRAIL-M** licensed (code MIT), so they are downloaded, never bundled |
 | `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | NLLB-200 200-language translator, ~2.4 GB; via `install.py` or on first run |
 | A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | via `install.py`, or **download manually** into `models/` |
 
@@ -306,7 +307,7 @@ Mimora is built on the SpeakLoop voice-tutor stack. Its default **phoneme** scor
 | `main.py` | `PronunciationTrainerGUI` - Tkinter GUI, recording, the Prompt→Record→Analyze→Feedback→Loop state machine, threading orchestration, LLM-server subprocess management. |
 | `mimora/engine.py` | Engine dispatcher - binds the backend chosen by `ENGINE` (settings.json `"engine"`: `phoneme` default, `acoustic` alternative, `none` = scoring off for slow machines) and exposes one `analyze(...)` interface, so `main.py` is engine-agnostic. |
 | `mimora/prosody.py` | Engine-agnostic prosody layer: F0/energy contour extraction (no torch). Computed in `main.py` from the raw user/reference audio so the pitch/energy charts work the same across engines. |
-| `mimora/tts.py` | `TTSManager` - Kokoro TTS. `synthesize()` returns the waveform; `play_array()` plays any waveform (reference at 24 kHz, your recording at 16 kHz). `loudness_envelope()` precomputes the per-frame mouth-openness track used by the face. |
+| `mimora/tts.py` | `TTSManager` - TTS facade over per-language synthesis backends (`KokoroBackend` 24 kHz for English, `SupertonicBackend` 44.1 kHz for Spanish; selected by the language profile). `synthesize()` returns the waveform; `play_array()` plays any waveform at any rate (your recording at 16 kHz). `loudness_envelope()` precomputes the per-frame mouth-openness track used by the face. |
 | `mimora/face_widget.py` | `FaceWidget` - schematic articulation face (Tk Canvas). Talking mouth driven from a precomputed loudness track while audio plays; smiley reflecting the score when idle. Stdlib `tkinter` only. |
 | `mimora/progress_widget.py` | `ProgressRing` - circular session-average gauge on the right of the hero score row (mirrors the face on the left). Ring drawn by Pillow (supersampled, antialiased); the average and phrase count are Tk text. Shows the running tally that used to live in the status bar. |
 | `mimora/llm.py` | `LLMManager` - OpenAI-compatible client. `generate_phrase()` produces one practice phrase per request. |
@@ -388,7 +389,8 @@ Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by
 ## Credits
 
 - **[OpenPronounce](https://github.com/Halleck45/OpenPronounce)** (MIT) - the pronunciation-scoring core reused in `pronunciation/acoustic/`.
-- **[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)** - text-to-speech.
+- **[Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M)** - text-to-speech (English variants).
+- **[Supertonic 3](https://huggingface.co/Supertone/supertonic-3)** ([supertonic-py](https://github.com/supertone-inc/supertonic-py), code MIT, weights OpenRAIL-M) - text-to-speech (Spanish variant), ONNX runtime.
 - **[wav2vec2-xlsr-53-espeak-cv-ft](https://huggingface.co/facebook/wav2vec2-xlsr-53-espeak-cv-ft)** (Hugging Face Transformers) - espeak-style IPA phoneme recognizer for the default `phoneme` engine.
 - **[Wav2Vec2](https://huggingface.co/facebook/wav2vec2-large-960h)** (Hugging Face Transformers) - acoustic embeddings and transcription (`acoustic` engine).
 - **[NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-600M)** (Hugging Face Transformers) - offline translation for the translation panel.
@@ -399,3 +401,9 @@ Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by
 ## License
 
 See [`LICENSE`](LICENSE). The reused OpenPronounce components are MIT-licensed; their attribution is retained in `pronunciation/acoustic/speech.py`.
+
+Model weights have their own licenses. In particular, the Supertonic 3 TTS
+weights are licensed under [OpenRAIL-M](https://huggingface.co/Supertone/supertonic-3/blob/main/LICENSE)
+(the `supertonic` package code is MIT). Mimora therefore never bundles these
+weights: they are downloaded from Hugging Face by `install.py` or on the first
+online run, into `model_cache/supertonic3/`.

@@ -86,7 +86,7 @@ class TestDefaultDiffing(unittest.TestCase):
 
     def test_plain_string_setting_diffs_by_equality(self):
         glue, _ = make_glue()
-        with mock.patch.object(config, "KOKORO_VOICE", "af_heart"):
+        with mock.patch.object(config, "TTS_VOICE", "af_heart"):
             self.assertFalse(glue._default_differs_from_live(
                 "voice", "af_heart"))
             self.assertTrue(glue._default_differs_from_live(
@@ -104,7 +104,7 @@ class TestReset(unittest.TestCase):
                                return_value=True), \
              mock.patch.object(config, "default_user_settings",
                                return_value=defaults), \
-             mock.patch.object(config, "KOKORO_VOICE", "af_heart"), \
+             mock.patch.object(config, "TTS_VOICE", "af_heart"), \
              mock.patch.object(config, "SHOW_FACE", True):
             self.assertTrue(glue.reset_to_defaults())
         self.assertEqual(dispatched, ["show_face"])
@@ -117,7 +117,7 @@ class TestReset(unittest.TestCase):
                                return_value=True), \
              mock.patch.object(config, "default_user_settings",
                                return_value={"voice": "af_bella"}), \
-             mock.patch.object(config, "KOKORO_VOICE", "af_heart"), \
+             mock.patch.object(config, "TTS_VOICE", "af_heart"), \
              mock.patch.object(config, "save_user_setting") as save:
             self.assertTrue(glue.reset_to_defaults())
             save.assert_not_called()

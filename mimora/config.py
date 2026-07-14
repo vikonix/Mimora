@@ -235,8 +235,23 @@ MODEL_CACHE_DIR = BASE_DIR / "model_cache"
 loader.ensure_dir(MODEL_CACHE_DIR)
 os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 
+# Supertonic 3 (the Spanish TTS backend, mimora/tts.py SupertonicBackend) keeps
+# its model in its own cache directory, NOT under HF_HOME/hub: the package
+# downloads via huggingface_hub snapshot_download(local_dir=...) into the
+# directory named by the SUPERTONIC_CACHE_DIR env var (default would be
+# ~/.cache/supertonic3). Pinning it under model_cache/ keeps the weights next
+# to the code, matching the HF_HOME policy above. The package resolves the env
+# var on every call (not at import), but setting it here - before any
+# supertonic import - keeps the timing rules identical to HF_HOME's.
+# install.py sets the same variable so the installer pre-download lands in the
+# exact directory the app reads.
+os.environ.setdefault("SUPERTONIC_CACHE_DIR", str(MODEL_CACHE_DIR / "supertonic3"))
+# Read back from the environment (like HF_HOME below in the offline gating) so
+# an externally set cache location is honored by the offline check too.
+SUPERTONIC_CACHE_DIR = Path(os.environ["SUPERTONIC_CACHE_DIR"])
+
 # Language configuration (LANGUAGE_PROFILES, the selected practice language and
-# variant, and the derived TARGET_LANGUAGE / ESPEAK_LANGUAGE / KOKORO_* / voice
+# variant, and the derived TARGET_LANGUAGE / ESPEAK_LANGUAGE / TTS_* / voice
 # constants) lives below, after the settings-file accessors it depends on.
 
 # =====================================================================
@@ -374,17 +389,24 @@ EXTERNAL_N_CTX = int(_num("external_n_ctx",
 #                        engine is English-only ASR, so a non-English profile
 #                        omits it (see available_engines);
 #   practice_text_file - default source text, relative to the project root;
-#   variants           - the former "accents": a display key -> Kokoro/espeak
-#                        wiring. Voice prefixes: 'af_'/'bf_' = female,
-#                        'am_'/'bm_' = male (a = American, b = British). A
-#                        voice's data is downloaded on first use and cached
-#                        locally; espeak_language must match the variant so
+#   variants           - the former "accents": a display key -> TTS/espeak
+#                        wiring. Each variant names its synthesis backend
+#                        ("tts_backend", default "kokoro" - see TTS_BACKEND
+#                        below) plus that backend's language code and voices:
+#                        Kokoro variants use "kokoro_lang_code" and voices
+#                        like 'af_heart' ('af_'/'bf_' = female, 'am_'/'bm_' =
+#                        male; a = American, b = British; voice data downloads
+#                        on first use); Supertonic variants use
+#                        "tts_lang_code" (ISO, e.g. "es"), voices F1..F5 /
+#                        M1..M5 and an optional "total_steps" quality knob.
+#                        espeak_language must match the variant so
 #                        pronunciation is scored against phonemes of the same
 #                        dialect (see pronunciation/phoneme/speech.py).
 #
 # Besides the wiring above, a profile also carries the language-specific text
 # the app used to hardcode: the phrase-generation prompts and asks, the
-# voice-preview phrase and the translator warm-up text (see the english entry).
+# voice-preview phrase, and the translator and TTS warm-up texts (see the
+# english entry).
 # English (variants american/british) and Peninsular Spanish (variant castilian)
 # are defined; the code-ready future languages (French, Italian) arrive as
 # further entries with no code change beyond engine calibration.
@@ -540,26 +562,55 @@ _VARIANT = _variant_map[ACCENT]
 ESPEAK_LANGUAGE = _VARIANT["espeak_language"]
 
 # =====================================================================
-# Text-to-Speech (Kokoro) Settings
+# Text-to-Speech Settings (backend selected by the active variant)
 # =====================================================================
-# Kokoro pipeline language of the active variant ('a' = American, 'b' = British).
-KOKORO_LANG_CODE = _VARIANT["kokoro_lang_code"]
+# Synthesis backend of the active variant - one of the keys of
+# tts.TTS_BACKENDS ("kokoro" = Kokoro-82M/torch/24 kHz, "supertonic" =
+# Supertonic 3/ONNX/44.1 kHz). A variant that names no backend runs Kokoro,
+# so the English profile needs no new field. This is data, not a language
+# branch: the Spanish variant switched to Supertonic purely by profile edit
+# (see tasks/supertonic_tts_backend_task.md).
+TTS_BACKEND_CHOICES = ("kokoro", "supertonic")
+TTS_BACKEND = _VARIANT.get("tts_backend", "kokoro")
+if TTS_BACKEND not in TTS_BACKEND_CHOICES:
+    print(f"[config] profile {PRACTICE_LANGUAGE}/{ACCENT}: unknown tts_backend "
+          f"{TTS_BACKEND!r} (expected one of {TTS_BACKEND_CHOICES}); "
+          f"using 'kokoro'", file=sys.stderr)
+    TTS_BACKEND = "kokoro"
+
+# Backend language code of the active variant: Kokoro pipeline codes are
+# single letters ('a' = American, 'b' = British), Supertonic uses ISO codes
+# ("es", "en", ...). Kokoro variants keep their historical "kokoro_lang_code"
+# key; other backends name theirs "tts_lang_code".
+TTS_LANG_CODE = _VARIANT.get("tts_lang_code",
+                             _VARIANT.get("kokoro_lang_code"))
 
 # Default voice: the variant's default, unless settings.json names another voice
 # of the same variant ("voice": null keeps the variant default). A voice from a
-# different variant is rejected - it would not match KOKORO_LANG_CODE.
-KOKORO_VOICE = _VARIANT["default_voice"]
+# different variant is rejected - it would not match the variant's backend or
+# language code.
+TTS_VOICE = _VARIANT["default_voice"]
 _user_voice = _USER.get("voice")
 if _user_voice is not None:
     if _user_voice in _VARIANT["voices"]:
-        KOKORO_VOICE = _user_voice
+        TTS_VOICE = _user_voice
     else:
         print(f"[config] settings.json: voice {_user_voice!r} is not a known "
-              f"{ACCENT} voice; using {KOKORO_VOICE!r}", file=sys.stderr)
+              f"{ACCENT} voice; using {TTS_VOICE!r}", file=sys.stderr)
 
-# Voices the user can pick from in the UI. All belong to the same lang_code, so
-# switching between them needs no pipeline reload.
-KOKORO_VOICES = _VARIANT["voices"]
+# Voices the user can pick from in the UI. All belong to the same variant (and
+# thus the same backend/lang code), so switching between them needs no reload.
+TTS_VOICES = _VARIANT["voices"]
+
+# Supertonic quality/speed trade-off: iterative refinement steps per synthesis
+# (more = better audio, slower). Package range is wider, but 5..12 is the
+# useful band for phrase-length audio; out-of-range profile values are
+# clamped, not fatal. Ignored by the Kokoro backend.
+TTS_TOTAL_STEPS = int(_VARIANT.get("total_steps", 8))
+if not 5 <= TTS_TOTAL_STEPS <= 12:
+    print(f"[config] profile {PRACTICE_LANGUAGE}/{ACCENT}: total_steps "
+          f"{TTS_TOTAL_STEPS} outside 5..12; clamping", file=sys.stderr)
+    TTS_TOTAL_STEPS = min(12, max(5, TTS_TOTAL_STEPS))
 
 # Reference playback speed ("reference_speed"), chosen in Settings and
 # persisted on change. The Settings control is a slider over a continuous
@@ -704,6 +755,10 @@ PHRASE_GEN_FRAGMENT_MAX_TOKENS = 16
 # language, from the active profile.
 PREVIEW_PHRASE = _LANG_PROFILE["preview_phrase"]
 
+# TTS warm-up word (mimora/tts.py warm_up) in the practiced language, from the
+# active profile - language text is profile data, never a table in code.
+TTS_WARMUP = _LANG_PROFILE["tts_warmup"]
+
 # Startup greeting (main.py _greet_and_start) in the practiced language, from
 # the active profile: GREETING_NAMED carries a {name} placeholder, filled with
 # the user name; GREETING_ANONYMOUS is the ready form for an empty name.
@@ -759,13 +814,38 @@ _ENGINE_MODEL_REPO = {
 }
 # ENGINE was validated above, so a missing entry can only mean "none".
 _engine_repo = _ENGINE_MODEL_REPO.get(ENGINE)
+# The TTS requirement follows the active backend: only the Kokoro backend
+# loads the Kokoro repo, so requiring it under Supertonic would needlessly
+# keep the Hub online for weights the run never touches (and vice versa).
 _CACHED_REPOS = (
-    "hexgrad/Kokoro-82M",                     # Kokoro TTS (model + voice files)
-    NLLB_TRANSLATOR_MODEL_NAME,               # NLLB-200 offline translator
-) + ((_engine_repo,) if _engine_repo else ())  # active engine's recognizer, if any
+    (NLLB_TRANSLATOR_MODEL_NAME,)             # NLLB-200 offline translator
+    + (("hexgrad/Kokoro-82M",) if TTS_BACKEND == "kokoro" else ())
+    + ((_engine_repo,) if _engine_repo else ())  # active engine's recognizer
+)
+
+
+def _supertonic_model_cached() -> bool:
+    """True when the Supertonic 3 model is fully present in its cache.
+
+    The package downloads atomically (into a temp directory that is renamed
+    onto SUPERTONIC_CACHE_DIR only on success), so a present, non-empty cache
+    directory is a *complete* one - no per-file manifest check is needed.
+    Relevant because the Supertonic download itself goes through
+    huggingface_hub: flipping HF_HUB_OFFLINE=1 before the model exists would
+    block that first download.
+    """
+    try:
+        return SUPERTONIC_CACHE_DIR.is_dir() and any(SUPERTONIC_CACHE_DIR.iterdir())
+    except OSError:
+        return False
+
+
+_TTS_MODEL_CACHED = (_supertonic_model_cached() if TTS_BACKEND == "supertonic"
+                     else True)  # Kokoro is covered by _CACHED_REPOS above
 # HF_HOME is read from os.environ (not MODEL_CACHE_DIR) so an externally set cache
 # location is honored.
-if loader.models_cached(Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):
+if _TTS_MODEL_CACHED and loader.models_cached(
+        Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 

@@ -54,6 +54,10 @@ PROFILE = {
     # Throwaway text to prime the NLLB translator's source tokenizer
     # (mimora/translator.py warm_up); any short phrase in the source language.
     "translator_warmup": "Hello.",
+    # Throwaway word spoken by the TTS warm-up pass (mimora/tts.py warm_up):
+    # a short in-vocabulary word of the practiced language, so the dummy
+    # synthesis raises no out-of-vocabulary warnings.
+    "tts_warmup": "Hi.",
     # Startup greeting spoken once the app is ready (main.py
     # _greet_and_start), in the practiced language. The named form carries
     # a {name} placeholder; the anonymous form is used when no user name is

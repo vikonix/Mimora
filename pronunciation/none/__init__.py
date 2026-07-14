@@ -31,7 +31,8 @@ import numpy as np
 from pronunciation.common import PronunciationResult
 
 # Nominal sample rates, kept for signature symmetry with the other engines
-# (the audio is never inspected here).
+# (the audio is never inspected here). main.py passes reference_sr explicitly
+# (the active TTS backend's native rate), so the Kokoro default is inert.
 TARGET_SAMPLE_RATE = 16_000
 KOKORO_SAMPLE_RATE = 24_000
 

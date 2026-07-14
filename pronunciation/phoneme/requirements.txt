@@ -6,9 +6,14 @@
 # recognizer, phonemizer-fork for the espeak reference). The one addition over the
 # acoustic core is panphon, used for the articulatory feature distance.
 #
-# NOTE: phonemizer needs espeak-ng. In the full app Kokoro/misaki registers the
-# bundled espeakng_loader on import; standalone, the module registers it defensively
-# (see speech._ensure_espeak) or falls back to a system espeak-ng on PATH.
+# NOTE: phonemizer needs espeak-ng. The engine registers the bundled
+# espeakng_loader itself (speech._ensure_espeak, called from load_models and
+# before reference phonemization) and falls back to a system espeak-ng on
+# PATH. Do not rely on Kokoro/misaki registering it as an import side effect:
+# Mimora's TTS backends import lazily, so a non-Kokoro run (Spanish on
+# Supertonic) never imports Kokoro. espeakng_loader itself arrives
+# transitively with kokoro/misaki in the full app; standalone installs without
+# it use the system espeak-ng.
 
 # >=5.3 closes CVE-2026-4372 (config-injection RCE); kept in sync with the root
 # requirements.txt. The markers below relax torch/transformers on Intel macOS

@@ -70,7 +70,11 @@ from pronunciation.common.audio import (
 # =====================================================================
 # Wav2Vec2 expects strictly 16 kHz mono input: TARGET_SAMPLE_RATE (imported
 # above from pronunciation.common.audio).
-# Kokoro synthesises at 24 kHz; used as the default reference sample rate.
+# Kokoro synthesises at 24 kHz; used as the default reference sample rate for
+# STANDALONE use of this engine only. Mimora's main.py always passes
+# reference_sr explicitly (the active TTS backend's native rate), so this
+# default never applies there. (This engine is English-only, and English runs
+# Kokoro, so the value also matches Mimora's actual English reference rate.)
 KOKORO_SAMPLE_RATE = 24_000
 
 # ---------------------------------------------------------------------

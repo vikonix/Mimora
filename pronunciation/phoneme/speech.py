@@ -78,7 +78,10 @@ from pronunciation.common.audio import (
 # =====================================================================
 # The wav2vec2 recognizer expects strictly 16 kHz mono input: TARGET_SAMPLE_RATE
 # (imported above from pronunciation.common.audio).
-# Kokoro synthesises at 24 kHz; used as the default reference sample rate.
+# Kokoro synthesises at 24 kHz; used as the default reference sample rate for
+# STANDALONE use of this engine only. Mimora's main.py always passes
+# reference_sr explicitly (the active TTS backend's native rate, e.g. 44.1 kHz
+# for Supertonic Spanish), so this default never applies there.
 KOKORO_SAMPLE_RATE = 24_000
 
 # Tunable scoring constants live in JSON files next to this module, split into two
@@ -451,6 +454,15 @@ def load_models() -> None:
         from pronunciation.common.compat import allow_torch_load_for_trusted_models
 
         _ensure_phonemizer_detected()
+        # Register the bundled espeak-ng BEFORE the processor loads: the
+        # wav2vec2-phoneme tokenizer builds a phonemizer EspeakBackend inside
+        # from_pretrained, which raises "espeak not installed" otherwise.
+        # Historically this was masked by a side effect - importing Kokoro
+        # (misaki.espeak) registered espeak at app startup - but since the TTS
+        # backends import lazily (mimora/tts.py), a non-Kokoro run (e.g.
+        # Spanish on Supertonic) never imports Kokoro, so the engine must
+        # register espeak itself.
+        _ensure_espeak()
         allow_torch_load_for_trusted_models()
         cfg = get_config()
         _processor = AutoProcessor.from_pretrained(cfg.model_name)
@@ -489,9 +501,13 @@ _espeak_registered = False
 def _ensure_espeak() -> None:
     """Point phonemizer at the bundled espeak-ng once (no system install needed).
 
-    In the full app importing Kokoro registers espeak-ng as a side effect; this
-    defensive call keeps the module usable on its own. Any failure falls through to
-    a system-installed espeak, matching the acoustic core's assumption.
+    This is the engine's OWN registration - it must not rely on the host:
+    since Mimora's TTS backends import lazily, a non-Kokoro run (Spanish on
+    Supertonic) never imports Kokoro/misaki, whose import used to register
+    espeak as a side effect. Called from load_models() (the tokenizer builds
+    an EspeakBackend inside from_pretrained) and before reference
+    phonemization. Any failure falls through to a system-installed espeak,
+    matching the acoustic core's assumption.
     """
     global _espeak_registered
     if _espeak_registered:

@@ -47,7 +47,7 @@ LIVE_CONFIG_ATTRS = {
 # the reset has already removed the persisted overrides.
 SETTING_LIVE_ATTRS = {
     "user_name": "USER_NAME",
-    "voice": "KOKORO_VOICE",
+    "voice": "TTS_VOICE",
     "phrase_length": "PHRASE_LENGTH",
     "translation_language": "TRANSLATION_LANGUAGE",
     "reference_speed": "REFERENCE_SPEED",

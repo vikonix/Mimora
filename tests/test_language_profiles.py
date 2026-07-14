@@ -96,15 +96,24 @@ class ProfileStructureTests(_ConfigTestBase):
             self.assertIn(profile["default_variant"], variants,
                           f"{name!r} default_variant not among its variants")
             for vname, variant in variants.items():
-                for key in ("kokoro_lang_code", "espeak_language",
-                            "default_voice", "voices"):
+                for key in ("espeak_language", "default_voice", "voices"):
                     self.assertIn(key, variant, f"{name}/{vname} missing {key!r}")
                 self.assertTrue(variant["voices"], f"{name}/{vname} has no voices")
                 self.assertIn(variant["default_voice"], variant["voices"],
                               f"{name}/{vname} default_voice not in voices")
-                # espeak/kokoro codes must be non-empty strings.
                 self.assertTrue(variant["espeak_language"].strip())
-                self.assertTrue(str(variant["kokoro_lang_code"]).strip())
+                # The TTS backend is per-variant data; an absent key means
+                # Kokoro (see config.TTS_BACKEND). The backend determines
+                # which language-code key the variant must carry.
+                backend = variant.get("tts_backend", "kokoro")
+                self.assertIn(backend, self.config.TTS_BACKEND_CHOICES,
+                              f"{name}/{vname} unknown tts_backend {backend!r}")
+                lang_key = ("kokoro_lang_code" if backend == "kokoro"
+                            else "tts_lang_code")
+                self.assertIn(lang_key, variant,
+                              f"{name}/{vname} missing {lang_key!r}")
+                self.assertTrue(str(variant[lang_key]).strip(),
+                                f"{name}/{vname} empty {lang_key!r}")
 
     def test_voices_are_unique_within_a_variant(self):
         for name, profile in self.config.LANGUAGE_PROFILES.items():
@@ -153,16 +162,18 @@ class ActiveSelectionTests(_ConfigTestBase):
         self.assertEqual(config.PRACTICE_LANGUAGE, "english")
         self.assertEqual(config.TARGET_LANGUAGE, "English")
         self.assertEqual(config.ACCENT, "american")
-        self.assertEqual(config.KOKORO_LANG_CODE, "a")
+        self.assertEqual(config.TTS_BACKEND, "kokoro")
+        self.assertEqual(config.TTS_LANG_CODE, "a")
         self.assertEqual(config.ESPEAK_LANGUAGE, "en-us")
-        self.assertEqual(config.KOKORO_VOICE, "af_heart")
+        self.assertEqual(config.TTS_VOICE, "af_heart")
 
     def test_accent_key_selects_variant(self):
         config = _build_config({"accent": "british"})
         self.assertEqual(config.ACCENT, "british")
-        self.assertEqual(config.KOKORO_LANG_CODE, "b")
+        self.assertEqual(config.TTS_BACKEND, "kokoro")
+        self.assertEqual(config.TTS_LANG_CODE, "b")
         self.assertEqual(config.ESPEAK_LANGUAGE, "en-gb")
-        self.assertEqual(config.KOKORO_VOICE, "bf_emma")
+        self.assertEqual(config.TTS_VOICE, "bf_emma")
 
     def test_unknown_accent_falls_back_to_default_variant(self):
         config = _build_config({"accent": "klingon"})
@@ -175,7 +186,7 @@ class LegacyMigrationTests(_ConfigTestBase):
     def test_legacy_english_accent_is_honored(self):
         config = _build_config({"english_accent": "british"})
         self.assertEqual(config.ACCENT, "british")
-        self.assertEqual(config.KOKORO_LANG_CODE, "b")
+        self.assertEqual(config.TTS_LANG_CODE, "b")
 
     def test_new_accent_key_wins_over_legacy(self):
         # A settings.json carrying both keys prefers the new one.
@@ -185,7 +196,7 @@ class LegacyMigrationTests(_ConfigTestBase):
 
     def test_legacy_voice_still_resolves_against_variant(self):
         config = _build_config({"english_accent": "british", "voice": "bm_george"})
-        self.assertEqual(config.KOKORO_VOICE, "bm_george")
+        self.assertEqual(config.TTS_VOICE, "bm_george")
 
 
 class PracticeLanguageTests(_ConfigTestBase):
@@ -246,6 +257,7 @@ class ProfileTextTests(_ConfigTestBase):
         self.assertEqual(self.config.PREVIEW_PHRASE, profile["preview_phrase"])
         self.assertEqual(self.config.TRANSLATOR_WARMUP,
                          profile["translator_warmup"])
+        self.assertEqual(self.config.TTS_WARMUP, profile["tts_warmup"])
         self.assertEqual(self.config.SOURCE_FLORES_CODE, profile["flores_code"])
 
     def test_every_profile_carries_language_text(self):
@@ -253,7 +265,7 @@ class ProfileTextTests(_ConfigTestBase):
         # no code branch - only a profile entry.
         for name, profile in self.config.LANGUAGE_PROFILES.items():
             for key in ("phrase_gen", "preview_phrase", "translator_warmup",
-                        "greeting_named", "greeting_anonymous",
+                        "tts_warmup", "greeting_named", "greeting_anonymous",
                         "practice_text_fallback"):
                 self.assertIn(key, profile, name)
 
@@ -331,9 +343,14 @@ class SpanishSelectionTests(_ConfigTestBase):
         self.assertEqual(self.config.PRACTICE_LANGUAGE, "spanish")
         self.assertEqual(self.config.TARGET_LANGUAGE, "Spanish")
         self.assertEqual(self.config.ACCENT, "castilian")
-        self.assertEqual(self.config.KOKORO_LANG_CODE, "e")
+        # Spanish runs the Supertonic 3 backend (10 voices, ISO lang code) -
+        # see tasks/supertonic_tts_backend_task.md.
+        self.assertEqual(self.config.TTS_BACKEND, "supertonic")
+        self.assertEqual(self.config.TTS_LANG_CODE, "es")
         self.assertEqual(self.config.ESPEAK_LANGUAGE, "es")
-        self.assertEqual(self.config.KOKORO_VOICE, "ef_dora")
+        self.assertEqual(self.config.TTS_VOICE, "F1")
+        self.assertEqual(len(self.config.TTS_VOICES), 10)
+        self.assertEqual(self.config.TTS_TOTAL_STEPS, 8)
         self.assertEqual(self.config.SOURCE_FLORES_CODE, "spa_Latn")
         self.assertTrue(
             self.config.PRACTICE_TEXT_FILE.endswith("practice_text_es.txt"))
@@ -351,6 +368,8 @@ class SpanishSelectionTests(_ConfigTestBase):
         self.assertEqual(self.config.PREVIEW_PHRASE, profile["preview_phrase"])
         self.assertEqual(self.config.TRANSLATOR_WARMUP,
                          profile["translator_warmup"])
+        self.assertEqual(self.config.TTS_WARMUP, profile["tts_warmup"])
+        self.assertEqual(self.config.TTS_WARMUP, "Hola.")
 
     def test_greeting_and_fallback_are_spanish(self):
         profile = self.config.LANGUAGE_PROFILES["spanish"]
@@ -359,6 +378,24 @@ class SpanishSelectionTests(_ConfigTestBase):
                          profile["greeting_anonymous"])
         self.assertEqual(self.config.PRACTICE_TEXT_FALLBACK,
                          profile["practice_text_fallback"])
+
+
+class TTSBackendDefaultTests(_ConfigTestBase):
+    """The tts_backend variant field defaults to Kokoro (english.py unchanged)."""
+
+    def test_english_variants_carry_no_backend_field(self):
+        # The default keeps existing Kokoro profiles untouched: a variant
+        # without the field runs Kokoro.
+        config = _build_config({})
+        for variant in config.LANGUAGE_PROFILES["english"]["variants"].values():
+            self.assertNotIn("tts_backend", variant)
+        self.assertEqual(config.TTS_BACKEND, "kokoro")
+
+    def test_total_steps_defaults_when_absent(self):
+        # english variants name no total_steps (Kokoro ignores it); the
+        # constant still resolves to the documented default.
+        config = _build_config({})
+        self.assertEqual(config.TTS_TOTAL_STEPS, 8)
 
 
 class EngineAvailabilityTests(_ConfigTestBase):
@@ -503,7 +540,7 @@ class SingleVoiceProfileTests(_ConfigTestBase):
     Checked on an artificial single-voice profile (task §4.2), not through the
     UI: settings_window.py enables "Random voice per phrase" only when the
     running variant offers at least two voices (its ``enabled`` lambda tests
-    ``len(config.KOKORO_VOICES) >= 2``), which is the same voices-list length
+    ``len(config.TTS_VOICES) >= 2``), which is the same voices-list length
     rule exercised here.
     """
 

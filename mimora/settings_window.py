@@ -171,7 +171,7 @@ def build_sections() -> tuple:
                   runtime_value=lambda: config.ACCENT,
                   help="Regional variant of the language."),
             Field("voice", "Voice", "choice",
-                  lambda: config.user_setting("voice", config.KOKORO_VOICE),
+                  lambda: config.user_setting("voice", config.TTS_VOICE),
                   choices=lambda: config.accent_voices(_pending_accent(),
                                                        _pending_language())),
             Field("translation_language", "Translation", "choice",
@@ -197,7 +197,7 @@ def build_sections() -> tuple:
             Field("random_voice", "Random voice per phrase", "bool",
                   lambda: config.user_setting("random_voice",
                                               config.RANDOM_VOICE),
-                  enabled=lambda: len(config.KOKORO_VOICES) >= 2,
+                  enabled=lambda: len(config.TTS_VOICES) >= 2,
                   help="Each new phrase speaks with a different voice of "
                        "the current language. The Voice choice above is kept "
                        "and used again when this is off. Needs at least two "

@@ -12,9 +12,12 @@ run Mimora on a fresh machine:
   4. pip install the project requirements (root file pulls in the subprojects).
   5. Check for the native espeak-ng binary (optionally help install it).
   6. Pre-download the Hugging Face models into model_cache/.
-  7. Download the GGUF chat model into models/.
-  8. Run tools/detect_hardware.py to write config/hardware_config.json.
-  9. Write run_mimora.bat / run_mimora.sh: one-click launchers that activate
+  7. Pre-download the Supertonic 3 TTS model into model_cache/supertonic3/
+     (the Spanish TTS backend; kept outside the HF hub cache because the
+     supertonic package uses its own cache directory).
+  8. Download the GGUF chat model into models/.
+  9. Run tools/detect_hardware.py to write config/hardware_config.json.
+ 10. Write run_mimora.bat / run_mimora.sh: one-click launchers that activate
      the project's virtual environment and run main.py.
 
 Design notes
@@ -70,6 +73,11 @@ LOG_FILE = LOG_DIR / "install.log"
 REQUIREMENTS = PROJECT_ROOT / "requirements.txt"
 MODELS_DIR = PROJECT_ROOT / "models"
 MODEL_CACHE_DIR = PROJECT_ROOT / "model_cache"
+# The supertonic package keeps its model in its own cache directory (NOT under
+# the HF hub cache), overridable via the SUPERTONIC_CACHE_DIR env var. This
+# path must match mimora/config.py, which sets the same variable for the app.
+SUPERTONIC_CACHE_DIR = MODEL_CACHE_DIR / "supertonic3"
+SUPERTONIC_MODEL_NAME = "supertonic-3"
 DETECT_HW_SCRIPT = PROJECT_ROOT / "tools" / "detect_hardware.py"
 LAUNCHER_BAT = PROJECT_ROOT / "run_mimora.bat"
 LAUNCHER_SH = PROJECT_ROOT / "run_mimora.sh"
@@ -98,6 +106,10 @@ GGUF_FILENAME = "llama-3.2-3b-instruct-q4_k_m.gguf"
 
 # Hugging Face models Mimora pulls on first run; pre-fetching them here means
 # the first launch is offline-ready. Repo ids match what the app requests.
+# The Supertonic 3 TTS model is NOT in this list on purpose: the supertonic
+# package downloads with snapshot_download(local_dir=...) into its own cache
+# directory (SUPERTONIC_CACHE_DIR), so caching its repo under HF_HOME/hub here
+# would be dead weight the app never reads - it has a dedicated step instead.
 HF_MODEL_REPOS = [
     ("facebook/wav2vec2-large-960h", "Wav2Vec2 (acoustic pronunciation engine, ~1.2 GB)"),
     ("facebook/wav2vec2-xlsr-53-espeak-cv-ft", "Wav2Vec2 phoneme engine (espeak IPA ASR, ~1.2 GB)"),
@@ -125,11 +137,11 @@ PIP = [sys.executable, "-m", "pip"]
 # already run. Names with dashes (scikit-learn, phonemizer-fork,
 # python-Levenshtein) are the distribution names importlib.metadata expects.
 REQUIRED_DISTS = [
-    "numpy", "soundfile", "sounddevice", "kokoro", "openai",
+    "numpy", "soundfile", "sounddevice", "kokoro", "supertonic", "openai",
     "torch", "transformers", "fastapi", "uvicorn", "llama-cpp-python",
     "torchaudio", "librosa", "scipy", "scikit-learn", "fastdtw",
     "phonemizer-fork", "python-Levenshtein", "panphon", "sentencepiece",
-    "ttkbootstrap", "pillow",
+    "ttkbootstrap", "pillow", "onnxruntime",
 ]
 
 
@@ -181,6 +193,21 @@ def hf_repo_fully_cached(repo_id: str) -> bool:
         snapshot_download(repo_id=repo_id, local_files_only=True)
         return True
     except Exception:  # noqa: BLE001 - any miss/partial means "not fully cached"
+        return False
+
+
+def supertonic_model_cached() -> bool:
+    """True when the Supertonic 3 model is fully present in its cache dir.
+
+    Unlike the HF hub cache above, no manifest check is needed: the supertonic
+    package downloads atomically (into a temp directory that is renamed onto
+    the cache dir only on success), so a present, non-empty directory is a
+    complete download. Mirrors mimora/config.py _supertonic_model_cached.
+    """
+    try:
+        return (SUPERTONIC_CACHE_DIR.is_dir()
+                and any(SUPERTONIC_CACHE_DIR.iterdir()))
+    except OSError:
         return False
 
 
@@ -533,7 +560,7 @@ def check_virtualenv(log: Logger, args: argparse.Namespace) -> None:
     global site-packages, so we detect a venv/virtualenv/conda env and, when
     absent, make the user confirm before continuing.
     """
-    log.banner("Step 0/9 - Environment check")
+    log.banner("Step 0/10 - Environment check")
     in_venv = (sys.prefix != sys.base_prefix
                or bool(os.environ.get("CONDA_PREFIX")))
     log.log(f"    Interpreter: {sys.executable}")
@@ -589,7 +616,7 @@ def step_check_vcredist(
     message. We do NOT auto-install the redistributable: it needs an elevated GUI
     installer, which is out of scope for this pip-only setup.
     """
-    log.banner("Step 0/9 - Visual C++ runtime (Windows)")
+    log.banner("Step 0/10 - Visual C++ runtime (Windows)")
     if sys.platform != "win32":
         log.log("    Not Windows; the MSVC runtime check does not apply.")
         report.add("VC++ runtime", SKIPPED, "not Windows")
@@ -655,7 +682,7 @@ def step_check_tkinter(
     already, so in practice this only bites Linux (and Homebrew Python on
     macOS).
     """
-    log.banner("Step 0/9 - tkinter (GUI toolkit)")
+    log.banner("Step 0/10 - tkinter (GUI toolkit)")
     if sys.platform == "win32":
         log.log("    Windows Python installers bundle tkinter; skipping.")
         report.add("tkinter", SKIPPED, "not Linux/Unix")
@@ -725,7 +752,7 @@ def step_check_python(
 ) -> None:
     """Gate the interpreter: hard-fail below the minimum, warn above the tested
     maximum (no upper version block - newer Pythons may just lack wheels)."""
-    log.banner("Step 1/9 - Python version")
+    log.banner("Step 1/10 - Python version")
     current = sys.version_info[:2]
     log.log(f"    Running Python {platform.python_version()} ({sys.executable})")
     if current < MIN_PYTHON:
@@ -749,7 +776,7 @@ def step_install_requirements(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Install the project requirements; the root file chains the subprojects."""
-    log.banner("Step 4/9 - Project dependencies")
+    log.banner("Step 4/10 - Project dependencies")
     if not REQUIREMENTS.exists():
         log.log(f"    ERROR: {REQUIREMENTS} not found. Aborting.")
         report.add("pip requirements", FAILED, "requirements.txt missing")
@@ -976,7 +1003,7 @@ def step_gpu_llama(
 
 def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
     """Ensure the native espeak-ng binary exists; offer to install it."""
-    log.banner("Step 5/9 - espeak-ng (native binary for phonemizer)")
+    log.banner("Step 5/10 - espeak-ng (native binary for phonemizer)")
     if shutil.which("espeak-ng") or shutil.which("espeak"):
         log.log("    espeak-ng found on PATH.")
         report.add("espeak-ng", DONE, "already present")
@@ -1111,7 +1138,7 @@ def step_prefetch_models(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the Hugging Face models into model_cache/ (HF_HOME)."""
-    log.banner("Step 6/9 - Pre-download Hugging Face models")
+    log.banner("Step 6/10 - Pre-download Hugging Face models")
 
     prepare_hf_env(log)
 
@@ -1147,11 +1174,65 @@ def step_prefetch_models(
         raise InstallError("HF model cache")
 
 
+def step_prefetch_supertonic(
+    log: Logger, confirmer: Confirmer, report: StepReport
+) -> None:
+    """Download the Supertonic 3 TTS model into model_cache/supertonic3/.
+
+    The Spanish TTS backend (mimora/tts.py SupertonicBackend). A dedicated
+    step because the supertonic package does not read the HF hub cache: it
+    downloads with snapshot_download(local_dir=...) into the directory named
+    by SUPERTONIC_CACHE_DIR (set here to match mimora/config.py). Pre-fetching
+    matters for offline mode: the app flips HF_HUB_OFFLINE=1 once its models
+    are cached, and this download goes through huggingface_hub, so it must
+    happen while the Hub is still online. The weights are OpenRAIL-M licensed
+    (code is MIT), which is why they are downloaded at install time rather
+    than shipped with Mimora.
+    """
+    log.banner("Step 7/10 - Supertonic 3 TTS model (Spanish)")
+    # Same HF plumbing as the hub prefetch: the download runs through
+    # huggingface_hub, so the Windows xet/symlink fallbacks apply here too.
+    prepare_hf_env(log)
+    os.environ.setdefault("SUPERTONIC_CACHE_DIR", str(SUPERTONIC_CACHE_DIR))
+
+    installed = supertonic_model_cached()
+    desc = (f"Download the Supertonic 3 TTS model (~400 MB, weights licensed "
+            f"OpenRAIL-M) into {MODEL_CACHE_DIR.name}/{SUPERTONIC_CACHE_DIR.name}/ "
+            f"- the Spanish text-to-speech backend.")
+    if installed:
+        log.log(f"    Supertonic model already present: {SUPERTONIC_CACHE_DIR}")
+    if not confirmer.confirm(desc, installed=installed):
+        report.add("Supertonic model", SKIPPED,
+                   "already downloaded" if installed else "")
+        return
+
+    try:
+        # loader-level functions download without loading the ONNX sessions
+        # (no synthesis warm-up needed at install time). get_cache_dir honors
+        # SUPERTONIC_CACHE_DIR, so the download lands where the app looks.
+        from supertonic.loader import download_model, get_cache_dir
+    except ImportError:
+        log.log("    supertonic not installed (did the deps step run?).")
+        report.add("Supertonic model", FAILED, "supertonic missing")
+        raise InstallError("Supertonic model")
+
+    try:
+        target = get_cache_dir(SUPERTONIC_MODEL_NAME)
+        log.log(f"    Fetching Supertonic 3 [{SUPERTONIC_MODEL_NAME}] into {target} ...")
+        download_model(target, SUPERTONIC_MODEL_NAME)
+        log.log("    -> done: Supertonic 3")
+        report.add("Supertonic model", DONE)
+    except Exception as exc:  # noqa: BLE001 - report and fail fast, as HF step does
+        log.log(f"    -> FAILED: {exc}")
+        report.add("Supertonic model", FAILED)
+        raise InstallError("Supertonic model")
+
+
 def step_download_gguf(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the GGUF chat model into models/ if not already present."""
-    log.banner("Step 7/9 - GGUF chat model")
+    log.banner("Step 8/10 - GGUF chat model")
     prepare_hf_env(log)
     MODELS_DIR.mkdir(exist_ok=True)
     target = MODELS_DIR / GGUF_FILENAME
@@ -1192,7 +1273,7 @@ def step_detect_hardware(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Run detect_hardware.py last, when torch/llama-cpp are installed."""
-    log.banner("Step 8/9 - Hardware detection (writes hardware_config.json)")
+    log.banner("Step 9/10 - Hardware detection (writes hardware_config.json)")
     if not DETECT_HW_SCRIPT.exists():
         log.log(f"    {DETECT_HW_SCRIPT} not found; skipping.")
         report.add("hardware detection", SKIPPED, "script missing")
@@ -1230,7 +1311,7 @@ def step_create_launchers(
     hints at it (find_local_venv_name()), so the script still works if the
     venv was created under a name other than '.venv'.
     """
-    log.banner("Step 9/9 - Launcher script")
+    log.banner("Step 10/10 - Launcher script")
     venv_name = find_local_venv_name()
     target = LAUNCHER_BAT if sys.platform == "win32" else LAUNCHER_SH
 
@@ -1355,7 +1436,7 @@ def main() -> int:
         step_check_python(log, confirmer, report)
 
         # Step 2: GPU detection (informs steps 4a/4b; no packages needed).
-        log.banner("Step 2/9 - GPU / CUDA detection")
+        log.banner("Step 2/10 - GPU / CUDA detection")
         gpu_name, driver_cuda = detect_gpu(log)
         use_gpu = (gpu_name is not None or args.gpu) and not args.cpu
         if args.cpu:
@@ -1373,11 +1454,11 @@ def main() -> int:
         # satisfied (avoids a doomed CPU source-build of llama-cpp-python).
         # torch ships CPU wheels on PyPI, so the CPU path only needs llama here.
         if use_gpu:
-            log.banner("Step 3/9 - GPU (CUDA) builds")
+            log.banner("Step 3/10 - GPU (CUDA) builds")
             step_gpu_torch(log, confirmer, report, driver_cuda)
             step_gpu_llama(log, confirmer, report, driver_cuda)
         else:
-            log.banner("Step 3/9 - CPU builds")
+            log.banner("Step 3/10 - CPU builds")
             report.add("torch (CUDA)", SKIPPED, "CPU-only")
             step_cpu_llama(log, confirmer, report)
 
@@ -1387,22 +1468,24 @@ def main() -> int:
         # Step 5: espeak-ng.
         step_espeak(log, confirmer, report)
 
-        # Step 6: HF model cache.
+        # Steps 6-7: model caches (HF hub + the Supertonic cache directory).
         if args.skip_models:
             report.add("HF model cache", SKIPPED, "--skip-models")
+            report.add("Supertonic model", SKIPPED, "--skip-models")
         else:
             step_prefetch_models(log, confirmer, report)
+            step_prefetch_supertonic(log, confirmer, report)
 
-        # Step 7: GGUF.
+        # Step 8: GGUF.
         if args.skip_gguf:
             report.add("GGUF model", SKIPPED, "--skip-gguf")
         else:
             step_download_gguf(log, confirmer, report)
 
-        # Step 8: hardware detection (after torch/llama exist).
+        # Step 9: hardware detection (after torch/llama exist).
         step_detect_hardware(log, confirmer, report)
 
-        # Step 9: launcher scripts, written last so they reflect the fully
+        # Step 10: launcher scripts, written last so they reflect the fully
         # set-up environment (correct venv folder name).
         step_create_launchers(log, confirmer, report)
     except InstallError as exc:

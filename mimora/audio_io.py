@@ -29,10 +29,10 @@ try:
 except ImportError:
     WINSOUND_AVAILABLE = False
 
-# Kokoro synthesizes native 24 kHz audio output. Lives here (not in tts.py)
-# because it also sizes the winsound lead-in below and is imported by callers
-# that only care about the device rate, not the synthesizer.
-KOKORO_SAMPLE_RATE = 24_000
+# NOTE: KOKORO_SAMPLE_RATE moved to mimora/tts.py (next to KokoroBackend).
+# The synthesis rate is a property of the active TTS backend now - callers
+# read TTSManager.sample_rate instead of a module constant (see
+# tasks/supertonic_tts_backend_task.md).
 
 # Silence padding prepended to every winsound playback block.
 # Windows Audio Session needs ~50-200ms to initialize on the first call,

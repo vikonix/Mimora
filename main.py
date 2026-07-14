@@ -57,7 +57,6 @@ import numpy as np
 from mimora import config, lifecycle, prosody
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
-from mimora.audio_io import KOKORO_SAMPLE_RATE
 from mimora.tts import TTSManager
 from mimora.translator import TranslatorManager
 from mimora.recorder import (
@@ -191,7 +190,7 @@ class PronunciationTrainerGUI:
         self.session = SessionState()
         # Kokoro voice the current reference was synthesized with (logged with
         # every analysis sample - the acoustic calibration is voice-specific).
-        self.current_voice: str = config.KOKORO_VOICE
+        self.current_voice: str = config.TTS_VOICE
         self.reference_audio: Optional[np.ndarray] = None   # 24 kHz Kokoro output
         self.last_user_audio: Optional[np.ndarray] = None   # 16 kHz recorded attempt
         # Last user name written to settings.json; lets on_user_name_changed
@@ -532,7 +531,8 @@ class PronunciationTrainerGUI:
             self.root.after(0, self.view.append_system_msg, greeting)
             audio = self.tts_mgr.synthesize(greeting, voice=voice)
             if audio.size > 0:
-                self.playback.play_with_face(audio, KOKORO_SAMPLE_RATE, stop_event)
+                self.playback.play_with_face(audio, self.tts_mgr.sample_rate,
+                                             stop_event)
         except Exception:
             logging.exception("Greeting error:")
         finally:
@@ -546,11 +546,11 @@ class PronunciationTrainerGUI:
     # Phrase generation + Prompt phase
     # ------------------------------------------------------------------
     def _selected_voice(self) -> str:
-        """Return the currently selected Kokoro voice, falling back to the default."""
+        """Return the currently selected TTS voice, falling back to the default."""
         try:
-            return self.view.get_voice() or config.KOKORO_VOICE
+            return self.view.get_voice() or config.TTS_VOICE
         except AttributeError:
-            return config.KOKORO_VOICE
+            return config.TTS_VOICE
 
     def _next_reference_voice(self) -> str:
         """Voice for the next phrase: the selected one, or a fresh random one.
@@ -563,7 +563,7 @@ class PronunciationTrainerGUI:
         """
         if not config.RANDOM_VOICE:
             return self._selected_voice()
-        candidates = [v for v in config.KOKORO_VOICES if v != self.current_voice]
+        candidates = [v for v in config.TTS_VOICES if v != self.current_voice]
         if not candidates:
             return self._selected_voice()
         voice = random.choice(candidates)
@@ -705,8 +705,8 @@ class PronunciationTrainerGUI:
             config.USER_NAME = value
             self.on_user_name_changed()
         elif key == "voice":
-            if value in config.KOKORO_VOICES:
-                config.KOKORO_VOICE = value
+            if value in config.TTS_VOICES:
+                config.TTS_VOICE = value
                 self.on_voice_changed()
             else:
                 # A voice of the other (not yet active) accent: valid only
@@ -735,7 +735,7 @@ class PronunciationTrainerGUI:
             # config.REFERENCE_SPEED (see _preview_voice_worker).
             config.REFERENCE_SPEED = float(value)
             self.settings_ctl.persist(key, float(value))
-            self.on_preview_voice(config.KOKORO_VOICE)
+            self.on_preview_voice(config.TTS_VOICE)
         elif key == "practice_text_file":
             self._load_practice_file(value)
         else:
@@ -754,7 +754,7 @@ class PronunciationTrainerGUI:
         """
         if not self.app_ready or self.is_generating:
             return
-        if voice not in config.KOKORO_VOICES:
+        if voice not in config.TTS_VOICES:
             return
         if self.recorder.is_active():
             return
@@ -775,10 +775,10 @@ class PronunciationTrainerGUI:
             audio = self.tts_mgr.synthesize(PREVIEW_PHRASE, voice=voice)
             if audio.size > 0:
                 # Honor the current Reference speed setting, same trick as
-                # _play_reference_at: play the 24 kHz waveform at a lowered
-                # sample rate so the preview actually demonstrates the speed
-                # the user just picked, instead of always playing at 1.0x.
-                effective_sr = int(KOKORO_SAMPLE_RATE * self._selected_speed())
+                # _play_reference_at: play the backend-rate waveform at a
+                # lowered sample rate so the preview actually demonstrates the
+                # speed the user just picked, instead of always playing at 1.0x.
+                effective_sr = int(self.tts_mgr.sample_rate * self._selected_speed())
                 self.playback.play_with_face(audio, effective_sr, stop_event)
         except Exception:
             logging.exception("Voice preview error:")
@@ -859,14 +859,15 @@ class PronunciationTrainerGUI:
             self.current_voice = voice
             self.reference_audio = reference_audio
             if config.SAVE_RECORDINGS:
-                dump_record_wav(reference_audio, RECORD_MODEL_FILE, KOKORO_SAMPLE_RATE)
+                dump_record_wav(reference_audio, RECORD_MODEL_FILE,
+                                self.tts_mgr.sample_rate)
                 dump_record_text(phrase, RECORD_PHRASE_FILE)
             # Show the phrase and play the reference for the user to hear
             # (stop_event was installed by the caller; see PlaybackController.new_event).
             self.root.after(0, self._show_new_phrase, phrase)
             # Honor the selected reference speed (see play_reference for the
             # lowered-sample-rate slowing approach) instead of always 1.0×.
-            effective_sr = int(KOKORO_SAMPLE_RATE * speed)
+            effective_sr = int(self.tts_mgr.sample_rate * speed)
             self.playback.play_with_face(self.reference_audio, effective_sr,
                                          stop_event)
 
@@ -1133,7 +1134,10 @@ class PronunciationTrainerGUI:
                 user_audio=user_audio,
                 user_sr=user_sr,
                 reference_audio=self.reference_audio,
-                reference_sr=KOKORO_SAMPLE_RATE,
+                # The reference plays at the active backend's native rate, so
+                # the pitch/energy contours must be extracted at that rate too
+                # (24 kHz Kokoro, 44.1 kHz Supertonic) - never a constant.
+                reference_sr=self.tts_mgr.sample_rate,
             )
         except Exception:
             logging.exception("Prosody computation failed; showing the result without charts:")
@@ -1169,7 +1173,7 @@ class PronunciationTrainerGUI:
             # caller; see PlaybackController.new_event).
             self.root.after(0, self.view.enter_playing, "Playing reference...")
             self.playback.play_with_face(self.reference_audio,
-                                         KOKORO_SAMPLE_RATE, stop_event)
+                                         self.tts_mgr.sample_rate, stop_event)
 
             # Then run analysis with the reference as both inputs.
             self.root.after(0, self.view.enter_analyzing, "Testing with reference...")
@@ -1177,13 +1181,15 @@ class PronunciationTrainerGUI:
                 user_audio=self.reference_audio,
                 expected_text=self.current_phrase,
                 reference_audio=self.reference_audio,
-                user_sr=KOKORO_SAMPLE_RATE,       # reference is Kokoro's 24 kHz output
-                reference_sr=KOKORO_SAMPLE_RATE,
+                # The self-test feeds the reference as the "user" take, so both
+                # rates are the active TTS backend's native output rate.
+                user_sr=self.tts_mgr.sample_rate,
+                reference_sr=self.tts_mgr.sample_rate,
                 voice=self.current_voice,
                 is_reference=True,                # self-test: excluded from GOOD calibration
             )
             result.prosody = self._compute_prosody_safe(self.reference_audio,
-                                                         KOKORO_SAMPLE_RATE)
+                                                         self.tts_mgr.sample_rate)
             self.root.after(0, self.view.show_feedback, result, self.current_phrase,
                             self._has_user_recording(), True)  # is_self_test
         except Exception:
@@ -1234,7 +1240,7 @@ class PronunciationTrainerGUI:
                 expected_text=self.current_phrase,
                 reference_audio=self.reference_audio,
                 user_sr=config.AUDIO_SAMPLE_RATE,
-                reference_sr=KOKORO_SAMPLE_RATE,
+                reference_sr=self.tts_mgr.sample_rate,
                 voice=self.current_voice,
             )
             elapsed_ms = (time.perf_counter() - analyze_start) * 1000
@@ -1317,7 +1323,7 @@ class PronunciationTrainerGUI:
                 if audio is None or audio.size == 0:
                     return
                 self.playback.play_with_face(
-                    audio, int(KOKORO_SAMPLE_RATE * speed), stop_event)
+                    audio, int(self.tts_mgr.sample_rate * speed), stop_event)
             except Exception:
                 logging.exception("Word playback error:")
             finally:
@@ -1369,10 +1375,12 @@ class PronunciationTrainerGUI:
         """Play the current reference audio at *speed* (1.0 = normal)."""
         if self.reference_audio is None or self.reference_audio.size == 0:
             return
-        # Slowing is done by lowering the effective sample rate: playing 24 kHz
-        # audio at, say, 12 kHz (0.5×) makes it twice as long. This is the simple
-        # resampling approach - it also shifts the pitch down, no extra deps.
-        effective_sr = int(KOKORO_SAMPLE_RATE * speed)
+        # Slowing is done by lowering the effective sample rate: playing e.g.
+        # 24 kHz audio at 12 kHz (0.5×) makes it twice as long. This is the
+        # simple resampling approach - it also shifts the pitch down, no extra
+        # deps - and it works with any backend rate (24 kHz Kokoro, 44.1 kHz
+        # Supertonic), so slow replay needs no backend-specific code.
+        effective_sr = int(self.tts_mgr.sample_rate * speed)
         status = "Playing reference..." if speed == 1.0 else f"Playing reference ({speed:g}×)..."
         self.playback.play_async(self.reference_audio, effective_sr, status)
 

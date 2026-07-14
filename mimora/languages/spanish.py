@@ -57,6 +57,9 @@ PROFILE = {
     },
     "preview_phrase": "¡Hola! Así es como sueno. Vamos a practicar juntos.",
     "translator_warmup": "Hola.",
+    # Throwaway word spoken by the TTS warm-up pass (mimora/tts.py warm_up),
+    # in the practiced language.
+    "tts_warmup": "Hola.",
     "greeting_named": "¡Hola, {name}! Escucha y repite.",
     "greeting_anonymous": "¡Hola! Escucha y repite.",
     # The button name stays English - the UI language is English by design.
@@ -65,11 +68,23 @@ PROFILE = {
         "New phrase para empezar."
     ),
     "variants": {
+        # Spanish runs the Supertonic 3 backend (mimora/tts.py): Kokoro's
+        # Spanish is trained on little data (audible artifacts, 3 voices),
+        # while Supertonic is multilingual by design - 10 clean voices at
+        # 44.1 kHz (decision of 2026-07-14, see
+        # tasks/supertonic_tts_backend_task.md). The swap is safe for scoring:
+        # Spanish uses the phoneme engine, whose reference is espeak text -
+        # the synthesized audio is only played to the user.
         "castilian": {
-            "kokoro_lang_code": "e",
+            "tts_backend": "supertonic",
+            "tts_lang_code": "es",
             "espeak_language": "es",
-            "default_voice": "ef_dora",
-            "voices": ["ef_dora", "em_alex", "em_santa"],
+            "default_voice": "F1",
+            "voices": ["F1", "F2", "F3", "F4", "F5",
+                       "M1", "M2", "M3", "M4", "M5"],
+            # Supertonic quality/speed knob (5..12); 8 matched the listening
+            # tests. See config.TTS_TOTAL_STEPS.
+            "total_steps": 8,
         },
     },
 }

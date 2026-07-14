@@ -488,7 +488,7 @@ class TrainerView:
         return config.USER_NAME.strip()
 
     def get_voice(self) -> str:
-        return config.KOKORO_VOICE
+        return config.TTS_VOICE
 
     def get_length_label(self) -> str:
         return LENGTH_FEW_WORDS if config.PHRASE_LENGTH == "fragment" else LENGTH_FULL

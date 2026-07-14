@@ -19,6 +19,12 @@ numpy>=1.24.0,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'
 soundfile>=0.12.0
 sounddevice>=0.4.6
 kokoro>=0.3.0
+# Supertonic 3 TTS backend (mimora/tts.py SupertonicBackend; Spanish variant).
+# Pulls onnxruntime + huggingface-hub; torch stays (Kokoro for English,
+# wav2vec2 engines). The model weights (~400 MB, OpenRAIL-M licensed) are NOT
+# bundled: install.py pre-downloads them into model_cache/supertonic3/, or the
+# first online run fetches them (auto_download).
+supertonic>=0.1
 openai>=1.0.0
 torch>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'
 torch==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'
