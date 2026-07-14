@@ -298,19 +298,53 @@ def samples_file() -> Path:
     return Path(get_config().log_dir) / "phoneme_samples.jsonl"
 
 
+# Cap on the sample log: once per run (before the first append) the log is cut down
+# to its newest MAX_SAMPLES_KEPT lines, so it cannot grow without bound. Comfortably
+# above calibrate.py's MAX_SAMPLES_USED (300), so trimming never starves calibration.
+MAX_SAMPLES_KEPT = 2000
+
+_samples_trimmed = False  # once-per-process guard for _trim_sample_log()
+
+
+def _trim_sample_log() -> None:
+    """Drop all but the newest MAX_SAMPLES_KEPT lines from the sample log.
+
+    Called once per process from _append_sample, so the steady-state append path
+    stays a plain O(1) write and the file only shrinks between runs.
+    """
+    path = samples_file()
+    if not path.exists():
+        return
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if len(lines) <= MAX_SAMPLES_KEPT:
+        return
+    path.write_text("\n".join(lines[-MAX_SAMPLES_KEPT:]) + "\n", encoding="utf-8")
+    logging.info("[phoneme] sample log trimmed: %d -> %d lines (%s)",
+                 len(lines), MAX_SAMPLES_KEPT, path.name)
+
+
 def _append_sample(record: Dict[str, Any]) -> None:
     """Append one analysis record to the sample log (best effort).
 
     A write failure must never break the analysis itself, so every error is logged
     and swallowed (mirrors the acoustic engine's _append_calibration_sample).
     """
+    global _samples_trimmed
     try:
+        if not _samples_trimmed:
+            _samples_trimmed = True  # set first: a failing trim must not retry per take
+            _trim_sample_log()
         path = samples_file()
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except Exception:
         logging.exception("[phoneme] failed to append sample")
+
+
+def current_lang() -> str:
+    """Calibration language key ("en", "es") for the configured espeak language."""
+    return _lang_key(get_config().espeak_language)
 
 
 def current_phoneme_good() -> float:
@@ -1196,6 +1230,7 @@ def analyze(user_audio: np.ndarray,
     # strings make a low score easy to inspect after the fact.
     _append_sample({
         "ts": datetime.now().isoformat(timespec="seconds"),
+        "lang": _lang_key(cfg.espeak_language),
         "text": expected_text,
         "user_name": cfg.user_name,
         "voice": voice,

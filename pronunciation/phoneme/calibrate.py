@@ -12,6 +12,10 @@ practice session run:
 
 What it does, mirroring the acoustic floor calibration:
   * keeps only the current user's attempts (matched on the logged ``user_name``);
+  * keeps only the configured practice language's attempts (matched on the logged
+    ``lang``): the anchor is written per language, so other languages' samples must
+    not feed it. Legacy records without a ``lang`` field predate multilingual
+    support and are dropped;
   * **drops reference self-tests** (``is_reference``): the Test button compares the
     TTS reference with itself, so its per-phone distance is ~0 and would drag the
     GOOD anchor toward zero, making every later take score far too low. (The
@@ -100,6 +104,12 @@ def main() -> int:
     samples = load_samples()
     samples = [s for s in samples if s.get("user_name", "") == config.USER_NAME]
 
+    # The anchor is per language (calibration.json is keyed by lang), so only the
+    # configured language's samples may feed it. Records without "lang" predate
+    # multilingual support and are dropped.
+    lang = speech.current_lang()
+    samples = [s for s in samples if s.get("lang") == lang]
+
     # Filter by voice *before* truncating to the most recent samples.
     if args.voice:
         samples = [s for s in samples if s.get("voice") == args.voice]
@@ -113,6 +123,7 @@ def main() -> int:
 
     print(f"Samples file:   {speech.samples_file()}")
     print(f"Current user:   {config.USER_NAME!r}")
+    print(f"Language:       {lang}")
     print(f"Total samples:  {len(samples)} (last {MAX_SAMPLES_USED} max"
           + (f", voice={args.voice}" if args.voice else "") + ")")
     print(f"Reference self-tests dropped: {n_reference}")

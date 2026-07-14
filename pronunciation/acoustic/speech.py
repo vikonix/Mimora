@@ -690,13 +690,43 @@ def _reference_features(reference_audio: np.ndarray, reference_sr: int) -> Dict[
 # =====================================================================
 # Single entry point
 # =====================================================================
+# Cap on the sample log: once per run (before the first append) the log is cut down
+# to its newest MAX_SAMPLES_KEPT lines, so it cannot grow without bound. Comfortably
+# above calibrate.py's MAX_SAMPLES_USED (300), so trimming never starves calibration.
+# Mirrors the phoneme engine's trim (pronunciation/phoneme/speech.py).
+MAX_SAMPLES_KEPT = 2000
+
+_samples_trimmed = False  # once-per-process guard for _trim_sample_log()
+
+
+def _trim_sample_log() -> None:
+    """Drop all but the newest MAX_SAMPLES_KEPT lines from the sample log.
+
+    Called once per process from _append_calibration_sample, so the steady-state
+    append path stays a plain O(1) write and the file only shrinks between runs.
+    """
+    path = samples_file()
+    if not path.exists():
+        return
+    lines = path.read_text(encoding="utf-8").splitlines()
+    if len(lines) <= MAX_SAMPLES_KEPT:
+        return
+    path.write_text("\n".join(lines[-MAX_SAMPLES_KEPT:]) + "\n", encoding="utf-8")
+    logging.info("Sample log trimmed: %d -> %d lines (%s)",
+                 len(lines), MAX_SAMPLES_KEPT, path.name)
+
+
 def _append_calibration_sample(record: Dict[str, Any]) -> None:
     """Append one analysis record to the calibration sample log (best effort).
 
     The file feeds ``acoustic/calibrate.py``; a write failure must never break
     the analysis itself.
     """
+    global _samples_trimmed
     try:
+        if not _samples_trimmed:
+            _samples_trimmed = True  # set first: a failing trim must not retry per take
+            _trim_sample_log()
         path = samples_file()
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as f:
