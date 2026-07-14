@@ -281,7 +281,7 @@ Key options in [`mimora/config.py`](mimora/config.py) (overridable via [`config/
 | Setting | Default | Description |
 |---|---|---|
 | `ENGINE` | `phoneme` | Active scoring engine: `phoneme` (**default**), `acoustic` or `none`. Only engines available for the practice language are offered (settings.json `"engine"`). |
-| `PRACTICE_LANGUAGE` | `english` | Practice language (settings.json `"practice_language"`, restart to apply). One entry in `LANGUAGE_PROFILES`; adding a language is adding a profile record plus an engine calibration. |
+| `PRACTICE_LANGUAGE` | `english` | Practice language (settings.json `"practice_language"`, restart to apply). One entry in `LANGUAGE_PROFILES`, assembled from the per-language modules in `mimora/languages/`; adding a language is adding a profile module plus an engine calibration. |
 | `ACCENT` | per language | Regional variant of the practice language (settings.json `"accent"`, restart to apply): `american`/`british` for English, `castilian` for Spanish. The legacy `"english_accent"` key is still read as a fallback and migrated on the next save. |
 | `WAV2VEC2_PHONEME_MODEL_NAME` | `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | Phoneme-ASR model for the **default** `phoneme` engine (emits espeak-style IPA). |
 | `WAV2VEC2_MODEL_NAME` | `facebook/wav2vec2-large-960h` | Embedding/transcription model used only by the `acoustic` engine. |
