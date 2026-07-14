@@ -17,6 +17,23 @@ modes:
     never drawn together with the talking mouth: ``set_level`` switches to
     talking, ``rest`` switches back to the smiley.
 
+Besides the two mouth modes the face is interactive:
+
+  * The eyes follow the mouse cursor (the global pointer is polled once per
+    animation frame, no extra bindings), widen as the cursor closes in, and
+    go cross-eyed when it hovers right on the nose.
+
+  * A left click on the face disc (ignored while talking, so it never hides
+    the talking mouth) plays a short balloon-pop cartoon: the rim bursts
+    into shards, the now-floating eyes drop one by one into the mouth which
+    gulps them down, the mouth grins wide open, pops as well, and the canvas
+    stays blank while the button is held. Releasing the button re-inflates
+    the face with a small overshoot.
+
+  * The cartoon timeline and the gaze math are pure module-level helpers
+    (``gaze_state``, ``face_hit``, ``pop_scene``, ``appear_scale``),
+    unit-tested without Tk in tests/test_face_interaction.py.
+
 Design constraints this module is built around:
 
   * Antialiased rendering. Tk Canvas primitives have no antialiasing, which is
@@ -55,6 +72,7 @@ Typical use::
 
 from __future__ import annotations
 
+import math
 import random
 import time
 import tkinter as tk
@@ -93,6 +111,160 @@ def _bezier_point(p0: tuple, p1: tuple, p2: tuple, t: float) -> tuple:
 def _quad_bezier(p0: tuple, p1: tuple, p2: tuple, n: int = 24) -> list:
     """Sample a quadratic Bezier into ``n + 1`` points (for lines/polygons)."""
     return [_bezier_point(p0, p1, p2, i / n) for i in range(n + 1)]
+
+
+# -- pure interaction logic (Tk-free, unit-tested) ---------------------------
+
+# Facial-feature layout in head-radius units, shared by the live-face
+# renderer and the cartoon timeline so a falling eye lands exactly on the
+# mouth the renderer draws.
+_EYE_X = 0.34    # eye centre, horizontal distance from the face centre
+_EYE_Y = -0.30   # eye centre, vertical offset from the face centre
+_MOUTH_Y = 0.38  # mouth centre line, vertical offset
+
+_GAZE_STEPS = 2  # gaze quantization: offsets -2..2 per axis in the cache key
+_ANIM_QFPS = 30  # cartoon frames are quantized (and cached) at this rate
+
+# Balloon-pop cartoon: stage lengths in seconds. The whole timeline is a pure
+# function of elapsed time (``pop_scene``), so frames are cacheable by
+# quantized phase and the tests can probe any instant without waiting.
+POP_BURST_S = 0.30       # the rim shatters, the disc is gone
+POP_EYE_S = 0.55         # one eye falls into the mouth and is gulped down
+POP_GRIN_S = 0.45        # the mouth grins wide open
+POP_GRIN_BURST_S = 0.25  # the grin pops as well
+POP_TOTAL_S = POP_BURST_S + 2 * POP_EYE_S + POP_GRIN_S + POP_GRIN_BURST_S
+APPEAR_S = 0.45          # re-inflate after the button is released
+
+
+def gaze_state(px: float, py: float, cx: float, cy: float, r: float) -> tuple:
+    """Quantize the cursor position into an eye-gaze state.
+
+    All coordinates share one space (the widget passes screen pixels);
+    ``(cx, cy)`` is the face centre, ``r`` the head radius. Returns
+    ``(gqx, gqy, wide, cross)``:
+
+      * ``gqx``/``gqy`` -- gaze offset quantized to -_GAZE_STEPS.._GAZE_STEPS
+        per axis (it becomes part of the frame-cache key, hence the coarse
+        steps);
+      * ``wide`` -- eye widening 0..2, growing as the cursor closes in;
+      * ``cross`` -- True when the cursor sits right on the nose, which makes
+        the face go cross-eyed.
+
+    Beyond six head radii the face loses interest and rests. Pure function:
+    no Tk, unit-tested in tests/test_face_interaction.py.
+    """
+    if r <= 0:
+        return (0, 0, 0, False)
+    dx, dy = px - cx, py - cy
+    dist = math.hypot(dx, dy)
+    if dist < r * 0.45:  # right on the nose
+        return (0, 0, 2, True)
+    reach = 6.0 * r
+    if dist >= reach:
+        return (0, 0, 0, False)
+    # Unit direction scaled by interest: full deflection up close, ~60 % at
+    # the edge of the reach, so far-away cursors get a subtler glance.
+    strength = 1.0 - 0.4 * (dist / reach)
+    gqx = round(dx / dist * strength * _GAZE_STEPS)
+    gqy = round(dy / dist * strength * _GAZE_STEPS)
+    if dist < r * 1.3:
+        wide = 2
+    elif dist < r * 3.0:
+        wide = 1
+    else:
+        wide = 0
+    return (gqx, gqy, wide, False)
+
+
+def face_hit(px: float, py: float, cx: float, cy: float, r: float) -> bool:
+    """True when point (px, py) lies on the face disc centred at (cx, cy)."""
+    return math.hypot(px - cx, py - cy) <= r
+
+
+def pop_scene(t: float) -> dict:
+    """Scene of the balloon-pop cartoon at ``t`` seconds from the click.
+
+    Returns a dict describing what to draw. Coordinates are in head-radius
+    units relative to the face centre, so the renderer only scales by ``r``:
+
+      * ``"shards"`` -- rim-burst expansion 0..1, or None once the debris
+        has dissolved;
+      * ``"eyes"`` -- ``[left, right]``; each an ``(x, y)`` position or None
+        after the mouth has swallowed it;
+      * ``"mouth"`` -- ``("open", openness)`` while catching/gulping (also
+        the startled "o" during the burst), ``("grin", k)`` for the growing
+        open smile, or None once it popped;
+      * ``"mouth_shards"`` -- grin-burst expansion 0..1, or None;
+      * ``"done"`` -- True once everything vanished (``t >= POP_TOTAL_S``).
+
+    Pure function: no Tk, unit-tested in tests/test_face_interaction.py.
+    """
+    eyes = [(-_EYE_X, _EYE_Y), (_EYE_X, _EYE_Y)]
+    scene = {"shards": None, "eyes": eyes, "mouth": None,
+             "mouth_shards": None, "done": False}
+
+    # Guard the documented "done at t >= POP_TOTAL_S" boundary explicitly:
+    # the per-stage subtraction chain below accumulates float rounding, so
+    # exactly at the total it could otherwise land a hair inside the last
+    # stage instead of finishing.
+    if t >= POP_TOTAL_S:
+        scene["eyes"] = [None, None]
+        scene["done"] = True
+        return scene
+
+    if t < POP_BURST_S:  # the rim flies apart; the face is startled ("o")
+        k = max(0.0, t) / POP_BURST_S
+        scene["shards"] = k
+        scene["mouth"] = ("open", 0.25 * (1.0 - k))
+        return scene
+    t -= POP_BURST_S
+
+    for i in (0, 1):  # the left eye falls first, then the right one
+        if t < POP_EYE_S:
+            for j in range(i):
+                eyes[j] = None  # already swallowed
+            u = t / POP_EYE_S
+            if u < 0.8:  # falling: linear drift in x, gravity ease-in in y
+                v = u / 0.8
+                x0, y0 = eyes[i]
+                eyes[i] = (x0 * (1.0 - v), y0 + (_MOUTH_Y - y0) * v * v)
+                # The mouth opens to catch once the eye is on its way down.
+                openness = 0.0 if v < 0.35 else min(1.0, (v - 0.35) / 0.45)
+            else:  # landed: the eye is gone, the mouth gulps shut
+                eyes[i] = None
+                openness = 1.0 - (u - 0.8) / 0.2
+            scene["mouth"] = ("open", openness)
+            return scene
+        t -= POP_EYE_S
+
+    scene["eyes"] = [None, None]
+    if t < POP_GRIN_S:  # a satisfied, wide-open grin grows
+        scene["mouth"] = ("grin", t / POP_GRIN_S)
+        return scene
+    t -= POP_GRIN_S
+
+    if t < POP_GRIN_BURST_S:  # ... and pops like the head did
+        scene["mouth_shards"] = t / POP_GRIN_BURST_S
+        return scene
+
+    scene["done"] = True  # nothing left; blank until the button is released
+    return scene
+
+
+def appear_scale(t: float) -> float:
+    """Re-inflate curve: head scale 0..1 with a small balloon overshoot.
+
+    Grows to 1.08 over the first 70 % of ``APPEAR_S``, then settles back to
+    exactly 1.0. Pure function, unit-tested.
+    """
+    if t <= 0.0:
+        return 0.0
+    if t >= APPEAR_S:
+        return 1.0
+    k = t / APPEAR_S
+    if k < 0.7:
+        return 1.08 * (k / 0.7)
+    return 1.08 - 0.08 * (k - 0.7) / 0.3
 
 
 class FaceWidget(tk.Canvas):
@@ -188,6 +360,11 @@ class FaceWidget(tk.Canvas):
         self._mode = "paused"
         # Next blink start, wall-clock. Blinks repeat at a random 2-5 s pace.
         self._blink_at = time.perf_counter() + random.uniform(1.0, 3.0)
+        # Click cartoon: None, or the current phase of the balloon-pop show
+        # ("pop" -> "gone" while the button is held -> "appear").
+        self._anim: str | None = None
+        self._anim_t0 = 0.0
+        self._button_down = False
 
         # Frame cache: quantized state -> rendered PhotoImage. Lazy -- only
         # combinations that actually occur are rendered. Cleared on resize.
@@ -205,6 +382,8 @@ class FaceWidget(tk.Canvas):
         # face stays circular in whatever box the layout gives it.
         self._img_item = self.create_image(size / 2, size / 2)
         self.bind("<Configure>", self._on_resize)
+        self.bind("<Button-1>", self._on_press)
+        self.bind("<ButtonRelease-1>", self._on_release)
 
         self._tick()  # start the redraw loop
 
@@ -327,6 +506,76 @@ class FaceWidget(tk.Canvas):
             return 1.0
         return level
 
+    # -- cursor & click interaction -----------------------------------------
+
+    def _poll_gaze(self) -> tuple:
+        """Quantized cursor-gaze state for the frame key (Tk thread only).
+
+        Polls the global pointer instead of binding ``<Motion>``: the eyes
+        then follow the cursor anywhere on the screen, not only over the
+        canvas. One winfo call per frame is negligible next to the frame
+        swap itself.
+        """
+        try:
+            px, py = self.winfo_pointerxy()
+            cx = self.winfo_rootx() + self._cw / 2
+            cy = self.winfo_rooty() + self._ch / 2
+        except tk.TclError:  # racing widget destruction
+            return (0, 0, 0, False)
+        return gaze_state(px, py, cx, cy, min(self._cw, self._ch) * 0.42)
+
+    def _on_press(self, event: "tk.Event") -> None:
+        """A left click on the face disc pops it like a balloon.
+
+        Ignored while talking (the cartoon would hide the talking mouth) and
+        while a cartoon is already running. Clicks on the canvas corners,
+        outside the disc, do nothing on purpose.
+        """
+        if self._anim is not None or self._mode == "talking":
+            return
+        r = min(self._cw, self._ch) * 0.42
+        if not face_hit(event.x, event.y, self._cw / 2, self._ch / 2, r):
+            return
+        self._button_down = True
+        self._anim = "pop"
+        self._anim_t0 = time.perf_counter()
+
+    def _on_release(self, _event: "tk.Event") -> None:
+        """Releasing the button lets the popped face re-inflate."""
+        self._button_down = False
+        if self._anim == "gone":
+            self._anim = "appear"
+            self._anim_t0 = time.perf_counter()
+
+    def _advance_anim(self) -> "tuple | None":
+        """Step the click cartoon; return its frame key, or None when over.
+
+        "pop" plays to the end even if the button was released early; after
+        it the face stays "gone" while the button is still held and starts
+        to re-inflate ("appear") otherwise. Returning None hands the frame
+        back to the normal face path in ``_tick``.
+        """
+        now = time.perf_counter()
+        t = now - self._anim_t0
+        if self._anim == "pop":
+            if t < POP_TOTAL_S:
+                return ("pop", int(t * _ANIM_QFPS))
+            if self._button_down:
+                self._anim = "gone"
+                return ("gone",)
+            self._anim = "appear"
+            self._anim_t0 = now
+            return ("appear", 0)
+        if self._anim == "gone":
+            return ("gone",)
+        if t < APPEAR_S:  # "appear"
+            return ("appear", int(t * _ANIM_QFPS))
+        # Fully re-inflated: come back smiling (matching the appear frames)
+        # and ease from there to whatever the app sets next.
+        self._anim = None
+        self._curl_current = 1.0
+        return None
+
     # -- animation loop ---------------------------------------------------
 
     def _blink_phase(self) -> int:
@@ -369,17 +618,26 @@ class FaceWidget(tk.Canvas):
             # talking.
             self._curl_current += 0.25 * (self._curl_target - self._curl_current)
 
-            blink = self._blink_phase()
-            curl_q = round(self._curl_current * _CURL_STEPS)
-            if self._mode == "talking":
-                key = ("talk", round(self._current * _MOUTH_STEPS), curl_q, blink)
-            else:
-                key = ("rest", 0, curl_q, blink)
+            # The click cartoon, when active, overrides the whole face. The
+            # loudness track above keeps running on wall-clock regardless, so
+            # a playback that starts mid-cartoon is back in sync afterwards.
+            key = self._advance_anim() if self._anim is not None else None
+            if key is None:
+                blink = self._blink_phase()
+                curl_q = round(self._curl_current * _CURL_STEPS)
+                gaze = self._poll_gaze()
+                if self._mode == "talking":
+                    key = ("talk", round(self._current * _MOUTH_STEPS),
+                           curl_q, blink, *gaze)
+                else:
+                    key = ("rest", 0, curl_q, blink, *gaze)
 
             if key != self._key_shown:
                 photo = self._cache.get(key)
                 if photo is None:
-                    if len(self._cache) > 512:  # safety valve, never hit in practice
+                    # Safety valve; the gaze and cartoon dimensions enlarged
+                    # the key space, but the cache is still lazy.
+                    if len(self._cache) > 4096:
                         self._cache.clear()
                     photo = self._render_frame(key)
                     self._cache[key] = photo
@@ -398,24 +656,54 @@ class FaceWidget(tk.Canvas):
     # -- frame rendering ----------------------------------------------------
 
     def _render_frame(self, key: tuple) -> ImageTk.PhotoImage:
-        """Render one face frame for a quantized state, antialiased.
+        """Render one frame for a quantized state key, antialiased.
 
         Drawn at ``_SUPERSAMPLE`` times the widget size on the opaque ``bg``
         colour (so edge pixels blend into the panel exactly), then downscaled
         with LANCZOS. Tk-thread only (creates a ``PhotoImage``).
+
+        Key formats: ``("talk" | "rest", mouth_q, curl_q, blink, gqx, gqy,
+        wide, cross)`` for the live face; ``("pop", idx)``, ``("gone",)`` and
+        ``("appear", idx)`` for the click cartoon.
         """
-        mode, mouth_q, curl_q, blink = key
         dim = min(self._cw, self._ch)
         if dim <= 1:  # not laid out yet; fall back to the requested size
             dim = self._size
         s = dim * _SUPERSAMPLE
-        curl = curl_q / _CURL_STEPS
-        openness = mouth_q / _MOUTH_STEPS
-
         img = Image.new("RGB", (s, s), self._c_bg)
         d = ImageDraw.Draw(img)
         cx = cy = s / 2
-        r = s * 0.42  # head radius; everything below scales from it
+
+        kind = key[0]
+        if kind == "pop":
+            self._paint_pop(d, cx, cy, s * 0.42, key[1])
+        elif kind == "appear":
+            r = s * 0.42 * appear_scale(key[1] / _ANIM_QFPS)
+            if r >= _SUPERSAMPLE:  # skip sub-pixel discs on the first frames
+                self._paint_face(d, cx, cy, r, mode="rest", openness=0.0,
+                                 curl=1.0, blink=0, gaze=(0, 0, 0, False))
+        elif kind == "gone":
+            pass  # popped: background only
+        else:
+            mode, mouth_q, curl_q, blink, gqx, gqy, wide, cross = key
+            self._paint_face(d, cx, cy, s * 0.42, mode=mode,
+                             openness=mouth_q / _MOUTH_STEPS,
+                             curl=curl_q / _CURL_STEPS, blink=blink,
+                             gaze=(gqx, gqy, wide, cross))
+
+        img = img.resize((dim, dim), Image.Resampling.LANCZOS)
+        return ImageTk.PhotoImage(img)
+
+    def _paint_face(self, d: "ImageDraw.ImageDraw", cx: float, cy: float,
+                    r: float, *, mode: str, openness: float, curl: float,
+                    blink: int, gaze: tuple) -> None:
+        """Draw the whole live face (disc, eyes, brows, mouth) at radius r.
+
+        ``gaze`` is a ``gaze_state`` tuple: the eyes shift toward the cursor,
+        widen with ``wide`` and turn to the nose bridge when ``cross``. ``r``
+        is a parameter (not always ``s * 0.42``) so the re-inflate animation
+        can draw the same face smaller.
+        """
         # Features are laid out around face_cy, the disc stays centred on cy,
         # so face_offset shifts the face within the circle without moving it.
         face_cy = cy + self._face_offset * r
@@ -427,21 +715,39 @@ class FaceWidget(tk.Canvas):
         else:
             d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=self._c_face)
 
-        # Eyes: tall ellipses with a highlight; the blink squashes them.
-        ey, edx = face_cy - r * 0.30, r * 0.34
-        erx, ery_open = r * 0.105, r * 0.16
+        # Eyes: tall ellipses with a highlight; the blink squashes them, the
+        # cursor shifts (gaze) and widens (wide) them, and ``cross`` pulls
+        # both onto the nose bridge.
+        gqx, gqy, wide, cross = gaze
+        ey, edx = face_cy + r * _EYE_Y, r * _EYE_X
+        wide_k = 1.0 + 0.16 * wide
+        erx = r * 0.105 * (1.0 + 0.05 * wide)
+        ery_open = r * 0.16 * wide_k
         ery = max(ery_open * (1.0, 0.45, 0.10)[blink], r * 0.02)
+        gx = gqx / _GAZE_STEPS * r * 0.075
+        gy = gqy / _GAZE_STEPS * r * 0.075
+        # The highlight wanders inside the eye toward the cursor a bit
+        # further than the eye itself moves: a two-layer parallax that reads
+        # as a glossy reflection. _draw_eye clamps it inside the ellipse.
+        sx = gqx / _GAZE_STEPS * erx * 0.30
+        sy = gqy / _GAZE_STEPS * ery_open * 0.25
         for side in (-1, 1):
-            ex = cx + side * edx
-            d.ellipse((ex - erx, ey - ery, ex + erx, ey + ery), fill=self._c_eye)
-            if blink == 0:
-                hr = erx * 0.42
-                hx, hy = ex - erx * 0.28, ey - ery_open * 0.38
-                d.ellipse((hx - hr, hy - hr, hx + hr, hy + hr), fill=self._c_shine)
+            if cross:  # both eyes to the nose bridge, a touch downward
+                eye_x, eye_y = cx + side * (edx - r * 0.08), ey + r * 0.02
+                # ... and the highlights squeeze toward the nose as well.
+                shine = (-side * erx * 0.4, ery_open * 0.10)
+            else:
+                eye_x, eye_y = cx + side * edx + gx, ey + gy
+                shine = (sx, sy)
+            self._draw_eye(d, eye_x, eye_y, erx, ery, ery_open, blink, *shine)
 
-        # Eyebrows: gentle arches that rise with a smile; a frown raises the
-        # inner ends and drops the outer ones (the classic "worried" tilt).
-        brow_y = ey - ery_open - r * 0.13 - curl * r * 0.045
+        # Eyebrows: gentle arches that rise with a smile (and with surprise
+        # at a close cursor); a frown raises the inner ends and drops the
+        # outer ones (the classic "worried" tilt). Anchored to the resting
+        # eye positions on purpose: brows staying put while the eyes dart
+        # around reads funnier.
+        brow_y = (ey - ery_open - r * 0.13 - curl * r * 0.045
+                  - wide * r * 0.02)
         sad = max(0.0, -curl)
         brow_w = max(2, int(r * 0.055))
         for side in (-1, 1):
@@ -455,14 +761,117 @@ class FaceWidget(tk.Canvas):
                 cr = brow_w / 2
                 d.ellipse((px - cr, py - cr, px + cr, py + cr), fill=self._c_eye)
 
-        my = face_cy + r * 0.38  # mouth centre line
+        my = face_cy + r * _MOUTH_Y  # mouth centre line
         if mode == "talk":
             self._draw_talking_mouth(d, cx, my, r, openness)
         else:
             self._draw_smiley(d, cx, my, r, curl)
 
-        img = img.resize((dim, dim), Image.Resampling.LANCZOS)
-        return ImageTk.PhotoImage(img)
+    def _paint_pop(self, d: "ImageDraw.ImageDraw", cx: float, cy: float,
+                   r: float, idx: int) -> None:
+        """Draw one cartoon frame: whatever ``pop_scene`` says is at idx."""
+        scene = pop_scene(idx / _ANIM_QFPS)
+        face_cy = cy + self._face_offset * r
+
+        if scene["shards"] is not None:  # the rim flies apart
+            rim = self._c_outline if self._c_outline is not None else self._c_face
+            self._draw_shards(d, cx, cy, r, scene["shards"], rim)
+
+        erx, ery_open = r * 0.105, r * 0.16
+        rest_pos = ((-_EYE_X, _EYE_Y), (_EYE_X, _EYE_Y))
+        for i, pos in enumerate(scene["eyes"]):  # eyes float / fall
+            if pos is None:
+                continue
+            # A falling eye (moved off its resting spot) gets a highlight
+            # blown up almost to the eye size: a wide-open "whee!" look.
+            falling = pos != rest_pos[i]
+            self._draw_eye(d, cx + pos[0] * r, face_cy + pos[1] * r,
+                           erx, ery_open, ery_open, 0,
+                           shine_scale=2.0 if falling else 1.0)
+
+        my = face_cy + r * _MOUTH_Y
+        if scene["mouth"] is not None:
+            mouth_kind, value = scene["mouth"]
+            if mouth_kind == "open":
+                self._draw_catch_mouth(d, cx, my, r, value)
+            else:  # "grin"
+                self._draw_grin(d, cx, my, r, value)
+        if scene["mouth_shards"] is not None:  # the grin pops too
+            self._draw_shards(d, cx, my, r * 0.35, scene["mouth_shards"],
+                              self._c_mouth)
+
+    def _draw_eye(self, d: "ImageDraw.ImageDraw", ex: float, ey: float,
+                  erx: float, ery: float, ery_open: float, blink: int,
+                  shine_dx: float = 0.0, shine_dy: float = 0.0,
+                  shine_scale: float = 1.0) -> None:
+        """One eye: the dark ellipse plus, when open, the white highlight.
+
+        ``shine_dx``/``shine_dy`` shift the highlight from its resting
+        top-left spot, so the reflection can wander toward the cursor
+        independently of the eye itself (see the parallax in _paint_face).
+        ``shine_scale`` grows the highlight (the cartoon uses ~2.0 on falling
+        eyes); the clamp below then pins it near the eye centre.
+        """
+        d.ellipse((ex - erx, ey - ery, ex + erx, ey + ery), fill=self._c_eye)
+        if blink == 0:  # highlight only on a fully open eye, so ery == ery_open
+            hr = erx * 0.42 * shine_scale
+            # Clamp the highlight centre in ellipse-normalized coordinates so
+            # the whole disc stays inside the eye whatever shift is asked
+            # for: per-axis limits are not enough, a diagonal gaze otherwise
+            # pushes it over the rim where the ellipse curves in.
+            limit = 1.0 - hr / min(erx, ery_open)
+            if limit > 0.0:
+                nx = (-erx * 0.28 + shine_dx) / erx
+                ny = (-ery_open * 0.38 + shine_dy) / ery_open
+                norm = math.hypot(nx, ny)
+                if norm > limit:
+                    nx *= limit / norm
+                    ny *= limit / norm
+                hx, hy = ex + nx * erx, ey + ny * ery_open
+                d.ellipse((hx - hr, hy - hr, hx + hr, hy + hr),
+                          fill=self._c_shine)
+
+    def _draw_catch_mouth(self, d: "ImageDraw.ImageDraw", cx: float,
+                          my: float, r: float, openness: float) -> None:
+        """Half-round open mouth for the cartoon: flat top, round belly.
+
+        A true semicircle (equal semi-axes chord) instead of the talking
+        ellipse: it reads as a scoop held up to catch the falling eye.
+        """
+        rad = r * (0.04 + 0.26 * openness)
+        d.chord((cx - rad, my - rad, cx + rad, my + rad), 0, 180,
+                fill=self._c_mouth_in)
+
+    def _draw_grin(self, d: "ImageDraw.ImageDraw", cx: float, my: float,
+                   r: float, k: float) -> None:
+        """Wide-open grin: the bottom half of an ellipse, growing with ``k``.
+
+        The straight chord on top plus the round belly below reads as an
+        open-mouthed smile without any extra lip work.
+        """
+        w = r * (0.14 + 0.24 * k)
+        h = r * (0.06 + 0.22 * k)
+        d.chord((cx - w, my - h, cx + w, my + h), 0, 180, fill=self._c_mouth_in)
+
+    def _draw_shards(self, d: "ImageDraw.ImageDraw", x0: float, y0: float,
+                     base_r: float, k: float, color: tuple) -> None:
+        """Balloon-pop debris: rim fragments flying outward and fading.
+
+        Ten short tangent segments start on the circle of ``base_r`` and fly
+        out as ``k`` goes 0 -> 1, shrinking and blending into the background,
+        so the pop dissolves instead of littering the canvas.
+        """
+        fly = base_r * (0.15 + 0.85 * k)
+        fade = _blend(color, self._c_bg, k)
+        seg = base_r * 0.16 * (1.0 - 0.5 * k)
+        width = max(2, int(base_r * 0.06))
+        for i in range(10):
+            a = (i / 10.0) * math.tau + 0.3  # offset: no axis-aligned shards
+            px = x0 + math.cos(a) * (base_r + fly)
+            py = y0 + math.sin(a) * (base_r + fly)
+            tx, ty = -math.sin(a), math.cos(a)
+            d.line((px - tx * seg, py - ty * seg, px + tx * seg, py + ty * seg),
+                   fill=fade, width=width)
 
     def _draw_talking_mouth(self, d: "ImageDraw.ImageDraw", cx: float,
                             my: float, r: float, openness: float) -> None:
@@ -511,11 +920,12 @@ class FaceWidget(tk.Canvas):
 if __name__ == "__main__":
     # Manual eyeball test, no audio needed. Run: python -m mimora.face_widget
     # It alternates ~2.5 s of "talking" (the mouth driven by a sine envelope)
-    # with ~1 s of "paused", cycling through the three smileys.
-    import math
-
+    # with ~3 s of "paused", cycling through the three smileys. The eyes
+    # follow the mouse the whole time; during a pause, click and hold on the
+    # face to watch the balloon-pop cartoon (clicks while talking are
+    # ignored by design).
     root = tk.Tk()
-    root.title("FaceWidget demo")
+    root.title("FaceWidget demo (move the mouse, click the face)")
     root.configure(bg="#1e1e1e")
     face = FaceWidget(root, size=220, bg="#1e1e1e",
                       face_color="#ffffff", eye_color="#1e2a44",
@@ -541,7 +951,7 @@ if __name__ == "__main__":
                 state["i"] += 1
                 face.rest()
                 state["talking"] = False
-                state["left_ms"] = 1000
+                state["left_ms"] = 3000  # long pause: time to click the face
             else:
                 state["talking"] = True
                 state["left_ms"] = 2500
