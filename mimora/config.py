@@ -765,6 +765,11 @@ PHRASE_GEN_LEVEL_RETRIES = 1
 # wordfreq language code of the practiced language, derived from the espeak
 # code ("en-us"/"en-gb" -> "en", "es" -> "es") - no per-profile field needed.
 PHRASE_GEN_WORDFREQ_LANG = ESPEAK_LANGUAGE.split("-")[0]
+# Function words of the practiced language, excluded when picking the random
+# focus word (mimora/llm.py _pick_focus_word). Per-profile data ("language is
+# data"): the focus-word frequency filter prefers FREQUENT words, so a
+# language without its own list would steer the pick toward function words.
+PHRASE_GEN_STOPWORDS = frozenset(_PHRASE_GEN["stopwords"].split())
 
 # "Few words" mode: generate a short 2-4 word fragment instead of a complete
 # sentence (e.g. "give me", "on the table", "where are you from"). Uses its own

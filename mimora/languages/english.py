@@ -51,6 +51,20 @@ PROFILE = {
             "Give me ONE short English fragment of 2 to 4 words (NOT a complete "
             "sentence) to practice pronunciation, based on this text."
         ),
+        # Function and other non-content words never picked as the random
+        # focus word (mimora/llm.py _pick_focus_word). Per-language data:
+        # the level's frequency filter prefers FREQUENT words, so without
+        # this list the pick would drift toward function words. One
+        # space-separated string, lowercase; words shorter than 4 letters
+        # are harmless here (the picker's regex already skips them).
+        "stopwords": (
+            "the a an and or but of to in on at for from with about into "
+            "over after is are was were be been being have has had do does "
+            "did will would can could should this that these those there "
+            "their they them then than it its his her she he you your we "
+            "our not no yes very just also more most some any all each "
+            "every one two when what where which who how why"
+        ),
         # Proficiency levels 0..5 (~pre-A1..C1), selected by settings.json
         # "phrase_gen_level" (config.PHRASE_GEN_LEVEL). Each entry:
         #   vocab_hint   - vocabulary constraint appended to the system prompt

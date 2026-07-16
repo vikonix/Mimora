@@ -57,6 +57,22 @@ PROFILE = {
             "Give me ONE short Spanish fragment of 2 to 4 words (NOT a complete "
             "sentence) to practice pronunciation, based on this text."
         ),
+        # Function and other non-content words never picked as the random
+        # focus word - same schema and rationale as the english profile.
+        # Accented interrogative/adverb forms are listed alongside the plain
+        # ones: the picker lowercases but does not strip accents.
+        "stopwords": (
+            "el la los las un una unos unas y o pero de del a al en con "
+            "por para sin sobre entre desde hasta que qué como cómo cuando "
+            "cuándo donde dónde quien quién cual cuál cuales cuáles porque "
+            "aunque mientras entonces es son era eran fue fueron ser estar "
+            "esta está están estaba estaban hay ha han he hemos su sus se "
+            "le les lo mi mis tu tus tú nos os este esto estos estas ese "
+            "esa eso esos esas aquel aquella ellos ellas usted ustedes "
+            "nosotros vosotros también todo toda todos todas cada otro "
+            "otra otros otras algo alguien nada nadie nunca siempre ya "
+            "más muy pues así aquí allí bien sí no"
+        ),
         # Proficiency levels 0..5 - same schema and rationale as the english
         # profile (see the comment there and tasks/phrase_level_task.md).
         # Zipf floors mirror the English starting values; wordfreq frequency

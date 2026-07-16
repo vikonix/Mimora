@@ -633,6 +633,23 @@ class PhraseLevelTests(_ConfigTestBase):
                 if level["min_zipf"] is not None:
                     self.assertGreater(level["min_zipf"], 0, label)
 
+    def test_every_profile_carries_focus_stopwords(self):
+        # Focus-word stopwords are per-language data (llm.py
+        # _pick_focus_word): the frequency filter prefers frequent words,
+        # so a language without its function-word list would steer the
+        # pick toward them.
+        for name, profile in self.config.LANGUAGE_PROFILES.items():
+            stopwords = profile["phrase_gen"]["stopwords"].split()
+            self.assertTrue(stopwords, name)
+            self.assertEqual(stopwords,
+                             [word.lower() for word in stopwords], name)
+
+    def test_stopword_constant_is_derived_from_the_active_profile(self):
+        self.assertEqual(
+            self.config.PHRASE_GEN_STOPWORDS,
+            frozenset(self.config.LANGUAGE_PROFILES["english"]
+                      ["phrase_gen"]["stopwords"].split()))
+
     def test_zipf_floors_relax_as_the_level_rises(self):
         # A higher level must never demand MORE frequent vocabulary; None
         # (no floor) is treated as the loosest possible value.

@@ -50,15 +50,6 @@ def _format_hint(hint: str) -> str:
             hint = hint.replace("{" + name + "}", f"'{first}' or '{second}'")
     return hint
 
-# Common words skipped when picking a random focus word from the text window.
-_STOPWORDS = frozenset(
-    "the a an and or but of to in on at for from with about into over after "
-    "is are was were be been being have has had do does did will would can "
-    "could should this that these those there their they them then than it "
-    "its his her she he you your we our not no yes very just also more most "
-    "some any all each every one two when what where which who how why".split()
-)
-
 # Leading conversational preambles the model sometimes prepends before the
 # actual phrase, e.g. "Here's a short sentence to practice pronunciation: ...".
 # Matched only when the text before the first colon carries a lead-in keyword,
@@ -83,7 +74,8 @@ _WORD_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)?")
 
 # Lazily bound wordfreq.zipf_frequency: the package loads frequency data on
 # import, and the app must not pay that cost at startup - only when the first
-# phrase is validated. False marks a failed import (validation disabled).
+# phrase is validated or logged. False marks a failed import (validation
+# disabled).
 _zipf_fn = None
 
 
@@ -119,7 +111,9 @@ def _min_zipf(phrase: str, lang: str) -> Optional[float]:
             continue
         if index > 0 and word[:1].isupper():
             continue
-        values.append(zipf(word.lower(), lang))
+        # wordfreq tokens carry the straight apostrophe; a typographic one
+        # from the model ("don’t") must not read as an unknown word.
+        values.append(zipf(word.lower().replace("’", "'"), lang))
     return min(values) if values else None
 
 
@@ -154,7 +148,8 @@ def _log_level_sample(record: dict) -> None:
     """Append one phrase-level sample to logs/phrase_level_samples.jsonl.
 
     Diagnostics for tuning the per-level Zipf floors offline; a failure to
-    write must never break phrase generation, hence the broad except.
+    write must never break phrase generation, hence every file operation
+    sits inside the OSError guard (the record itself is JSON-safe primitives).
     """
     global _level_log_trimmed
     path = config.LOG_DIR / "phrase_level_samples.jsonl"
@@ -327,6 +322,10 @@ class LLMManager:
                 "attempt": attempt,
                 "fits": fits,
                 "word_count": len(_WORD_RE.findall(phrase)),
+                # Logged on every level, even without a floor: threshold
+                # tuning needs the value everywhere. This makes the first
+                # generated phrase trigger the lazy wordfreq import
+                # regardless of level - still nothing at application startup.
                 "min_zipf": _min_zipf(phrase, wordfreq_lang),
                 "phrase": phrase,
             })
@@ -397,9 +396,15 @@ class LLMManager:
         generation is free, whereas fixing it afterwards costs a retry.
         Falls back to the unfiltered pool when the filter empties it.
         """
+        # Unicode-aware tokenization: an ASCII [A-Za-z] class would drop or
+        # mangle accented words ("práctica" -> "ctica", "años" -> nothing),
+        # feeding garbage candidates into the prompt for Spanish. Stopwords
+        # are per-language profile data (config.PHRASE_GEN_STOPWORDS): the
+        # frequency filter below prefers FREQUENT words, so without them the
+        # pick would drift toward function words.
         words = {
-            w.lower() for w in re.findall(r"[A-Za-z]{4,}", text)
-            if w.lower() not in _STOPWORDS
+            w.lower() for w in re.findall(r"[^\W\d_]{4,}", text)
+            if w.lower() not in config.PHRASE_GEN_STOPWORDS
         }
         if words and min_zipf is not None and lang:
             zipf = _get_zipf_fn()

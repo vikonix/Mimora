@@ -74,8 +74,9 @@ class Field:
         "choice" - read-only Combobox over choices()
         "number" - Entry validated against minimum/maximum (int when integer)
         "scale"  - Scale slider over [minimum, maximum], snapped to step and
-                   committed when a mouse drag or key step ends; shows the
-                   live value beside it
+                   committed when a mouse drag or key step ends (as an int
+                   when integer, so settings.json stores e.g. 3, not 3.0);
+                   shows the live value beside it
         "text"   - free-text Entry
         "path"   - read-only Entry + Browse... file picker
     get_value returns the current effective value from config (called when the
@@ -188,7 +189,7 @@ def build_sections() -> tuple:
             Field("phrase_gen_level", "Language level", "scale",
                   lambda: config.user_setting("phrase_gen_level",
                                               config.PHRASE_GEN_LEVEL),
-                  minimum=0, maximum=5, step=1,
+                  minimum=0, maximum=5, step=1, integer=True,
                   help="Difficulty of generated phrases: 0 = complete "
                        "beginner (simplest words, present tense only), "
                        "5 = advanced (rich vocabulary, complex sentences). "
@@ -975,6 +976,10 @@ class SettingsWindow:
         if field.step:
             value = round(round((value - lo) / field.step) * field.step + lo, 6)
             value = max(lo, min(hi, value))
+        if field.integer:
+            # Integer scales commit ints, so the persisted settings.json
+            # value stays an int (3, not 3.0) like its default.
+            return int(round(value))
         return value
 
     def _on_scale_move(self, field: Field):

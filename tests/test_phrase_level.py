@@ -125,6 +125,19 @@ class FocusWordFilterTests(_FakeZipfTestBase):
             llm.LLMManager._pick_focus_word("fish ubiquitous"),
             {"fish", "ubiquitous"})
 
+    def test_accented_words_survive_the_tokenizer(self):
+        # An ASCII-only tokenizer used to mangle accented Spanish words
+        # ("práctica" -> "ctica"); the picker must see the whole word.
+        self.assertEqual(
+            llm.LLMManager._pick_focus_word("práctica"), "práctica")
+
+    def test_profile_stopwords_are_never_picked(self):
+        with mock.patch.object(llm.config, "PHRASE_GEN_STOPWORDS",
+                               frozenset({"cuando"})):
+            for _ in range(20):
+                self.assertEqual(
+                    llm.LLMManager._pick_focus_word("cuando fish"), "fish")
+
 
 if __name__ == "__main__":
     unittest.main()
