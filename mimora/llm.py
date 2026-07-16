@@ -2,9 +2,11 @@
 # Copyright (c) 2026 Valery Kovalev
 
 import re
+import json
 import random
 import hashlib
 import logging
+from datetime import datetime
 from typing import List, Optional
 from openai import OpenAI
 from mimora import config
@@ -67,6 +69,109 @@ _PREAMBLE_RE = re.compile(
     r"practice|pronunciation|sure|okay|ok)\b[^:]{0,100}?:\s*",
     re.IGNORECASE)
 
+# =====================================================================
+# Proficiency-level support (config.PHRASE_GEN_LEVEL, 0..5).
+# The level's hints are folded into the SYSTEM prompt (which therefore only
+# changes when the user changes the level, keeping the llama.cpp prompt-prefix
+# cache effective), and the generated phrase is validated afterwards against
+# the level's word range and wordfreq Zipf floor. See
+# tasks/phrase_level_task.md for the design.
+# =====================================================================
+
+# Unicode-aware word tokenizer (Spanish accents, English contractions).
+_WORD_RE = re.compile(r"[^\W\d_]+(?:['’][^\W\d_]+)?")
+
+# Lazily bound wordfreq.zipf_frequency: the package loads frequency data on
+# import, and the app must not pay that cost at startup - only when the first
+# phrase is validated. False marks a failed import (validation disabled).
+_zipf_fn = None
+
+
+def _get_zipf_fn():
+    """Return wordfreq.zipf_frequency, or None when wordfreq is unavailable."""
+    global _zipf_fn
+    if _zipf_fn is None:
+        try:
+            from wordfreq import zipf_frequency
+            _zipf_fn = zipf_frequency
+        except ImportError:
+            _zipf_fn = False
+            logging.warning(
+                "wordfreq is not installed - phrase-level vocabulary "
+                "validation is disabled (pip install wordfreq).")
+    return _zipf_fn or None
+
+
+def _min_zipf(phrase: str, lang: str) -> Optional[float]:
+    """Lowest Zipf frequency among the phrase's content words, or None.
+
+    Words shorter than 3 letters are skipped (articles, clitics), as are
+    capitalized words that do not open the phrase - likely proper nouns
+    carried over from the source text, which must not fail the vocabulary
+    check. Returns None when nothing is checkable (no wordfreq, no words).
+    """
+    zipf = _get_zipf_fn()
+    if zipf is None:
+        return None
+    values = []
+    for index, word in enumerate(_WORD_RE.findall(phrase)):
+        if len(word) < 3:
+            continue
+        if index > 0 and word[:1].isupper():
+            continue
+        values.append(zipf(word.lower(), lang))
+    return min(values) if values else None
+
+
+def _fits_level(phrase: str, level_cfg: dict, lang: str,
+                fragment: bool) -> bool:
+    """True when *phrase* fits the level's word range and vocabulary floor.
+
+    Fragments only face the vocabulary floor: their 2-4 word length is fixed
+    by the fragment prompt, not by the level. When wordfreq is unavailable
+    the vocabulary check passes (prompt hints alone still steer the level).
+    """
+    if not fragment:
+        min_words, max_words = level_cfg["words"]
+        if not (min_words <= len(_WORD_RE.findall(phrase)) <= max_words):
+            return False
+    floor = level_cfg["min_zipf"]
+    if floor is not None:
+        lowest = _min_zipf(phrase, lang)
+        if lowest is not None and lowest < floor:
+            return False
+    return True
+
+
+# Cap on the level-sample log: on the first append of a run the file is cut
+# down to its newest _LEVEL_SAMPLES_KEPT lines (same pattern as the engines'
+# sample logs), so it cannot grow without bound.
+_LEVEL_SAMPLES_KEPT = 1000
+_level_log_trimmed = False  # once-per-process guard
+
+
+def _log_level_sample(record: dict) -> None:
+    """Append one phrase-level sample to logs/phrase_level_samples.jsonl.
+
+    Diagnostics for tuning the per-level Zipf floors offline; a failure to
+    write must never break phrase generation, hence the broad except.
+    """
+    global _level_log_trimmed
+    path = config.LOG_DIR / "phrase_level_samples.jsonl"
+    try:
+        if not _level_log_trimmed:
+            _level_log_trimmed = True
+            if path.exists():
+                lines = path.read_text(encoding="utf-8").splitlines()
+                if len(lines) > _LEVEL_SAMPLES_KEPT:
+                    path.write_text(
+                        "\n".join(lines[-_LEVEL_SAMPLES_KEPT:]) + "\n",
+                        encoding="utf-8")
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except OSError:
+        logging.exception("Could not write phrase-level sample:")
+
 
 class LLMManager:
     def __init__(self, model: Optional[str] = None):
@@ -124,12 +229,15 @@ class LLMManager:
     def generate_phrase(self, source_text: str, length: str = "full") -> str:
         """Generate one short practice phrase derived from ``source_text``.
 
-        This is a single, non-streaming completion. To keep output varied, the
-        prompt changes from call to call: only a sliding window of the source
-        text is sent (see _current_window), plus a randomly picked focus word
-        and - for full sentences - a random opening-style hint. Listing
-        previously used phrases in the prompt is deliberately avoided: small
-        models tend to copy such "do not reuse" lists instead of avoiding them.
+        Non-streaming completion(s): normally one, at most
+        1 + config.PHRASE_GEN_LEVEL_RETRIES when the phrase fails the
+        proficiency-level validator (see _fits_level). To keep output varied,
+        the prompt changes from call to call: only a sliding window of the
+        source text is sent (see _current_window), plus a randomly picked
+        focus word and - for full sentences - a random opening-style hint.
+        Listing previously used phrases in the prompt is deliberately avoided:
+        small models tend to copy such "do not reuse" lists instead of
+        avoiding them.
 
         ``length`` selects the output style:
           - "full"     → one complete sentence (the default).
@@ -139,45 +247,97 @@ class LLMManager:
             raise RuntimeError("LLM client not initialized. Call init_client() first.")
 
         is_fragment = (length == "fragment")
+
+        # Active proficiency level (0..5); clamped defensively - the value can
+        # be set live from the settings window between calls.
+        levels = config.PHRASE_GEN_LEVELS
+        level = max(0, min(int(config.PHRASE_GEN_LEVEL), len(levels) - 1))
+        level_cfg = levels[level]
+
+        # The level hints go into the SYSTEM prompt: it stays identical from
+        # call to call (until the user changes the level), so llama.cpp's
+        # prompt-prefix cache keeps skipping its evaluation on weak machines.
         if is_fragment:
-            system_prompt = config.PHRASE_GEN_FRAGMENT_SYSTEM_PROMPT
+            # Fragments get the vocabulary hint only: tense/structure hints
+            # make no sense for a non-sentence and would confuse the model.
+            system_prompt = (config.PHRASE_GEN_FRAGMENT_SYSTEM_PROMPT
+                             + " " + level_cfg["vocab_hint"])
             max_tokens = config.PHRASE_GEN_FRAGMENT_MAX_TOKENS
             ask = config.PHRASE_GEN_FRAGMENT_ASK
         else:
-            system_prompt = config.PHRASE_GEN_SYSTEM_PROMPT
+            min_words, max_words = level_cfg["words"]
+            system_prompt = (
+                config.PHRASE_GEN_SYSTEM_PROMPT.format(
+                    min_words=min_words, max_words=max_words)
+                + " " + level_cfg["vocab_hint"]
+                + " " + level_cfg["grammar_hint"])
             max_tokens = config.PHRASE_GEN_MAX_TOKENS
             ask = config.PHRASE_GEN_FULL_ASK
 
+        # The window is computed once per call (a retry is not a new "use").
         window_text = self._current_window(source_text)
-        user_prompt = f"Source text:\n{window_text}\n\n{ask}"
+        wordfreq_lang = config.PHRASE_GEN_WORDFREQ_LANG
 
-        focus_word = self._pick_focus_word(window_text)
-        if focus_word:
-            user_prompt += f"\nTry to use the word '{focus_word}'."
-        if not is_fragment:
-            user_prompt += f"\n{_format_hint(random.choice(_OPENING_HINTS))}"
+        # Level validator loop: at most 1 + PHRASE_GEN_LEVEL_RETRIES cheap
+        # non-streaming completions. The budget is deliberately tiny (prompt
+        # eval dominates latency on weak machines) and the degradation is
+        # soft: when it is exhausted, the last candidate is returned as is.
+        attempts = 1 + max(0, int(config.PHRASE_GEN_LEVEL_RETRIES))
+        phrase = ""
+        for attempt in range(1, attempts + 1):
+            # Focus word and opening hint are re-rolled per attempt, so a
+            # retry explores a different phrasing instead of repeating one.
+            user_prompt = f"Source text:\n{window_text}\n\n{ask}"
+            focus_word = self._pick_focus_word(
+                window_text, level_cfg["min_zipf"], wordfreq_lang)
+            if focus_word:
+                user_prompt += f"\nTry to use the word '{focus_word}'."
+            if not is_fragment:
+                user_prompt += f"\n{_format_hint(random.choice(_OPENING_HINTS))}"
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
 
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                temperature=config.PHRASE_GEN_TEMPERATURE,
-                max_tokens=max_tokens,
-                stream=False,
-                timeout=LLM_TIMEOUT,
-            )
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    temperature=config.PHRASE_GEN_TEMPERATURE,
+                    max_tokens=max_tokens,
+                    stream=False,
+                    timeout=LLM_TIMEOUT,
+                )
+            except Exception:
+                # Connectivity/timeout: retrying would only stack timeouts on
+                # a struggling machine - keep the historical "return empty".
+                logging.exception("Phrase generation error:")
+                return ""
+
             raw = (response.choices[0].message.content or "").strip()
             phrase = self._clean_phrase(raw, fragment=is_fragment)
-            logging.info(f"Generated practice phrase ({length}): {phrase!r}")
-            return phrase
-        except Exception:
-            logging.exception("Phrase generation error:")
-            return ""
+            fits = bool(phrase) and _fits_level(
+                phrase, level_cfg, wordfreq_lang, is_fragment)
+            _log_level_sample({
+                "ts": datetime.now().isoformat(timespec="seconds"),
+                "lang": wordfreq_lang,
+                "level": level,
+                "length": length,
+                "attempt": attempt,
+                "fits": fits,
+                "word_count": len(_WORD_RE.findall(phrase)),
+                "min_zipf": _min_zipf(phrase, wordfreq_lang),
+                "phrase": phrase,
+            })
+            if fits:
+                break
+            logging.info(
+                f"Phrase {phrase!r} does not fit level {level} "
+                f"(attempt {attempt}/{attempts}).")
+
+        logging.info(f"Generated practice phrase ({length}): {phrase!r}")
+        return phrase
 
     def _current_window(self, source_text: str) -> str:
         """Return the current sliding-window slice of ``source_text``.
@@ -225,16 +385,27 @@ class LLMManager:
         return [p.strip() for p in parts if p and p.strip()]
 
     @staticmethod
-    def _pick_focus_word(text: str) -> str:
+    def _pick_focus_word(text: str, min_zipf: Optional[float] = None,
+                         lang: Optional[str] = None) -> str:
         """Pick a random content word from ``text`` to steer the phrase.
 
         Returns "" when the text has no suitable word. Randomizing the focus
         word is the main defense against the model converging on one phrase.
+
+        When ``min_zipf`` and ``lang`` are given, words below that Zipf
+        frequency are excluded first: steering the vocabulary BEFORE
+        generation is free, whereas fixing it afterwards costs a retry.
+        Falls back to the unfiltered pool when the filter empties it.
         """
         words = {
             w.lower() for w in re.findall(r"[A-Za-z]{4,}", text)
             if w.lower() not in _STOPWORDS
         }
+        if words and min_zipf is not None and lang:
+            zipf = _get_zipf_fn()
+            if zipf is not None:
+                frequent = {w for w in words if zipf(w, lang) >= min_zipf}
+                words = frequent or words
         return random.choice(sorted(words)) if words else ""
 
     @staticmethod

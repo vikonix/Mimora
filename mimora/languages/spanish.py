@@ -23,10 +23,13 @@ PROFILE = {
     # Phrase-generation prompts: the instructions stay in English (they steer
     # the model), only the TARGET language named inside each string is
     # Spanish - mirroring the english entry above.
+    # "system" is a str.format template: {min_words}/{max_words} come from
+    # the active proficiency level (see "levels" below).
     "phrase_gen": {
         "system": (
             "You generate short Spanish sentences for pronunciation practice. "
-            "Reply with exactly ONE natural spoken sentence of 4 to 8 words, easy to read aloud. "
+            "Reply with exactly ONE natural spoken sentence of {min_words} to {max_words} words, "
+            "easy to read aloud. "
             "Use only plain words and a single final period - no quotation marks, no numbering, "
             "no extra commentary. Output ONLY the sentence itself, with nothing before or after it: "
             "do not add a lead-in such as 'Here's a sentence' or 'Sure', and never put a colon before "
@@ -53,6 +56,59 @@ PROFILE = {
         "fragment_ask": (
             "Give me ONE short Spanish fragment of 2 to 4 words (NOT a complete "
             "sentence) to practice pronunciation, based on this text."
+        ),
+        # Proficiency levels 0..5 - same schema and rationale as the english
+        # profile (see the comment there and tasks/phrase_level_task.md).
+        # Zipf floors mirror the English starting values; wordfreq frequency
+        # distributions differ per language, so tune them independently from
+        # logs/phrase_level_samples.jsonl.
+        "levels": (
+            {
+                "vocab_hint": ("Use only the simplest everyday Spanish words "
+                               "that a complete beginner knows."),
+                "grammar_hint": ("Use the present tense only, with a simple "
+                                 "subject-verb structure."),
+                "words": (3, 5),
+                "min_zipf": 4.8,
+            },
+            {
+                "vocab_hint": ("Use only very common everyday words a "
+                               "beginner knows."),
+                "grammar_hint": ("Use the simple present tense or a simple "
+                                 "command."),
+                "words": (3, 6),
+                "min_zipf": 4.5,
+            },
+            {
+                "vocab_hint": ("Use common everyday vocabulary an elementary "
+                               "learner knows."),
+                "grammar_hint": ("Simple present, simple past or the "
+                                 "'ir a + infinitive' future are all fine."),
+                "words": (4, 7),
+                "min_zipf": 4.0,
+            },
+            {
+                "vocab_hint": "Use ordinary everyday vocabulary.",
+                "grammar_hint": ("Any common indicative tense is fine; keep "
+                                 "the structure simple."),
+                "words": (4, 8),
+                "min_zipf": 3.7,
+            },
+            {
+                "vocab_hint": "You may use some less common words.",
+                "grammar_hint": ("Varied structures are welcome, including "
+                                 "conditionals and the subjunctive."),
+                "words": (5, 9),
+                "min_zipf": 3.3,
+            },
+            {
+                "vocab_hint": ("Use rich natural vocabulary, including "
+                               "idioms and less common words."),
+                "grammar_hint": ("Any natural structure is fine, including "
+                                 "complex sentences."),
+                "words": (5, 10),
+                "min_zipf": None,
+            },
         ),
     },
     "preview_phrase": "¡Hola! Así es como sueno. Vamos a practicar juntos.",

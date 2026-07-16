@@ -141,7 +141,7 @@ REQUIRED_DISTS = [
     "torch", "transformers", "fastapi", "uvicorn", "llama-cpp-python",
     "torchaudio", "librosa", "scipy", "scikit-learn", "fastdtw",
     "phonemizer-fork", "python-Levenshtein", "panphon", "sentencepiece",
-    "ttkbootstrap", "pillow", "onnxruntime",
+    "ttkbootstrap", "pillow", "onnxruntime", "wordfreq",
 ]
 
 

@@ -614,5 +614,68 @@ class MigrationWriteTests(_ConfigTestBase):
         reset.assert_not_called()
 
 
+class PhraseLevelTests(_ConfigTestBase):
+    """Proficiency levels (tasks/phrase_level_task.md): schema and constants."""
+
+    def setUp(self):
+        self.config = _build_config({})
+
+    def test_every_profile_carries_six_levels(self):
+        for name, profile in self.config.LANGUAGE_PROFILES.items():
+            levels = profile["phrase_gen"]["levels"]
+            self.assertEqual(len(levels), 6, name)
+            for index, level in enumerate(levels):
+                label = f"{name} level {index}"
+                self.assertTrue(level["vocab_hint"].strip(), label)
+                self.assertTrue(level["grammar_hint"].strip(), label)
+                low, high = level["words"]
+                self.assertTrue(1 <= low <= high, label)
+                if level["min_zipf"] is not None:
+                    self.assertGreater(level["min_zipf"], 0, label)
+
+    def test_zipf_floors_relax_as_the_level_rises(self):
+        # A higher level must never demand MORE frequent vocabulary; None
+        # (no floor) is treated as the loosest possible value.
+        for name, profile in self.config.LANGUAGE_PROFILES.items():
+            floors = [level["min_zipf"] if level["min_zipf"] is not None
+                      else float("-inf")
+                      for level in profile["phrase_gen"]["levels"]]
+            self.assertEqual(floors, sorted(floors, reverse=True), name)
+
+    def test_system_prompt_is_a_word_count_template(self):
+        # {min_words}/{max_words} are filled per level by mimora/llm.py; the
+        # template must format cleanly and contain no other placeholders.
+        for name, profile in self.config.LANGUAGE_PROFILES.items():
+            system = profile["phrase_gen"]["system"]
+            self.assertIn("{min_words}", system, name)
+            self.assertIn("{max_words}", system, name)
+            formatted = system.format(min_words=3, max_words=8)
+            self.assertNotIn("{", formatted, name)
+
+    def test_level_constants_are_derived_from_the_active_profile(self):
+        self.assertEqual(self.config.PHRASE_GEN_LEVEL, 3)
+        self.assertIs(
+            self.config.PHRASE_GEN_LEVELS,
+            self.config.LANGUAGE_PROFILES["english"]["phrase_gen"]["levels"])
+        self.assertEqual(self.config.PHRASE_GEN_WORDFREQ_LANG, "en")
+
+    def test_spanish_selection_switches_levels_and_wordfreq_lang(self):
+        config = _build_config({"practice_language": "spanish"})
+        self.assertIs(
+            config.PHRASE_GEN_LEVELS,
+            config.LANGUAGE_PROFILES["spanish"]["phrase_gen"]["levels"])
+        self.assertEqual(config.PHRASE_GEN_WORDFREQ_LANG, "es")
+
+    def test_level_setting_is_read_and_validated(self):
+        self.assertEqual(_build_config({"phrase_gen_level": 5}).PHRASE_GEN_LEVEL, 5)
+        # Out-of-range and non-numeric values fall back to the default.
+        self.assertEqual(_build_config({"phrase_gen_level": 99}).PHRASE_GEN_LEVEL, 3)
+        self.assertEqual(_build_config({"phrase_gen_level": "high"}).PHRASE_GEN_LEVEL, 3)
+
+    def test_level_key_is_registered(self):
+        self.assertIn("phrase_gen_level", self.config._KNOWN_USER_KEYS)
+        self.assertIn("phrase_gen_level", self.config.USER_SETTING_DEFAULTS)
+
+
 if __name__ == "__main__":
     unittest.main()

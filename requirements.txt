@@ -51,6 +51,12 @@ ttkbootstrap>=1.10,<2
 sentencepiece>=0.1.99
 protobuf>=3.20.0
 
+# Phrase proficiency-level validation (mimora/llm.py): Zipf word frequencies
+# for the level's vocabulary floor and the focus-word filter. Pure Python,
+# frequency data ships inside the package (offline-safe), imported lazily so
+# startup does not pay for it. See tasks/phrase_level_task.md.
+wordfreq>=3.0
+
 # Face widget (mimora/face_widget.py): frames are drawn supersampled with
 # Pillow and downscaled for antialiasing. Pillow was already installed as a
 # transitive dependency; pinned explicitly because the widget imports PIL

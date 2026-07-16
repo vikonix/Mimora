@@ -185,6 +185,14 @@ def build_sections() -> tuple:
                                               config.PHRASE_LENGTH),
                   choices=lambda: config.PHRASE_LENGTH_CHOICES,
                   help="full = whole sentence, fragment = 2-4 words."),
+            Field("phrase_gen_level", "Language level", "scale",
+                  lambda: config.user_setting("phrase_gen_level",
+                                              config.PHRASE_GEN_LEVEL),
+                  minimum=0, maximum=5, step=1,
+                  help="Difficulty of generated phrases: 0 = complete "
+                       "beginner (simplest words, present tense only), "
+                       "5 = advanced (rich vocabulary, complex sentences). "
+                       "Applies from the next phrase."),
             Field("reference_speed", "Reference speed", "scale",
                   lambda: config.user_setting("reference_speed",
                                               config.REFERENCE_SPEED),

@@ -36,6 +36,7 @@ LIVE_CONFIG_ATTRS = {
     "silence_threshold": ("SILENCE_THRESHOLD", float),
     "phrase_gen_window_sentences": ("PHRASE_GEN_WINDOW_SENTENCES", int),
     "phrase_gen_window_repeats": ("PHRASE_GEN_WINDOW_REPEATS", int),
+    "phrase_gen_level": ("PHRASE_GEN_LEVEL", int),
 }
 
 # settings.json key -> config attribute holding the value the running app

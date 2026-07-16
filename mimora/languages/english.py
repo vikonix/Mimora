@@ -19,11 +19,15 @@ PROFILE = {
     # generated phrase is named inside each string, so a new language ships
     # its own prompts here rather than a code branch. "system" is the full
     # sentence prompt, "fragment_system" the 2-4 word fragment prompt;
-    # "full_ask"/"fragment_ask" are the per-request user asks.
+    # "full_ask"/"fragment_ask" are the per-request user asks. "system" is a
+    # str.format template: {min_words}/{max_words} come from the active
+    # proficiency level (see "levels" below), so the length instruction never
+    # contradicts the level hint appended after it.
     "phrase_gen": {
         "system": (
             "You generate short English sentences for pronunciation practice. "
-            "Reply with exactly ONE natural spoken sentence of 4 to 8 words, easy to read aloud. "
+            "Reply with exactly ONE natural spoken sentence of {min_words} to {max_words} words, "
+            "easy to read aloud. "
             "Use only plain words and a single final period - no quotation marks, no numbering, "
             "no extra commentary. Output ONLY the sentence itself, with nothing before or after it: "
             "do not add a lead-in such as 'Here's a sentence' or 'Sure', and never put a colon before "
@@ -46,6 +50,71 @@ PROFILE = {
         "fragment_ask": (
             "Give me ONE short English fragment of 2 to 4 words (NOT a complete "
             "sentence) to practice pronunciation, based on this text."
+        ),
+        # Proficiency levels 0..5 (~pre-A1..C1), selected by settings.json
+        # "phrase_gen_level" (config.PHRASE_GEN_LEVEL). Each entry:
+        #   vocab_hint   - vocabulary constraint appended to the system prompt
+        #                  (full sentences AND fragments);
+        #   grammar_hint - grammar constraint appended for full sentences only
+        #                  (fragments are not sentences, so tense hints would
+        #                  only confuse the model);
+        #   words        - (min, max) word count for full sentences; fills the
+        #                  {min_words}/{max_words} placeholders in "system"
+        #                  and bounds the post-generation validator;
+        #   min_zipf     - wordfreq Zipf floor for the validator and the
+        #                  focus-word filter (None = no vocabulary floor).
+        # Concrete wording on purpose: a small model follows explicit
+        # constraints far better than abstract labels like "CEFR B1".
+        # Starting values - tune from logs/phrase_level_samples.jsonl
+        # (see tasks/phrase_level_task.md).
+        "levels": (
+            {
+                "vocab_hint": ("Use only the simplest everyday English words "
+                               "that a complete beginner knows."),
+                "grammar_hint": ("Use the present tense only, with a simple "
+                                 "subject-verb structure."),
+                "words": (3, 5),
+                "min_zipf": 4.8,
+            },
+            {
+                "vocab_hint": ("Use only very common everyday words a "
+                               "beginner knows."),
+                "grammar_hint": ("Use the simple present tense or a simple "
+                                 "command."),
+                "words": (3, 6),
+                "min_zipf": 4.5,
+            },
+            {
+                "vocab_hint": ("Use common everyday vocabulary an elementary "
+                               "learner knows."),
+                "grammar_hint": ("Simple present, simple past or 'going to' "
+                                 "future are all fine."),
+                "words": (4, 7),
+                "min_zipf": 4.0,
+            },
+            {
+                "vocab_hint": "Use ordinary everyday vocabulary.",
+                "grammar_hint": ("Any common tense is fine; keep the "
+                                 "structure simple."),
+                "words": (4, 8),
+                "min_zipf": 3.7,
+            },
+            {
+                "vocab_hint": ("You may use some less common words and "
+                               "phrasal verbs."),
+                "grammar_hint": ("Varied structures are welcome, including "
+                                 "conditionals and comparisons."),
+                "words": (5, 9),
+                "min_zipf": 3.3,
+            },
+            {
+                "vocab_hint": ("Use rich natural vocabulary, including "
+                               "idioms and less common words."),
+                "grammar_hint": ("Any natural structure is fine, including "
+                                 "complex sentences."),
+                "words": (5, 10),
+                "min_zipf": None,
+            },
         ),
     },
     # Spoken by the voice-preview button (settings_window.py); short and

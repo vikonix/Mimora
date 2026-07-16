@@ -59,6 +59,7 @@ _KNOWN_USER_KEYS = {
     "practice_text_collapsed",
     "phrase_gen_window_sentences",
     "phrase_gen_window_repeats",
+    "phrase_gen_level",
     "user_name",
     "phrase_length",
     "reference_speed",
@@ -103,6 +104,7 @@ USER_SETTING_DEFAULTS = {
     "practice_text_collapsed": True,
     "phrase_gen_window_sentences": 5,
     "phrase_gen_window_repeats": 5,
+    "phrase_gen_level": 3,
     "user_name": "",
     "phrase_length": "full",
     "reference_speed": 1.0,
@@ -729,6 +731,9 @@ PRACTICE_TEXT_FALLBACK = _LANG_PROFILE["practice_text_fallback"]
 PHRASE_GEN_TEMPERATURE = 0.7
 PHRASE_GEN_MAX_TOKENS = 40
 _PHRASE_GEN = _LANG_PROFILE["phrase_gen"]
+# str.format template: {min_words}/{max_words} are filled by mimora/llm.py
+# from the active proficiency level, so the length instruction and the level
+# hint can never contradict each other.
 PHRASE_GEN_SYSTEM_PROMPT = _PHRASE_GEN["system"]
 # Per-request user asks handed to the LLM (mimora/llm.py) for each phrase length.
 PHRASE_GEN_FULL_ASK = _PHRASE_GEN["full_ask"]
@@ -744,6 +749,22 @@ PHRASE_GEN_WINDOW_SENTENCES = int(_num("phrase_gen_window_sentences", 5,
                                                minimum=1))
 PHRASE_GEN_WINDOW_REPEATS = int(_num("phrase_gen_window_repeats", 5,
                                              minimum=1))
+
+# Proficiency level 0..5 (~pre-A1..C1) of the generated phrases. Selects one
+# entry of the profile's phrase_gen["levels"] (vocabulary/grammar hints, word
+# range, wordfreq Zipf floor); mimora/llm.py folds it into the prompt and
+# validates the generated phrase against it. Applied live (no restart) via
+# SETTING_LIVE_ATTRS in mimora/settings_ctl.py.
+PHRASE_GEN_LEVEL = int(_num("phrase_gen_level", 3, minimum=0, maximum=5))
+PHRASE_GEN_LEVELS = _PHRASE_GEN["levels"]
+# Regeneration budget when a phrase fails the level validator. Kept tiny on
+# purpose: prompt eval dominates phrase latency on weak machines, so when the
+# budget is exhausted the last candidate is accepted as-is (soft degradation)
+# and the sample is logged for threshold tuning (logs/phrase_level_samples.jsonl).
+PHRASE_GEN_LEVEL_RETRIES = 1
+# wordfreq language code of the practiced language, derived from the espeak
+# code ("en-us"/"en-gb" -> "en", "es" -> "es") - no per-profile field needed.
+PHRASE_GEN_WORDFREQ_LANG = ESPEAK_LANGUAGE.split("-")[0]
 
 # "Few words" mode: generate a short 2-4 word fragment instead of a complete
 # sentence (e.g. "give me", "on the table", "where are you from"). Uses its own
