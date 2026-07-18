@@ -163,6 +163,14 @@ def build_sections() -> tuple:
                   choices=config.language_choices, restart=True,
                   runtime_value=lambda: config.PRACTICE_LANGUAGE,
                   help="The language you practice. Changing it needs a restart."),
+            Field("phrase_gen_level", "Difficulty", "scale",
+                  lambda: config.user_setting("phrase_gen_level",
+                                              config.PHRASE_GEN_LEVEL),
+                  minimum=0, maximum=5, step=1, integer=True,
+                  help="Difficulty of generated phrases: 0 = complete "
+                       "beginner (simplest words, present tense only), "
+                       "5 = advanced (rich vocabulary, complex sentences). "
+                       "Applies from the next phrase."),
             # Regional variant of the language. Hidden by _build_body when the
             # language has a single variant (nothing to choose).
             Field("accent", "Accent", "choice",
@@ -186,14 +194,6 @@ def build_sections() -> tuple:
                                               config.PHRASE_LENGTH),
                   choices=lambda: config.PHRASE_LENGTH_CHOICES,
                   help="full = whole sentence, fragment = 2-4 words."),
-            Field("phrase_gen_level", "Language level", "scale",
-                  lambda: config.user_setting("phrase_gen_level",
-                                              config.PHRASE_GEN_LEVEL),
-                  minimum=0, maximum=5, step=1, integer=True,
-                  help="Difficulty of generated phrases: 0 = complete "
-                       "beginner (simplest words, present tense only), "
-                       "5 = advanced (rich vocabulary, complex sentences). "
-                       "Applies from the next phrase."),
             Field("reference_speed", "Reference speed", "scale",
                   lambda: config.user_setting("reference_speed",
                                               config.REFERENCE_SPEED),
