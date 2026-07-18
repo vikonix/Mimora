@@ -36,7 +36,9 @@ The practice language is chosen in the settings window (**Language**, applies af
 | **English** | American, British | `phoneme` (default, calibrated), `acoustic`, `none` |
 | **Spanish** (Peninsular / Castilian) | Castilian | `phoneme` (**experimental** - no Spanish calibration yet, scoring falls back to the English calibration until it lands), `none` |
 
-The English-only `acoustic` engine is not offered for Spanish. French and Italian are next on the roadmap. (The translation panel already renders the practice phrase in 200+ languages - that is the translation shown beside the phrase, not the practice language itself.)
+Mimora is built for practicing **English** (American and British, fully calibrated). Under the hood the scoring engine is language-independent, and multilingual support is in development. **Spanish** is included as an experiment: until a Spanish calibration lands, scoring falls back to the English calibration (usable, not tuned); a proper calibration requires labeled non-native speech data for that language.
+
+The English-only `acoustic` engine is not offered for Spanish. (The translation panel already renders the practice phrase in 200+ languages - that is the translation shown beside the phrase, not the practice language itself.)
 
 ---
 
@@ -376,7 +378,7 @@ Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by
 
 ## Known limitations
 
-- **Spanish `phoneme` scoring is experimental for now.** The default `phoneme` engine uses a multilingual IPA recognizer, but its scoring calibration is per-language; the Spanish calibration is planned for a later release, so until it lands Spanish scoring falls back to the English calibration (usable, not tuned - the app logs a startup warning and the settings window shows a notice). The `acoustic` engine is English-only (English ASR model) and is not offered for other languages. (The translation panel already targets many languages - that is the practice phrase's translation, not the practice language itself.)
+- **Spanish `phoneme` scoring is experimental for now.** The default `phoneme` engine uses a multilingual IPA recognizer, but its scoring calibration is per-language; a proper Spanish calibration requires labeled non-native speech data and is not available yet, so Spanish scoring falls back to the English calibration (usable, not tuned - the app logs a startup warning and the settings window shows a notice). The `acoustic` engine is English-only (English ASR model) and is not offered for other languages. (The translation panel already targets many languages - that is the practice phrase's translation, not the practice language itself.)
 - The transcription-based word errors only surface mistakes the ASR actually "hears"; subtle distortions where the word is still recognized may not appear in the word list (the default phoneme engine's IPA edit distance, or the acoustic engine's DTW, plus prosody partially compensate).
 - Scoring is **heuristic** and depends on your voice and microphone. After a practice session, re-anchor the active engine to your data: `python pronunciation/phoneme/calibrate.py` (default engine) or `python pronunciation/acoustic/calibrate.py` (acoustic engine); `--dry-run` previews the change. Every attempt's raw components are logged to `logs/phoneme_samples.jsonl` (or `logs/acoustic_samples.jsonl`) and `logs/main.log` for inspection.
 
