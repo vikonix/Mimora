@@ -145,7 +145,7 @@ auto-detects an NVIDIA GPU and installs the matching CUDA builds of `torch` and
 into `model_cache/`, and downloads the GGUF chat model into `models/`.
 
 ```bash
-git clone <your-repo-url> Mimora
+git clone https://github.com/vikonix/Mimora.git Mimora
 cd Mimora
 
 # Create and activate a virtual environment, then run the installer INSIDE it
@@ -182,7 +182,7 @@ falls back to copying files (more disk use, but it always works).
 
 ```bash
 # 1. Clone
-git clone <your-repo-url> Mimora
+git clone https://github.com/vikonix/Mimora.git Mimora
 cd Mimora
 
 # 2. All dependencies in one step
@@ -325,7 +325,7 @@ Mimora is built on SpeakLoop, an MVP voice-tutor project. Its default **phoneme*
 | `pronunciation/acoustic/speech.py` | Alternative pronunciation engine (adapted from OpenPronounce). Single entry point `analyze(...)`; Wav2Vec2 embeddings + DTW, phoneme comparison, scoring. No GUI dependency. |
 | `pronunciation/acoustic/calibrate.py` | On-request scoring calibration for the acoustic engine: reads the per-attempt samples from `logs/acoustic_samples.jsonl` and writes the acoustic floor to `pronunciation/acoustic/calibration.json`. |
 | `config/` | User configuration data: `settings.json` (hand-edited preferences), `hardware_config.json` (machine-derived overrides written by `tools/detect_hardware.py`), and `themes/` (UI color schemes). |
-| `texts/practice_text.txt` | Default source text shown in the input panel at startup; put your own practice texts in `texts/`. |
+| `texts/practice_text.txt` | Default source text shown in the input panel at startup; put your own practice texts in `texts/` (personal texts stay local - `texts/` is gitignored, only the bundled starter texts are committed). |
 | `tools/detect_hardware.py` | Standalone hardware probe (RAM/CPU/GPU/VRAM/audio). Writes `config/hardware_config.json`, whose `config` section supplies machine-derived overrides (e.g. `EXTERNAL_N_GPU_LAYERS`, `WAV2VEC2_DEVICE`) that `mimora/config.py` reads in preference to its defaults. |
 | `install.py` | Standalone, idempotent installer: checks Python, detects GPU/CUDA and installs matching torch / llama-cpp-python, installs requirements, checks espeak-ng, pre-downloads the HF models and the GGUF chat model, then runs `detect_hardware.py`. |
 

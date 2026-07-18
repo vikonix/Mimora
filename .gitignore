@@ -53,7 +53,8 @@ model_cache/
 # User settings (machine-local; copy config/settings.example.json to start)
 config/settings.json
 
-# Custom tests
+# Custom texts (personal practice texts stay local; the bundled starter
+# texts are tracked and unaffected by this rule)
 texts/
 
 prototypes-pronunciation/
