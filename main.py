@@ -189,10 +189,12 @@ class PronunciationTrainerGUI:
         # SessionState is pure data, no Tk: on_take_scored / on_history_entry
         # feed it and forward the returned values to the view.
         self.session = SessionState()
-        # Kokoro voice the current reference was synthesized with (logged with
+        # TTS voice the current reference was synthesized with (logged with
         # every analysis sample - the acoustic calibration is voice-specific).
         self.current_voice: str = config.TTS_VOICE
-        self.reference_audio: Optional[np.ndarray] = None   # 24 kHz Kokoro output
+        # Reference waveform at the active backend's native rate
+        # (TTSManager.sample_rate; e.g. Kokoro 24 kHz, Supertonic 44.1 kHz).
+        self.reference_audio: Optional[np.ndarray] = None
         self.last_user_audio: Optional[np.ndarray] = None   # 16 kHz recorded attempt
         # Last user name written to settings.json; lets on_user_name_changed
         # skip the file write when the field loses focus without an edit.
@@ -220,15 +222,18 @@ class PronunciationTrainerGUI:
             # the generation path - main.py only calls generate_phrase on it.
             logging.info("LLM backend is off: phrases come verbatim from the source text.")
             self.llm_mgr = SourceTextPhraseProvider()
-        elif self.llm_backend == "local_server":
-            logging.info("Using local_server LLM backend (llm_server/server.py subprocess).")
-            self.llm_mgr = LLMManager(model=config.LOCAL_SERVER_MODEL)
-        else:
-            if self.llm_backend != "lm-studio":
-                logging.warning(f"Unknown LLM_BACKEND '{self.llm_backend}', falling back to lm-studio.")
-                self.llm_backend = "lm-studio"
+        elif self.llm_backend == "lm-studio":
             logging.info("Using LM Studio LLM backend (LLMManager).")
             self.llm_mgr = LLMManager()
+        else:
+            # Defense in depth only: config already sanitizes an unknown
+            # "llm_backend" to "local_server", so this branch normally sees
+            # exactly that value; an unknown one falls back the same way.
+            if self.llm_backend != "local_server":
+                logging.warning(f"Unknown LLM_BACKEND '{self.llm_backend}', falling back to local_server.")
+                self.llm_backend = "local_server"
+            logging.info("Using local_server LLM backend (llm_server/server.py subprocess).")
+            self.llm_mgr = LLMManager(model=config.LOCAL_SERVER_MODEL)
 
         # Compose the view: it builds and owns the widgets, and forwards widget
         # callbacks back to this controller through an explicit ViewCallbacks
