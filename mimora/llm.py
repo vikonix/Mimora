@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import List, Optional
 from openai import OpenAI
 from mimora import config
+from mimora.phrase_source import split_sentences
 
 # Technical configuration parameters
 LLM_TIMEOUT = 30.0
@@ -379,9 +380,12 @@ class LLMManager:
 
     @staticmethod
     def _split_sentences(text: str) -> List[str]:
-        """Split text into sentences (and standalone lines, e.g. headings)."""
-        parts = re.split(r"(?<=[.!?])\s+|\n+", text)
-        return [p.strip() for p in parts if p and p.strip()]
+        """Split text into sentences (see phrase_source.split_sentences).
+
+        The splitter lives in mimora/phrase_source.py so the "off" backend's
+        provider can use it without importing this (openai-dependent) module.
+        """
+        return split_sentences(text)
 
     @staticmethod
     def _pick_focus_word(text: str, min_zipf: Optional[float] = None,

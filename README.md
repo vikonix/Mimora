@@ -54,6 +54,8 @@ For each practice phrase Mimora runs a simple loop:
 
 You can replay the **reference** and **your own recording** back-to-back to hear the difference.
 
+> **No-LLM mode for slow machines.** Setting the **LLM backend** to `off` in the settings skips the language model entirely - nothing is loaded or started, and each practice phrase is a sentence of your practice text, taken verbatim and in order. This mode is aimed primarily at low-end machines (no GGUF model, no LLM server subprocess, less RAM/VRAM and a faster start); it also suits drilling a text exactly as written. The phrase-length choice is disabled in this mode - sentences are never shortened. Combined with the `none` scoring engine, Mimora runs with no LLM and no recognizer model at all.
+
 ### Example
 
 ```text
@@ -120,7 +122,7 @@ and only the GGUF chat model must be obtained manually.
 | Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech (English) | via `install.py` or on first run |
 | Supertonic 3 (`Supertone/supertonic-3`) | text-to-speech (Spanish) | ~400 MB into `model_cache/supertonic3/`; via `install.py` or on first run. Weights are **OpenRAIL-M** licensed (code MIT), so they are downloaded, never bundled |
 | `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | NLLB-200 200-language translator, ~2.4 GB; via `install.py` or on first run |
-| A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | via `install.py`, or **download manually** into `models/` |
+| A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | via `install.py`, or **download manually** into `models/`. Not needed with `"llm_backend": "off"` (phrases come verbatim from the practice text) |
 
 ---
 
@@ -290,7 +292,7 @@ Key options in [`mimora/config.py`](mimora/config.py) (overridable via [`config/
 | `PHRASE_GEN_TEMPERATURE` / `PHRASE_GEN_MAX_TOKENS` | `0.7` / `40` | Phrase-generation sampling. |
 | `PHRASE_GEN_WINDOW_SENTENCES` | `5` | Sentences of the source text sent to the model per request (sliding window). |
 | `PHRASE_GEN_WINDOW_REPEATS` | `5` | Phrases generated per window position before it slides forward by half its size. |
-| `LLM_BACKEND` | `local_server` | `local_server` (auto-started subprocess) or `lm-studio`. |
+| `LLM_BACKEND` | `local_server` | `local_server` (auto-started subprocess), `lm-studio`, or `off` - no LLM is loaded or started; phrases are the practice text's own sentences, verbatim and in order. Aimed primarily at low-end machines. |
 | `MAX_RECORD_SECONDS` | `20` | Safety cap on recording length. |
 | `RANDOM_VOICE` | `False` | Speak every new phrase with a fresh random voice of the active language/variant (never the one just heard). Needs at least two voices. The `voice` setting is kept and used again when this is off. |
 

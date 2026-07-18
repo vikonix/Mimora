@@ -324,12 +324,17 @@ DEVICE = loader.detect_device(_HW.get("DEVICE"))
 # Backend selection, read from settings.json ("llm_backend"):
 #   "lm-studio"    - external LM Studio app (must be running separately)
 #   "local_server" - llm_server.py started automatically as a subprocess
-LLM_BACKEND_CHOICES = ("local_server", "lm-studio")
+#   "off"          - no LLM at all: nothing is loaded or started; practice
+#                    phrases are taken verbatim from the source text, one
+#                    sentence at a time (mimora/phrase_source.py). The
+#                    phrase-length selector is disabled in this mode (a
+#                    sentence is never shortened into a fragment).
+LLM_BACKEND_CHOICES = ("local_server", "lm-studio", "off")
 LLM_BACKEND = _USER.get("llm_backend", "local_server")
 if LLM_BACKEND not in LLM_BACKEND_CHOICES:
     print(f"[config] settings.json: unknown llm_backend {LLM_BACKEND!r} "
-          f"(expected 'local_server' or 'lm-studio'); using 'local_server'",
-          file=sys.stderr)
+          f"(expected 'local_server', 'lm-studio' or 'off'); "
+          f"using 'local_server'", file=sys.stderr)
     LLM_BACKEND = "local_server"
 
 # =====================================================================

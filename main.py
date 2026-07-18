@@ -57,6 +57,7 @@ import numpy as np
 from mimora import config, lifecycle, prosody
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
+from mimora.phrase_source import SourceTextPhraseProvider
 from mimora.tts import TTSManager
 from mimora.translator import TranslatorManager
 from mimora.recorder import (
@@ -212,7 +213,14 @@ class PronunciationTrainerGUI:
         self.llm_backend = config.LLM_BACKEND
         self.llm_server = LLMServerController()  # no-op unless local_server backend
 
-        if self.llm_backend == "local_server":
+        if self.llm_backend == "off":
+            # No LLM at all: nothing is loaded or started; practice phrases
+            # are the source text's own sentences, verbatim and in order
+            # (mimora/phrase_source.py). Duck-typed drop-in for LLMManager in
+            # the generation path - main.py only calls generate_phrase on it.
+            logging.info("LLM backend is off: phrases come verbatim from the source text.")
+            self.llm_mgr = SourceTextPhraseProvider()
+        elif self.llm_backend == "local_server":
             logging.info("Using local_server LLM backend (llm_server/server.py subprocess).")
             self.llm_mgr = LLMManager(model=config.LOCAL_SERVER_MODEL)
         else:
@@ -400,7 +408,12 @@ class PronunciationTrainerGUI:
                 self.translator_mgr.load_model()
                 logging.info("Translator model loaded.")
 
-            if self.llm_backend == "local_server":
+            if self.llm_backend == "off":
+                # Nothing to start or connect to; generation is served by
+                # SourceTextPhraseProvider (see __init__).
+                self.root.after(0, self.view.append_system_msg,
+                                "LLM is off - phrases are taken from the practice text.")
+            elif self.llm_backend == "local_server":
                 model_name = os.path.basename(config.EXTERNAL_MODEL_PATH)
                 self.root.after(0, self.view.append_system_msg, f"Starting LLM server with {model_name}...")
                 self.root.after(0, self.view.enter_server_starting)

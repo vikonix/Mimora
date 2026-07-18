@@ -193,7 +193,9 @@ def build_sections() -> tuple:
                   lambda: config.user_setting("phrase_length",
                                               config.PHRASE_LENGTH),
                   choices=lambda: config.PHRASE_LENGTH_CHOICES,
-                  help="full = whole sentence, fragment = 2-4 words."),
+                  help="full = whole sentence, fragment = 2-4 words. "
+                       "Disabled while the LLM backend is off (source-text "
+                       "sentences are never shortened)."),
             Field("reference_speed", "Reference speed", "scale",
                   lambda: config.user_setting("reference_speed",
                                               config.REFERENCE_SPEED),
@@ -263,7 +265,9 @@ def build_sections() -> tuple:
                                               config.LLM_BACKEND),
                   choices=lambda: config.LLM_BACKEND_CHOICES, restart=True,
                   runtime_value=lambda: config.LLM_BACKEND,
-                  help="lm-studio requires LM Studio running separately."),
+                  help="lm-studio requires LM Studio running separately. "
+                       "off = no LLM: phrases are the practice text's own "
+                       "sentences, taken as-is."),
             Field("external_model_path", "GGUF model file", "path",
                   lambda: config.user_setting("external_model_path",
                                               config.EXTERNAL_MODEL_PATH),
@@ -351,6 +355,7 @@ class SettingsWindow:
         self._restart_pending = {}    # key -> label of touched restart fields
         self._vars = {}               # key -> tk.Variable
         self._widgets = {}            # key -> main control widget
+        self._path_buttons = {}       # key -> Browse button of a "path" field
         self._scale_labels = {}       # key -> value label beside a "scale" slider
         self._committed = {}          # key -> last committed value
         self._fields = {f.key: f for f in all_fields()}
@@ -368,6 +373,8 @@ class SettingsWindow:
         # Phoneme-only fields start greyed out unless the phoneme engine is the
         # one currently selected (see _sync_engine_dependent_state).
         self._sync_engine_dependent_state()
+        # Likewise the phrase-length choice while the LLM backend is "off".
+        self._sync_llm_dependent_state()
         # Show the experimental notice if the running engine+language warrants it.
         self._sync_experimental_notice()
         # Snapshot for Cancel: the values every field had when the window
@@ -427,6 +434,10 @@ class SettingsWindow:
         # which engine-specific fields are inert and grey them accordingly.
         if key == "engine":
             self._sync_engine_dependent_state()
+        # The Cancel/Default replay may switch the backend too - keep the
+        # phrase-length field's greyed state in step with it.
+        if key == "llm_backend":
+            self._sync_llm_dependent_state()
         # The same replay paths change engine/language/variant, so keep the
         # experimental notice in step with them too.
         if key in ("engine", "practice_language", "accent"):
@@ -640,10 +651,15 @@ class SettingsWindow:
 
         if field.kind in ("number", "text"):
             var = tk.StringVar(value=self._display_value(field, value))
+            # disabledbackground/-foreground: without them a disabled entry
+            # falls back to the system (light) colors and flashes white in the
+            # dark theme (see _set_field_enabled).
             entry = tk.Entry(
                 parent, textvariable=var, width=16,
                 font=(FONT_FAMILY, FONT_SIZE_SMALL), bg=THEME["bg_accent"],
                 fg=THEME["text_accent"], insertbackground=THEME["text_bright"],
+                disabledbackground=THEME["bg_panel"],
+                disabledforeground=THEME["text_disabled"],
                 bd=0, highlightthickness=1,
                 highlightbackground=THEME["border"],
                 highlightcolor=THEME["accent"])
@@ -656,22 +672,30 @@ class SettingsWindow:
         if field.kind == "path":
             frame = tk.Frame(parent, bg=THEME["bg_main"])
             var = tk.StringVar(value=str(value))
+            # disabledbackground/-foreground keep the entry dark when a backend
+            # switch greys it (system defaults are light - see _set_field_enabled).
             entry = tk.Entry(
                 frame, textvariable=var, state="readonly",
                 font=(FONT_FAMILY, FONT_SIZE_CAPTION), readonlybackground=THEME["bg_panel"],
                 fg=THEME["text_dim"], bd=0, highlightthickness=1,
+                disabledbackground=THEME["bg_panel"],
+                disabledforeground=THEME["text_disabled"],
                 highlightbackground=THEME["border"])
             entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
             # Show the tail of a long path (the file name matters most).
             entry.xview_moveto(1.0)
-            FlatButton(frame, text="Browse…",
+            # Kept in _path_buttons so a backend switch can grey the button
+            # together with its entry (see _set_field_enabled).
+            browse = FlatButton(frame, text="Browse…",
                       command=lambda f=field: self._browse_path(f),
                       font=(FONT_FAMILY, FONT_SIZE_CAPTION), bg=THEME["bg_accent"],
                       fg=THEME["text_accent"],
                       activebackground=THEME["bg_accent_active"],
                       activeforeground=THEME["text_bright"],
-                      bd=0, padx=8, pady=1, cursor="hand2").pack(
-                side=tk.LEFT, padx=(6, 0))
+                      bd=0, padx=8, pady=1, cursor="hand2",
+                      disabledforeground=THEME["text_disabled"])
+            browse.pack(side=tk.LEFT, padx=(6, 0))
+            self._path_buttons[field.key] = browse
             self._vars[field.key] = var
             self._widgets[field.key] = entry
             return frame
@@ -809,6 +833,8 @@ class SettingsWindow:
             self._apply_language_change(value)
         elif field.key == "engine":
             self._sync_engine_dependent_state()
+        elif field.key == "llm_backend":
+            self._sync_llm_dependent_state()
         # Engine, language and variant all feed the experimental judgement.
         if field.key in ("engine", "practice_language", "accent"):
             self._sync_experimental_notice()
@@ -908,6 +934,47 @@ class SettingsWindow:
         # A readonly combobox toggles between "readonly" (usable, closed list)
         # and "disabled" (greyed); "normal" would wrongly allow free typing.
         combo.configure(state="readonly" if engine == "phoneme" else "disabled")
+
+    def _sync_llm_dependent_state(self):
+        """Grey out the fields the selected LLM backend ignores.
+
+        With backend "off" no prompt is ever built: phrases are whole
+        source-text sentences taken verbatim (mimora/phrase_source.py), so the
+        phrase-length choice and the sliding-window tuning are all inert. The
+        GGUF model path and context size configure only the local-server
+        subprocess, so they are additionally inert for "lm-studio" (LM Studio
+        loads its own model). The selected (combobox) value drives this, so
+        the fields grey the moment the backend is switched, before the
+        pending restart applies.
+        """
+        backend = self._vars["llm_backend"].get() \
+            if "llm_backend" in self._vars else config.LLM_BACKEND
+        llm_used = backend != "off"
+        for key in ("phrase_length", "phrase_gen_window_sentences",
+                    "phrase_gen_window_repeats"):
+            self._set_field_enabled(key, llm_used)
+        for key in ("external_model_path", "external_n_ctx"):
+            self._set_field_enabled(key, backend == "local_server")
+
+    def _set_field_enabled(self, key: str, enabled: bool):
+        """Enable or grey one field's main control (and its Browse button).
+
+        Kind-aware states: a choice combobox and a path entry toggle between
+        "readonly" (usable) and "disabled" - never "normal", which would allow
+        free typing into them - while a plain entry toggles normal/disabled.
+        Disabling drops nothing: the variable keeps its committed value, so
+        re-enabling (or the Cancel replay via set_value) shows it unchanged.
+        """
+        widget = self._widgets.get(key)
+        if widget is None:
+            return
+        if self._fields[key].kind in ("choice", "path"):
+            widget.configure(state="readonly" if enabled else "disabled")
+        else:
+            widget.configure(state="normal" if enabled else "disabled")
+        button = self._path_buttons.get(key)
+        if button is not None:
+            button.config(state=tk.NORMAL if enabled else tk.DISABLED)
 
     # Text of the experimental notice (see _sync_experimental_notice); kept as a
     # constant so the notice can be recognized and cleared.
