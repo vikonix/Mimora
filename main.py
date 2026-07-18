@@ -104,8 +104,9 @@ class PronunciationTrainerGUI:
         Record   -> user repeats it (shared recording path).
         Analyze  -> engine.analyze() runs in a daemon thread.
         Feedback -> score + problem words shown via root.after().
-        Loop     -> repeat the same phrase until the score passes the threshold,
-                    then the user generates the next phrase.
+        Loop     -> the user decides: record the same phrase again or generate
+                    the next one (result.passed is not enforced - see the
+                    Pass-threshold note in AGENTS.md).
     """
 
     def __init__(self):

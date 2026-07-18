@@ -703,8 +703,9 @@ WAV2VEC2_PHONEME_MODEL_NAME = "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
 # Device for Wav2Vec2. Defaults to the shared DEVICE; hardware detection may pin
 # it to "cpu" to avoid VRAM contention with llama_cpp / Kokoro on a single GPU.
 WAV2VEC2_DEVICE = _HW.get("WAV2VEC2_DEVICE") or DEVICE
-# Score (0-100) at or above which a repetition is accepted; below it the learner
-# is asked to repeat the same phrase.
+# Target score (0-100): feeds each engine's result.passed. NOT used by the app
+# yet - computed and logged only, reserved for a future pass/repeat gate (see
+# the Pass-threshold note in AGENTS.md).
 PRONUNCIATION_SCORE_THRESHOLD = float(
     _num("pronunciation_score_threshold", 70.0, minimum=0, maximum=100)
 )

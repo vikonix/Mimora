@@ -31,8 +31,9 @@ model audio ─┘        (DTW)              acoustic / phoneme / word
 2. **Prepare.** Both clips are resampled, peak-normalized and trimmed of silence
    so that only the spoken content is compared.
 3. **Compare** on three independent axes (below).
-4. **Combine** the three into a single 0-100 score, plus per-word feedback and
-   two prosody curves (pitch and energy) drawn for both clips.
+4. **Combine** the three into a single 0-100 score, plus per-word feedback.
+   (The pitch and energy prosody curves shown in the app are computed outside
+   the engine, by the host application, from the same raw audio.)
 
 ## How it "recognizes" the voice
 
