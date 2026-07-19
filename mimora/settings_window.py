@@ -268,6 +268,14 @@ def build_sections() -> tuple:
                   help="lm-studio requires LM Studio running separately. "
                        "off = no LLM: phrases are the practice text's own "
                        "sentences, taken as-is."),
+            Field("lm_studio_host", "LM Studio address", "text",
+                  lambda: config.user_setting("lm_studio_host",
+                                              config.LM_STUDIO_HOST),
+                  restart=True,
+                  runtime_value=lambda: config.LM_STUDIO_HOST,
+                  help="Server address as host or host:port (port defaults "
+                       "to 1234), e.g. 192.168.1.50:1234 when LM Studio "
+                       "runs on another machine in the local network."),
             Field("external_model_path", "GGUF model file", "path",
                   lambda: config.user_setting("external_model_path",
                                               config.EXTERNAL_MODEL_PATH),
@@ -943,7 +951,8 @@ class SettingsWindow:
         phrase-length choice and the sliding-window tuning are all inert. The
         GGUF model path and context size configure only the local-server
         subprocess, so they are additionally inert for "lm-studio" (LM Studio
-        loads its own model). The selected (combobox) value drives this, so
+        loads its own model); the LM Studio address is the mirror case, used
+        only by "lm-studio". The selected (combobox) value drives this, so
         the fields grey the moment the backend is switched, before the
         pending restart applies.
         """
@@ -955,6 +964,7 @@ class SettingsWindow:
             self._set_field_enabled(key, llm_used)
         for key in ("external_model_path", "external_n_ctx"):
             self._set_field_enabled(key, backend == "local_server")
+        self._set_field_enabled("lm_studio_host", backend == "lm-studio")
 
     def _set_field_enabled(self, key: str, enabled: bool):
         """Enable or grey one field's main control (and its Browse button).

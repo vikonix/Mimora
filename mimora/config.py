@@ -53,6 +53,7 @@ _KNOWN_USER_KEYS = {
     "phoneme_good_mode",
     "max_record_seconds",
     "llm_backend",
+    "lm_studio_host",
     "external_model_path",
     "external_n_ctx",
     "practice_text_file",
@@ -98,6 +99,7 @@ USER_SETTING_DEFAULTS = {
     "phoneme_good_mode": "global",
     "max_record_seconds": 20,
     "llm_backend": "local_server",
+    "lm_studio_host": "localhost:1234",
     "external_model_path": "models/llama-3.2-3b-instruct-q4_k_m.gguf",
     "external_n_ctx": None,
     "practice_text_file": "texts/practice_text.txt",
@@ -340,7 +342,18 @@ if LLM_BACKEND not in LLM_BACKEND_CHOICES:
 # =====================================================================
 # LM Studio backend (for "lm-studio" backend)
 # =====================================================================
-LM_STUDIO_URL = "http://localhost:1234/v1"
+# Server address, read from settings.json ("lm_studio_host") so LM Studio can
+# run on another machine in the local network. Accepts "host", "host:port" or
+# a full "http://host:port" URL; the port defaults to LM Studio's 1234
+# (loader.server_url normalizes every spelling to the same base URL).
+LM_STUDIO_DEFAULT_PORT = 1234
+LM_STUDIO_HOST = _USER.get("lm_studio_host", "localhost:1234")
+if not isinstance(LM_STUDIO_HOST, str) or not LM_STUDIO_HOST.strip():
+    print(f"[config] settings.json: lm_studio_host must be a non-empty "
+          f"string, got {LM_STUDIO_HOST!r}; using 'localhost:1234'",
+          file=sys.stderr)
+    LM_STUDIO_HOST = "localhost:1234"
+LM_STUDIO_URL = loader.server_url(LM_STUDIO_HOST, LM_STUDIO_DEFAULT_PORT)
 LM_STUDIO_API_KEY = "lm-studio"
 LM_STUDIO_MODEL = "local-model"
 

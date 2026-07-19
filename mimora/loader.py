@@ -184,6 +184,27 @@ def reset_settings(path: Path, keys, memory_dict: dict) -> bool:
     return True
 
 
+def server_url(address: str, default_port: int) -> str:
+    """Normalize a user-entered server *address* to a base URL ending in /v1.
+
+    Accepts "host", "host:port", or a full "http(s)://host[:port][/v1]" and
+    returns "scheme://host:port/v1" - the scheme defaults to http and the
+    port to *default_port*, so every accepted spelling of the same server
+    yields the same URL. Pure string handling: whether the host is reachable
+    is not checked here; a wrong address surfaces as a connection error at
+    runtime (the caller's check_connection path).
+    """
+    scheme = "http"
+    rest = address.strip().rstrip("/")
+    if "://" in rest:
+        scheme, _, rest = rest.partition("://")
+    if rest.endswith("/v1"):
+        rest = rest[: -len("/v1")].rstrip("/")
+    if ":" not in rest:
+        rest = f"{rest}:{default_port}"
+    return f"{scheme}://{rest}/v1"
+
+
 def ensure_dir(path: Path) -> None:
     """Create *path* if missing (parents assumed to exist), idempotently."""
     path.mkdir(exist_ok=True)

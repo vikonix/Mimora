@@ -22,7 +22,7 @@ python main.py
 Also requires the native **espeak-ng** binary on `PATH` (used by `phonemizer`) and a GGUF chat model at `config.EXTERNAL_MODEL_PATH`.
 
 **Default LLM backend**: `local_server` - `llm_server/server.py` is launched automatically as a subprocess.
-**Alternatives**: set `"llm_backend": "lm-studio"` in `config/settings.json` and run LM Studio on `http://localhost:1234`; or `"llm_backend": "off"` - no LLM is loaded or started at all, practice phrases are the source text's own sentences taken verbatim in order (`mimora/phrase_source.py`); the phrase-length choice is disabled in the settings window in this mode (sentences are never shortened into fragments).
+**Alternatives**: set `"llm_backend": "lm-studio"` in `config/settings.json` and run LM Studio on `http://localhost:1234` (or on another machine in the local network - set `"lm_studio_host"` to its address as `host` or `host:port`, port defaults to 1234; also editable in the settings window); or `"llm_backend": "off"` - no LLM is loaded or started at all, practice phrases are the source text's own sentences taken verbatim in order (`mimora/phrase_source.py`); the phrase-length choice is disabled in the settings window in this mode (sentences are never shortened into fragments).
 
 ## Architecture
 

@@ -47,6 +47,7 @@ EXPECTED_RESTART_KEYS = {
     "phoneme_good_mode",
     "color_theme",
     "llm_backend",
+    "lm_studio_host",
     "external_model_path",
     "external_n_ctx",
     "warm_up",

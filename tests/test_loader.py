@@ -130,6 +130,38 @@ class UserBoolTests(unittest.TestCase):
             self.assertTrue(loader.user_bool({"k": "yes"}, "k", True))
 
 
+class ServerUrlTests(unittest.TestCase):
+    """server_url - every accepted spelling normalizes to the same base URL."""
+
+    def test_bare_host_gets_default_port(self):
+        self.assertEqual(loader.server_url("localhost", 1234),
+                         "http://localhost:1234/v1")
+
+    def test_host_with_port_kept(self):
+        self.assertEqual(loader.server_url("100.96.0.54:5000", 1234),
+                         "http://100.96.0.54:5000/v1")
+
+    def test_full_url_passes_through(self):
+        self.assertEqual(loader.server_url("http://100.96.0.54:1234", 1234),
+                         "http://100.96.0.54:1234/v1")
+
+    def test_full_url_with_v1_not_doubled(self):
+        self.assertEqual(loader.server_url("http://host:1234/v1", 1234),
+                         "http://host:1234/v1")
+
+    def test_trailing_slash_stripped(self):
+        self.assertEqual(loader.server_url("http://host:1234/v1/", 1234),
+                         "http://host:1234/v1")
+
+    def test_https_scheme_preserved(self):
+        self.assertEqual(loader.server_url("https://host", 1234),
+                         "https://host:1234/v1")
+
+    def test_whitespace_stripped(self):
+        self.assertEqual(loader.server_url("  host:1234 ", 1234),
+                         "http://host:1234/v1")
+
+
 class SaveSettingTests(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
