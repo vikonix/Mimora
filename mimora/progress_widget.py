@@ -4,8 +4,11 @@
 """Circular session-progress widget for the Mimora hero card.
 
 A ring gauge that shows the running session average (e.g. 3.8 out of 5) with
-the distinct-phrase count underneath. It sits on the right of the hero score
-row, mirroring the talking face on the left.
+the distinct-phrase count underneath, plus a vertical column of attempt dots
+for the *current* phrase to the left of the ring: one dot per take, coloured
+by quality, growing bottom-up (a ladder toward the top), with the best take
+outlined. It sits on the right of the hero score row, mirroring the talking
+face on the left.
 
 The file is named generically on purpose: ``ProgressRing`` is the *current*
 shape of this indicator. If the design later moves to a bar or a different
@@ -25,8 +28,13 @@ Rendering split (why this is a Frame, not a bare Canvas like FaceWidget):
     file just to draw a couple of digits. The average/suffix are Canvas text
     items centred in the ring; the count is a Label under the canvas.
 
-The widget is passive: the hero card calls :meth:`set_progress` whenever the
-session tally changes; there is no animation loop.
+The attempt dots reuse the Pillow-supersample technique (a whole-column image
+per render); their colours approximate the view's quality bands from the score
+fraction alone, so the widget needs no engine knowledge.
+
+The widget is passive: the hero card calls :meth:`set_progress` /
+:meth:`set_attempts` whenever the session tally changes; there is no
+animation loop.
 """
 
 from __future__ import annotations
@@ -44,10 +52,12 @@ _SUPERSAMPLE = 4
 
 
 class ProgressRing(tk.Frame):
-    """A ring gauge: session average inside, phrase count beneath.
+    """A ring gauge: session average inside, phrase count beneath, and the
+    current phrase's attempt dots in a column on the left.
 
     Pack/grid it like any widget. Starts in the empty state ("0 phrases", no
-    fill) until the first :meth:`set_progress` call.
+    fill, no dots) until the first :meth:`set_progress` /
+    :meth:`set_attempts` call.
     """
 
     def __init__(
@@ -65,14 +75,16 @@ class ProgressRing(tk.Frame):
 
         Args:
             parent: parent Tk widget.
-            size: side of the square ring canvas, in pixels. The stroke and the
-                centred text scale from this.
+            size: side of the square ring canvas, in pixels. The stroke, the
+                centred text and the attempt-dot column scale from this.
             bg: background colour behind the ring; Pillow frames are drawn on it
                 so the antialiased arc edges blend into the panel exactly.
             track_color: colour of the full background ring.
             fill_color: colour of the progress arc. A single neutral brand
                 colour on purpose - the ring shows a cumulative session average,
-                not a pass/fail verdict, so it does not switch good/bad.
+                not a pass/fail verdict, so it does not switch good/bad. (The
+                attempt dots DO switch by quality: each dot is one take's
+                verdict-ish colour, that is their whole point.)
             value_color: colour of the big average number.
             sub_color: colour of the "/ max" suffix and the phrase count.
         """
@@ -81,11 +93,34 @@ class ProgressRing(tk.Frame):
         self._c_bg = self._rgb(bg)
         self._c_track = self._rgb(track_color)
         self._c_fill = self._rgb(fill_color)
+        # Attempt-dot palette: the theme's status colours plus the bright
+        # outline for the best take.
+        self._c_dot_good = self._rgb(THEME["good"])
+        self._c_dot_warn = self._rgb(THEME["warn"])
+        self._c_dot_bad = self._rgb(THEME["bad"])
+        self._c_dot_best = self._rgb(value_color)
+
+        # Dot-column geometry, all derived from ``size`` so the column matches
+        # the ring at other sizes. ``_dot_step`` is the vertical pitch; the
+        # column height equals the ring, so capacity = size // step (5-6 dots
+        # at the default 82 px) and older attempts scroll off the bottom.
+        self._dot_step = max(12, int(size * 0.17))
+        self._dots_width = max(14, int(self._dot_step * 1.3))
+
+        # Grid, so the count label centres under the *ring*, not under the
+        # ring + dot column (pack would centre on the whole row): dots at
+        # (0,0), ring canvas at (0,1), count label at (1,1).
+        self.dots_canvas = tk.Canvas(self, width=self._dots_width, height=size,
+                                     bg=bg, highlightthickness=0, bd=0)
+        self.dots_canvas.grid(row=0, column=0)
+        self._dots_item = self.dots_canvas.create_image(
+            self._dots_width / 2, size / 2)
+        self._dots_photo: ImageTk.PhotoImage | None = None  # keep-alive
 
         # Ring + centred numbers live on the canvas; the count sits below it.
         self.canvas = tk.Canvas(self, width=size, height=size, bg=bg,
                                 highlightthickness=0, bd=0)
-        self.canvas.pack()
+        self.canvas.grid(row=0, column=1)
         self._img_item = self.canvas.create_image(size / 2, size / 2)
         self._photo: ImageTk.PhotoImage | None = None  # keep-alive reference
 
@@ -101,13 +136,15 @@ class ProgressRing(tk.Frame):
         self.count_label = tk.Label(self, text="0 phrases",
                                     font=(FONT_FAMILY, FONT_SIZE_CAPTION),
                                     fg=sub_color, bg=bg)
-        self.count_label.pack(pady=(2, 0))
+        self.count_label.grid(row=1, column=1, pady=(2, 0))
 
         # State: no average yet. ``_maximum`` decides the number format
-        # (one decimal on the 0-5 grade axis, whole numbers on a 0-100 scale).
+        # (one decimal on the 0-5 grade axis, whole numbers on a 0-100 scale)
+        # and the score scale the attempt dots are coloured against.
         self._value: float | None = None
         self._maximum: float = 5.0
         self._count: int = 0
+        self._attempts: list[float] = []
 
         # Canvas size in px; updated on <Configure>. Named _cw/_ch (not _w/_h -
         # tkinter reserves _w for the widget's Tcl path name).
@@ -140,9 +177,30 @@ class ProgressRing(tk.Frame):
         self._maximum = maximum if maximum > 0 else 5.0
         self._count = max(0, count)
         self._render()
+        # The dots are coloured against ``maximum``, so a scale change (e.g.
+        # the first graded take of a run) must recolour them too.
+        self._render_dots()
+
+    def set_attempts(self, scores: list[float]) -> None:
+        """Replace the current phrase's attempt dots.
+
+        Args:
+            scores: one score per take of the current phrase, oldest first, on
+                the same scale as ``maximum`` (see :meth:`set_progress`). An
+                empty list clears the column - the hero card does this when a
+                new phrase arrives, so the dots never describe a stale phrase.
+
+        Only the last few attempts fit the column (its height equals the
+        ring); older dots drop off the bottom while the best-take outline
+        follows the best of the *shown* takes.
+        """
+        self._attempts = list(scores)
+        self._render_dots()
 
     def reset(self) -> None:
-        """Return to the empty state (no average, zero phrases)."""
+        """Return to the empty state (no average, zero phrases, no dots)."""
+        self._attempts = []
+        # set_progress re-renders both the ring and the (now empty) dots.
         self.set_progress(None, self._maximum, 0)
 
     # -- geometry / resize ------------------------------------------------
@@ -218,6 +276,64 @@ class ProgressRing(tk.Frame):
         img = img.resize((dim, dim), Image.Resampling.LANCZOS)
         return ImageTk.PhotoImage(img)
 
+    def _dot_color(self, score: float) -> tuple:
+        """Status colour for one attempt dot, from the score fraction.
+
+        Approximates the view's quality bands (see ui.py _quality_label) on
+        the fraction of ``maximum`` alone, so the widget stays engine-agnostic:
+        >= 0.70 good (e.g. 70/100 or 3.5/5), >= 0.55 warn ("needs work"),
+        below that bad. A dot is a small qualitative cue, not the verdict -
+        the exact per-take verdict lives in the attempt history.
+        """
+        fraction = score / self._maximum if self._maximum > 0 else 0.0
+        if fraction >= 0.70:
+            return self._c_dot_good
+        if fraction >= 0.55:
+            return self._c_dot_warn
+        return self._c_dot_bad
+
+    def _render_dots(self) -> None:
+        """Redraw the attempt-dot column (Pillow, supersampled like the ring).
+
+        Dots grow bottom-up: the first shown take sits at the bottom, the
+        latest on top. Only the last ``capacity`` attempts fit (the column is
+        as tall as the ring); the best of the shown takes gets a bright
+        outline ring. An empty attempt list yields a plain background image,
+        i.e. the column disappears without any relayout.
+        """
+        w, h = self._dots_width, self._size
+        s = _SUPERSAMPLE
+        img = Image.new("RGB", (w * s, h * s), self._c_bg)
+        d = ImageDraw.Draw(img)
+
+        capacity = max(1, h // self._dot_step)
+        shown = self._attempts[-capacity:]
+        if shown:
+            radius = self._dot_step * 0.32 * s
+            step = self._dot_step * s
+            cx = (w / 2) * s
+            # Bottom-centre of the lowest dot slot, then one step per dot up.
+            cy = h * s - step / 2
+            best = max(shown)
+            for i, score in enumerate(shown):
+                y = cy - i * step
+                d.ellipse((cx - radius, y - radius, cx + radius, y + radius),
+                          fill=self._dot_color(score))
+            # Outline the best take, scanned newest-first so a tied best
+            # marks the take the user most recently achieved it with.
+            for i in range(len(shown) - 1, -1, -1):
+                if shown[i] == best:
+                    y = cy - i * step
+                    ring_r = radius + 2.2 * s
+                    d.ellipse((cx - ring_r, y - ring_r,
+                               cx + ring_r, y + ring_r),
+                              outline=self._c_dot_best, width=max(1, int(1.4 * s)))
+                    break
+
+        img = img.resize((w, h), Image.Resampling.LANCZOS)
+        self._dots_photo = ImageTk.PhotoImage(img)
+        self.dots_canvas.itemconfigure(self._dots_item, image=self._dots_photo)
+
     def _round_cap(self, d: "ImageDraw.ImageDraw", cx: float, cy: float,
                    r: float, angle_deg: float, stroke: int) -> None:
         """Draw a filled disc at the arc point for ``angle_deg`` (round cap).
@@ -238,7 +354,9 @@ if __name__ == "__main__":
     # Manual eyeball test, no data needed. Run: python -m mimora.progress_widget
     # A new random average target is picked every second and the shown value
     # eases toward it each frame, so the ring fill and the number move smoothly
-    # rather than jumping. The phrase count ticks up once per second too.
+    # rather than jumping. The phrase count ticks up once per second, and each
+    # tick also adds a random attempt dot; the column restarts every few
+    # phrases like a real phrase change would.
     import random
 
     root = tk.Tk()
@@ -254,6 +372,7 @@ if __name__ == "__main__":
         "target": random.uniform(0.0, maximum),     # value we ease toward
         "count": 0,
         "since_pick_ms": 0,                         # time on the current target
+        "attempts": [],                             # current-phrase dot scores
     }
 
     def _drive() -> None:
@@ -268,6 +387,11 @@ if __name__ == "__main__":
             state["since_pick_ms"] = 0
             state["target"] = random.uniform(0.0, maximum)
             state["count"] += 1
+            # One new take per "second"; every fourth phrase starts over.
+            if state["count"] % 4 == 0:
+                state["attempts"] = []
+            state["attempts"].append(random.uniform(1.5, maximum))
+            ring.set_attempts(state["attempts"])
         root.after(step_ms, _drive)
 
     _drive()

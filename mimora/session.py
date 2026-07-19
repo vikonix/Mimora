@@ -21,12 +21,18 @@ class SessionState:
     """Session score tally plus the bounded attempt history for one app run.
 
     The tally feeds the hero card's progress ring: "Phrases: N" counts the
-    distinct phrases practiced this run (a set of phrase texts); the average is
-    the running mean over *every* scored attempt (repeats of one phrase each
-    add to it).
-    The two therefore count different things: unique phrases vs total
-    attempts. Empty/zero at construction == reset on app start (no explicit
-    reset action).
+    distinct phrases practiced this run; the average is the mean of each
+    phrase's *best* score. Best-per-phrase on purpose: the practice loop is
+    "repeat until it sounds right", so the achieved level per phrase is the
+    honest session metric - averaging every attempt would punish repeating a
+    hard phrase (each extra try dragged the mean down).
+
+    The tally also tracks the attempts of the *current* phrase (the one most
+    recently recorded), so the ring can render the per-phrase dot column
+    (one dot per take, best highlighted). Recording a different phrase
+    restarts that list; the per-phrase bests are kept for the whole run.
+    Empty/zero at construction == reset on app start (no explicit reset
+    action).
 
     The history holds the last ``history_limit`` entries - scored takes,
     unscored ("none" engine) takes and error messages - oldest first. It
@@ -35,17 +41,21 @@ class SessionState:
     """
 
     def __init__(self, history_limit: int = HISTORY_LIMIT):
-        self._phrases: set[str] = set()
-        self._score_sum: float = 0.0
-        self._attempts: int = 0
+        self._phrase_best: dict[str, float] = {}
+        self._current_phrase: Optional[str] = None
+        self._current_attempts: list[float] = []
         self._history: deque = deque(maxlen=history_limit)
 
     def record_take(self, phrase: str, score: float,
-                    graded: bool = False) -> Optional[tuple[int, float, float]]:
+                    graded: bool = False
+                    ) -> Optional[tuple[int, float, float, list[float]]]:
         """Fold one scored take into the session tally.
 
-        Returns ``(distinct_phrase_count, average, maximum)`` for the
-        progress ring, or None for a blank phrase (nothing to record).
+        Returns ``(distinct_phrase_count, average, maximum, attempts)`` for
+        the progress ring, or None for a blank phrase (nothing to record).
+        ``average`` is the mean of the per-phrase best scores (see the class
+        docstring); ``attempts`` is the score of every take of the current
+        phrase, oldest first (a fresh copy - safe for the caller to keep).
         ``graded`` says which scale ``score`` is on: True for the phoneme
         engine's 0-5 grade axis (maximum 5), False for a raw 0-100 score
         (maximum 100). Plain numbers on purpose: the ring formats them
@@ -54,11 +64,18 @@ class SessionState:
         phrase = (phrase or "").strip()
         if not phrase:
             return None
-        self._phrases.add(phrase)
-        self._score_sum += score
-        self._attempts += 1
-        average = self._score_sum / self._attempts
-        return len(self._phrases), average, (5.0 if graded else 100.0)
+        if phrase != self._current_phrase:
+            # A different phrase starts a fresh dot column. Returning to an
+            # earlier phrase also restarts the column (its best is kept).
+            self._current_phrase = phrase
+            self._current_attempts = []
+        self._current_attempts.append(score)
+        best = self._phrase_best.get(phrase)
+        if best is None or score > best:
+            self._phrase_best[phrase] = score
+        average = sum(self._phrase_best.values()) / len(self._phrase_best)
+        return (len(self._phrase_best), average, (5.0 if graded else 100.0),
+                list(self._current_attempts))
 
     def add_history_entry(self, record: dict) -> list:
         """Append *record* to the bounded history and return the full list.

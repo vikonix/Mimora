@@ -601,6 +601,12 @@ class TrainerView:
         # under the new phrase. (Recording start clears these too; a new phrase is
         # the other entry point where the old result becomes stale.)
         self.clear_previous_result()
+        # The ring's attempt dots describe takes of ONE phrase, so they are
+        # cleared here (new-phrase entry point) and not in
+        # clear_previous_result, which also runs on every recording start -
+        # mid-phrase the dots must survive. The session numbers on the ring
+        # accumulate across the whole run and stay untouched either way.
+        self._hero.clear_attempts()
         self._hero.set_phrase(phrase)
         self._hero.set_translation(translation)
         self.update_status("Listen to the reference...", THEME["reference"])
@@ -742,17 +748,20 @@ class TrainerView:
     def update_status(self, text: str, color: str = THEME["text_dim"]):
         self.status_label.configure(text=text, fg=color)
 
-    def update_session_stats(self, count: int, average: float, maximum: float):
+    def update_session_stats(self, count: int, average: float, maximum: float,
+                             attempts: list[float]):
         """Show the session tally in the hero card's progress ring.
 
         ``count`` is the number of distinct phrases practiced this run,
-        ``average`` the running mean over every scored attempt and ``maximum``
-        its scale (5 for graded takes, 100 for raw-percent ones) - plain
-        numbers straight from SessionState.record_take. The ring formats the
-        value itself from the scale (see ProgressRing.set_progress), so no
-        display string has to be parsed back here.
+        ``average`` the mean of the per-phrase best scores, ``maximum`` its
+        scale (5 for graded takes, 100 for raw-percent ones) and ``attempts``
+        the scores of the current phrase's takes (oldest first, for the dot
+        column beside the ring) - plain values straight from
+        SessionState.record_take. The ring formats the value itself from the
+        scale (see ProgressRing.set_progress), so no display string has to be
+        parsed back here.
         """
-        self._hero.set_progress(average, maximum, count)
+        self._hero.set_progress(average, maximum, count, attempts)
 
     def clear_previous_result(self):
         """Reset the per-take indicators before a new recording starts.

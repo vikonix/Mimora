@@ -12,28 +12,61 @@ from mimora.session import SessionState
 
 
 class TestRecordTake(unittest.TestCase):
-    """Session tally: distinct-phrase count, running average and its scale."""
+    """Session tally: distinct phrases, mean of per-phrase bests, attempts."""
 
     def test_blank_phrase_records_nothing(self):
         state = SessionState()
         self.assertIsNone(state.record_take("", 80.0))
         self.assertIsNone(state.record_take("   ", 80.0))
 
-    def test_distinct_phrases_vs_total_attempts(self):
-        # Two attempts at one phrase: count stays 1, average spans both.
+    def test_repeats_track_the_best_not_the_mean(self):
+        # Two attempts at one phrase: count stays 1, the average is the
+        # phrase's best score - a low retry must not drag it down.
         state = SessionState()
         state.record_take("hello there", 60.0)
-        count, average, maximum = state.record_take("hello there", 80.0)
+        count, average, maximum, attempts = state.record_take(
+            "hello there", 80.0)
         self.assertEqual(count, 1)
-        self.assertEqual(average, 70.0)
+        self.assertEqual(average, 80.0)
         self.assertEqual(maximum, 100.0)
-        # A different phrase bumps the distinct count.
-        count, _, _ = state.record_take("good morning", 90.0)
+        self.assertEqual(attempts, [60.0, 80.0])
+        # A worse retry keeps the best.
+        _, average, _, attempts = state.record_take("hello there", 50.0)
+        self.assertEqual(average, 80.0)
+        self.assertEqual(attempts, [60.0, 80.0, 50.0])
+
+    def test_average_is_mean_of_phrase_bests(self):
+        # Bests 80 and 90 average to 85 regardless of attempt counts.
+        state = SessionState()
+        state.record_take("hello there", 60.0)
+        state.record_take("hello there", 80.0)
+        count, average, _, attempts = state.record_take("good morning", 90.0)
         self.assertEqual(count, 2)
+        self.assertEqual(average, 85.0)
+        # The attempt list follows the current (new) phrase.
+        self.assertEqual(attempts, [90.0])
+
+    def test_returning_to_a_phrase_restarts_attempts_keeps_best(self):
+        state = SessionState()
+        state.record_take("hello there", 80.0)
+        state.record_take("good morning", 90.0)
+        # Back to the first phrase: the dot column restarts, the session
+        # average still remembers its 80 best (mean of 80 and 90 = 85).
+        _, average, _, attempts = state.record_take("hello there", 70.0)
+        self.assertEqual(attempts, [70.0])
+        self.assertEqual(average, 85.0)
+
+    def test_attempts_are_a_fresh_copy(self):
+        # Mutating the returned list must not corrupt the internal tally.
+        state = SessionState()
+        _, _, _, attempts = state.record_take("a phrase", 60.0)
+        attempts.append(99.0)
+        _, _, _, attempts = state.record_take("a phrase", 70.0)
+        self.assertEqual(attempts, [60.0, 70.0])
 
     def test_raw_take_uses_percent_scale(self):
         state = SessionState()
-        _, average, maximum = state.record_take("a phrase", 82.4)
+        _, average, maximum, _ = state.record_take("a phrase", 82.4)
         self.assertEqual(average, 82.4)
         self.assertEqual(maximum, 100.0)
 
@@ -41,8 +74,8 @@ class TestRecordTake(unittest.TestCase):
         # The 0-5 grade axis: the average stays unrounded, the scale says 5.
         state = SessionState()
         state.record_take("a phrase", 4.0, graded=True)
-        _, average, maximum = state.record_take("a phrase", 3.5, graded=True)
-        self.assertEqual(average, 3.75)
+        _, average, maximum, _ = state.record_take("a phrase", 3.5, graded=True)
+        self.assertEqual(average, 4.0)
         self.assertEqual(maximum, 5.0)
 
 

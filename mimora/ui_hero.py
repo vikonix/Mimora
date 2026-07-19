@@ -37,8 +37,9 @@ class HeroCard:
 
     Owns the phrase Text (word tags, miss underlines, hover), the translation
     label, the score column, the WORK ON badges, the interactive-feedback hint,
-    the FaceWidget (left of the score row) and the session-average ProgressRing
-    (right of it). Built and packed into ``root`` at construction.
+    the FaceWidget (left of the score row) and the ProgressRing (right of it:
+    session average of per-phrase bests plus the current phrase's attempt
+    dots). Built and packed into ``root`` at construction.
     """
 
     def __init__(self, root,
@@ -153,10 +154,12 @@ class HeroCard:
         self.score_verdict_label.pack()
 
         # Session-average ring on the right of the row (mirrors the face on the
-        # left). Packed here - before the expanding WORK ON column below - so the
+        # left), with the current phrase's attempt-dot column on its left flank.
+        # Packed here - before the expanding WORK ON column below - so the
         # right edge is claimed first; otherwise the expand=True middle column
         # would swallow all the leftover space and leave the ring no room. Driven
-        # by set_progress; starts in the empty state ("0 phrases", no fill).
+        # by set_progress / clear_attempts; starts in the empty state
+        # ("0 phrases", no fill, no dots).
         self.progress = ProgressRing(score_row, size=82, bg=THEME["bg_card"])
         self.progress.pack(side=tk.RIGHT, padx=(8, 0))
 
@@ -369,10 +372,21 @@ class HeroCard:
         self.score_num_label.configure(text=number, fg=color)
         self.score_verdict_label.configure(text=verdict, fg=color)
 
-    def set_progress(self, value: Optional[float], maximum: float, count: int):
+    def set_progress(self, value: Optional[float], maximum: float, count: int,
+                     attempts: Optional[list[float]] = None):
         """Update the session-average ring: ``value`` out of ``maximum`` and the
-        distinct-phrase ``count``. ``value=None`` shows the empty state."""
+        distinct-phrase ``count``. ``value=None`` shows the empty state.
+        ``attempts`` (scores of the current phrase's takes, oldest first)
+        refreshes the dot column beside the ring; None leaves the dots as
+        they are."""
         self.progress.set_progress(value, maximum, count)
+        if attempts is not None:
+            self.progress.set_attempts(attempts)
+
+    def clear_attempts(self):
+        """Empty the ring's attempt-dot column (a new phrase has arrived;
+        the session numbers on the ring itself are kept)."""
+        self.progress.set_attempts([])
 
     def set_badges(self, phonemes: list[str]):
         """Rebuild the WORK ON badges from the top problem phonemes.

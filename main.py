@@ -1372,9 +1372,10 @@ class PronunciationTrainerGUI:
         """Record a scored take into the session tally and refresh the ring.
 
         Called by the view once a take has a user-facing score. The tally
-        itself (distinct-phrase count, running average and its scale) lives
-        in SessionState (mimora/session.py); this handler only pushes the
-        returned numbers into the hero card's progress ring.
+        itself (distinct-phrase count, mean of per-phrase best scores, its
+        scale and the current phrase's attempt list) lives in SessionState
+        (mimora/session.py); this handler only pushes the returned values
+        into the hero card's progress ring and its attempt-dot column.
         """
         stats = self.session.record_take(phrase, score, graded)
         if stats is not None:
