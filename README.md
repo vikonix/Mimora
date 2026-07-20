@@ -111,7 +111,7 @@ your version (e.g. `brew install python-tk@3.12` for Homebrew Python 3.12).
 
 ### Models
 
-`install.py` pre-downloads all of these (see [Quick install](#quick-install-script)).
+`install.py` pre-downloads all of these (see [Quick install](#quick-install-script-recommended)).
 Otherwise the Hugging Face models are fetched automatically on first run,
 and only the GGUF chat model must be obtained manually.
 
