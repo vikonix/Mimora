@@ -538,7 +538,7 @@ class PronunciationTrainerGUI:
     def _greet_and_start(self, name: str, voice: str, stop_event: threading.Event):
         """Speak a greeting, then start the first phrase. (Background thread.)
 
-        The greeting uses the same Kokoro voice as the reference phrases. Any
+        The greeting uses the same TTS voice as the reference phrases. Any
         failure here is non-fatal - the first phrase is generated regardless,
         so a TTS hiccup cannot leave the app stuck without a phrase.
         """

@@ -57,8 +57,13 @@ _FONT_FAMILIES = {
 FONT_FAMILY = _FONT_FAMILIES.get(platform.system(), "DejaVu Sans")  # Linux/other
 
 # Monospace family for aligned/technical text (phoneme rows in the history
-# panel). Kept next to FONT_FAMILY so the one hard-coded face lives here too.
-FONT_FAMILY_MONO = "Consolas"
+# panel), chosen per platform like FONT_FAMILY above: each name is the OS's
+# standard monospace face, so alignment survives off Windows too.
+_FONT_FAMILIES_MONO = {
+    "Windows": "Consolas",
+    "Darwin": "Menlo",   # macOS
+}
+FONT_FAMILY_MONO = _FONT_FAMILIES_MONO.get(platform.system(), "DejaVu Sans Mono")  # Linux/other
 
 # Typographic scale (Tk points), ordered large -> small. This is the single
 # source of truth for every font size in the UI: widgets must pull from these
