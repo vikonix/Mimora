@@ -5,7 +5,7 @@
 Minimal OpenAI-compatible HTTP server for local GGUF models.
 
 Runs as a separate process to keep llama_cpp in its own CUDA context,
-preventing GPU contention with Kokoro TTS in the main application.
+preventing GPU contention with the TTS and analysis models in the main application.
 
 Usage:
     python server.py --model ../models/llama-3.2-3b-instruct-q4_k_m.gguf

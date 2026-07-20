@@ -82,7 +82,7 @@ def interpolate_f0(f0: np.ndarray) -> np.ndarray:
 # =====================================================================
 # Reference prosody cache
 # =====================================================================
-# A phrase is practised many times against the same Kokoro reference, but the
+# A phrase is practised many times against the same TTS reference, but the
 # reference waveform - and therefore its F0/energy - never changes between
 # attempts. Cache the most recent reference (one phrase is practised at a time)
 # so repeats skip the pyin pitch tracking on the reference. This mirrors the

@@ -44,7 +44,7 @@ RECORD_THREAD_JOIN_TIMEOUT_SEC = 1.5
 RECORDS_DIR = str(config.BASE_DIR / "records")
 
 # Fixed file names for the dumped recordings (overwritten each take).
-RECORD_MODEL_FILE = "model.wav"        # what the model said (Kokoro reference)
+RECORD_MODEL_FILE = "model.wav"        # what the model said (TTS reference)
 RECORD_RAW_FILE = "raw.wav"            # raw microphone capture
 RECORD_NORMALIZED_FILE = "normalized.wav"  # normalized capture
 RECORD_PHRASE_FILE = "phrase.txt"      # the text of the spoken phrase

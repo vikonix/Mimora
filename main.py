@@ -4,8 +4,9 @@
 """Mimora application entry point.
 
 Wires together the pronunciation-trainer components and runs the Tkinter GUI:
-the local LLM (LLMManager / LLMServerController), text-to-speech (TTSManager,
-Kokoro), audio capture (AudioRecorder) and pronunciation analysis via the engine
+the local LLM (LLMManager / LLMServerController), text-to-speech (TTSManager
+with the Kokoro / Supertonic backends), audio capture (AudioRecorder) and
+pronunciation analysis via the engine
 dispatcher (mimora/engine.py, which binds the backend chosen by config.ENGINE -
 "phoneme" by default), all driven from PronunciationTrainerGUI, which composes
 the TrainerView (mimora/ui.py) for the widgets.
@@ -100,7 +101,7 @@ class PronunciationTrainerGUI:
     LLM server lifecycle in mimora/llm_server_ctl.py.
 
     Flow per phrase (state machine):
-        Prompt   -> Kokoro speaks an LLM-generated reference phrase.
+        Prompt   -> the TTS voice speaks an LLM-generated reference phrase.
         Record   -> user repeats it (shared recording path).
         Analyze  -> engine.analyze() runs in a daemon thread.
         Feedback -> score + problem words shown via root.after().
@@ -767,7 +768,7 @@ class PronunciationTrainerGUI:
         the Reference speed setting (see on_setting_changed) so a speed change
         is immediately audible. Gated like the other playback actions: never
         into an open microphone, never during generation or analysis. Only
-        voices of the active accent can be previewed (the Kokoro pipeline
+        voices of the active accent can be previewed (the TTS pipeline
         speaks one accent per run); the settings window disables the Listen
         button otherwise, this check is the thread-safe backstop.
         """
