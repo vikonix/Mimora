@@ -6,9 +6,8 @@
 A ring gauge that shows the running session average (e.g. 3.8 out of 5) with
 the distinct-phrase count underneath, plus a vertical column of attempt dots
 for the *current* phrase to the left of the ring: one dot per take, coloured
-by quality, growing bottom-up (a ladder toward the top), with the best take
-outlined. It sits on the right of the hero score row, mirroring the talking
-face on the left.
+by quality, growing bottom-up (a ladder toward the top). It sits on the
+right of the hero score row, mirroring the talking face on the left.
 
 The file is named generically on purpose: ``ProgressRing`` is the *current*
 shape of this indicator. If the design later moves to a bar or a different
@@ -53,7 +52,7 @@ _SUPERSAMPLE = 4
 
 class ProgressRing(tk.Frame):
     """A ring gauge: session average inside, phrase count beneath, and the
-    current phrase's attempt dots in a column on the left.
+    current phrase's attempt dots in a column on its left.
 
     Pack/grid it like any widget. Starts in the empty state ("0 phrases", no
     fill, no dots) until the first :meth:`set_progress` /
@@ -93,12 +92,10 @@ class ProgressRing(tk.Frame):
         self._c_bg = self._rgb(bg)
         self._c_track = self._rgb(track_color)
         self._c_fill = self._rgb(fill_color)
-        # Attempt-dot palette: the theme's status colours plus the bright
-        # outline for the best take.
+        # Attempt-dot palette: the theme's status colours.
         self._c_dot_good = self._rgb(THEME["good"])
         self._c_dot_warn = self._rgb(THEME["warn"])
         self._c_dot_bad = self._rgb(THEME["bad"])
-        self._c_dot_best = self._rgb(value_color)
 
         # Dot-column geometry, all derived from ``size`` so the column matches
         # the ring at other sizes. ``_dot_step`` is the vertical pitch; the
@@ -106,13 +103,18 @@ class ProgressRing(tk.Frame):
         # at the default 82 px) and older attempts scroll off the bottom.
         self._dot_step = max(12, int(size * 0.17))
         self._dots_width = max(14, int(self._dot_step * 1.3))
+        # Gap between the dot column and the ring (~16 px at the default
+        # 82 px): keeps the dots reading as their own element rather than a
+        # detail of the ring - without it the best-take outline almost
+        # touches the arc.
+        self._dot_gap = max(10, int(size * 0.2))
 
         # Grid, so the count label centres under the *ring*, not under the
         # ring + dot column (pack would centre on the whole row): dots at
         # (0,0), ring canvas at (0,1), count label at (1,1).
         self.dots_canvas = tk.Canvas(self, width=self._dots_width, height=size,
                                      bg=bg, highlightthickness=0, bd=0)
-        self.dots_canvas.grid(row=0, column=0)
+        self.dots_canvas.grid(row=0, column=0, padx=(0, self._dot_gap))
         self._dots_item = self.dots_canvas.create_image(
             self._dots_width / 2, size / 2)
         self._dots_photo: ImageTk.PhotoImage | None = None  # keep-alive
@@ -191,8 +193,7 @@ class ProgressRing(tk.Frame):
                 new phrase arrives, so the dots never describe a stale phrase.
 
         Only the last few attempts fit the column (its height equals the
-        ring); older dots drop off the bottom while the best-take outline
-        follows the best of the *shown* takes.
+        ring); older dots drop off the bottom.
         """
         self._attempts = list(scores)
         self._render_dots()
@@ -297,9 +298,8 @@ class ProgressRing(tk.Frame):
 
         Dots grow bottom-up: the first shown take sits at the bottom, the
         latest on top. Only the last ``capacity`` attempts fit (the column is
-        as tall as the ring); the best of the shown takes gets a bright
-        outline ring. An empty attempt list yields a plain background image,
-        i.e. the column disappears without any relayout.
+        as tall as the ring). An empty attempt list yields a plain background
+        image, i.e. the column disappears without any relayout.
         """
         w, h = self._dots_width, self._size
         s = _SUPERSAMPLE
@@ -314,21 +314,10 @@ class ProgressRing(tk.Frame):
             cx = (w / 2) * s
             # Bottom-centre of the lowest dot slot, then one step per dot up.
             cy = h * s - step / 2
-            best = max(shown)
             for i, score in enumerate(shown):
                 y = cy - i * step
                 d.ellipse((cx - radius, y - radius, cx + radius, y + radius),
                           fill=self._dot_color(score))
-            # Outline the best take, scanned newest-first so a tied best
-            # marks the take the user most recently achieved it with.
-            for i in range(len(shown) - 1, -1, -1):
-                if shown[i] == best:
-                    y = cy - i * step
-                    ring_r = radius + 2.2 * s
-                    d.ellipse((cx - ring_r, y - ring_r,
-                               cx + ring_r, y + ring_r),
-                              outline=self._c_dot_best, width=max(1, int(1.4 * s)))
-                    break
 
         img = img.resize((w, h), Image.Resampling.LANCZOS)
         self._dots_photo = ImageTk.PhotoImage(img)
