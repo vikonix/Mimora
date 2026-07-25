@@ -215,7 +215,8 @@ class PronunciationTrainerGUI:
 
         # LLM backend (used only to generate practice phrases)
         self.llm_backend = config.LLM_BACKEND
-        self.llm_server = LLMServerController()  # no-op unless local_server backend
+        # No-op unless a backend that runs its own server subprocess is active.
+        self.llm_server = LLMServerController()
 
         if self.llm_backend == "off":
             # No LLM at all: nothing is loaded or started; practice phrases
@@ -228,13 +229,16 @@ class PronunciationTrainerGUI:
             logging.info("Using LM Studio LLM backend (LLMManager).")
             self.llm_mgr = LLMManager()
         else:
+            # Both remaining backends run a server of their own on the same
+            # host/port and speak the same API, so only the subprocess started
+            # by LLMServerController differs.
             # Defense in depth only: config already sanitizes an unknown
-            # "llm_backend" to "local_server", so this branch normally sees
-            # exactly that value; an unknown one falls back the same way.
-            if self.llm_backend != "local_server":
+            # "llm_backend" to "local_server", so this branch normally sees one
+            # of the known values; an unknown one falls back the same way.
+            if self.llm_backend not in config.LOCAL_SUBPROCESS_BACKENDS:
                 logging.warning(f"Unknown LLM_BACKEND '{self.llm_backend}', falling back to local_server.")
                 self.llm_backend = "local_server"
-            logging.info("Using local_server LLM backend (llm_server/server.py subprocess).")
+            logging.info(f"Using {self.llm_backend} LLM backend (server subprocess).")
             self.llm_mgr = LLMManager(model=config.LOCAL_SERVER_MODEL)
 
         # Compose the view: it builds and owns the widgets, and forwards widget
@@ -420,9 +424,10 @@ class PronunciationTrainerGUI:
                 # SourceTextPhraseProvider (see __init__).
                 self.root.after(0, self.view.append_system_msg,
                                 "LLM is off - phrases are taken from the practice text.")
-            elif self.llm_backend == "local_server":
+            elif self.llm_backend in config.LOCAL_SUBPROCESS_BACKENDS:
                 model_name = os.path.basename(config.EXTERNAL_MODEL_PATH)
-                self.root.after(0, self.view.append_system_msg, f"Starting LLM server with {model_name}...")
+                self.root.after(0, self.view.append_system_msg,
+                                f"Starting {self.llm_backend} with {model_name}...")
                 self.root.after(0, self.view.enter_server_starting)
                 if not self.llm_server.start(self.llm_mgr):
                     self.root.after(0, self.view.append_error_msg, "Error: LLM server failed to start. Check model path and GPU memory.")

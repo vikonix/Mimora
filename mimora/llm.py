@@ -301,6 +301,10 @@ class LLMManager:
                     model=self.model,
                     messages=messages,
                     temperature=config.PHRASE_GEN_TEMPERATURE,
+                    # Sent explicitly because the servers disagree on the
+                    # default (llm_server 0.9, llama-server and LM Studio
+                    # 0.95): sampling must not depend on which one answers.
+                    top_p=config.PHRASE_GEN_TOP_P,
                     max_tokens=max_tokens,
                     stream=False,
                     timeout=LLM_TIMEOUT,
