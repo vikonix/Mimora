@@ -50,6 +50,10 @@ model_cache/
 # Models
 *.gguf
 
+# Downloaded llama.cpp binaries (populated by mimora/llama_server_fetch.py;
+# ~1 GB of exe/DLL per install, re-fetchable from the pinned release)
+bin/
+
 # User settings (machine-local; copy config/settings.example.json to start)
 config/settings.json
 
