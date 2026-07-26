@@ -240,6 +240,27 @@ The default `torch` and `llama-cpp-python` wheels are CPU-only. For NVIDIA GPUs:
   $env:CMAKE_ARGS="-DGGML_CUDA=on"
   pip install llama-cpp-python --force-reinstall --upgrade --no-cache-dir
   ```
+  This package is **no longer used by the app** - it now runs the official
+  llama.cpp binary instead (see below). It is still installed because
+  `install.py` and `tools/detect_hardware.py` have not been reworked yet.
+
+### Get the llama-server binary
+
+The default LLM backend runs the official **llama.cpp** server as a subprocess.
+`install.py` does not fetch it yet, so install it once by hand:
+
+```bash
+python -m mimora.llama_server_fetch
+```
+
+This downloads a pinned llama.cpp release into `bin/llama/`, verifies the
+checksum of every asset, and then confirms that the binary really runs on the
+GPU backend it advertises - a CUDA build with missing runtime DLLs otherwise
+falls back to the CPU **silently** and just runs about three times slower.
+`--list` shows the available builds, `--variant` picks one explicitly, and
+`--dry-run` prints the plan without downloading. If you already manage your own
+`llama-server`, put it on `PATH` or name it in `settings.json`
+(`"llama_server_path"`) instead.
 
 ### Get a GGUF model
 
@@ -277,9 +298,9 @@ Press `ESC` or close the window to quit (the LLM server subprocess is terminated
 
 ## GPU / CPU notes
 
-Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by default, Kokoro, and the NLLB translator) plus `llama_cpp` can compete for VRAM on a single GPU. Mimora mitigates this two ways:
+Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by default, Kokoro, and the NLLB translator) plus llama.cpp can compete for VRAM on a single GPU. Mimora mitigates this two ways:
 
-- The LLM runs in a **separate process** (`llm_server/`), and the practice loop runs its phases (LLM → Kokoro → Wav2Vec2) **sequentially**, so they don't synthesize/infer at the same time. The NLLB translator defaults to CPU (`TRANSLATOR_DEVICE`).
+- The LLM runs in a **separate process** (llama-server), and the practice loop runs its phases (LLM → Kokoro → Wav2Vec2) **sequentially**, so they don't synthesize/infer at the same time. The NLLB translator defaults to CPU (`TRANSLATOR_DEVICE`).
 - If VRAM is still tight, set `WAV2VEC2_DEVICE = "cpu"` in `mimora/config.py` - short phrases analyze acceptably on CPU.
 
 ---

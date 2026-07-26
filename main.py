@@ -215,7 +215,7 @@ class PronunciationTrainerGUI:
 
         # LLM backend (used only to generate practice phrases)
         self.llm_backend = config.LLM_BACKEND
-        # No-op unless a backend that runs its own server subprocess is active.
+        # No-op unless the "llama-server" backend is active.
         self.llm_server = LLMServerController()
 
         if self.llm_backend == "off":
@@ -229,17 +229,13 @@ class PronunciationTrainerGUI:
             logging.info("Using LM Studio LLM backend (LLMManager).")
             self.llm_mgr = LLMManager()
         else:
-            # Both remaining backends run a server of their own on the same
-            # host/port and speak the same API, so only the subprocess started
-            # by LLMServerController differs.
-            # Defense in depth only: config already sanitizes an unknown
-            # "llm_backend" to "local_server", so this branch normally sees one
-            # of the known values; an unknown one falls back the same way.
-            if self.llm_backend not in config.LOCAL_SUBPROCESS_BACKENDS:
-                logging.warning(f"Unknown LLM_BACKEND '{self.llm_backend}', falling back to local_server.")
-                self.llm_backend = "local_server"
-            logging.info(f"Using {self.llm_backend} LLM backend (server subprocess).")
-            self.llm_mgr = LLMManager(model=config.LOCAL_SERVER_MODEL)
+            # "llama-server": the llama.cpp binary is started by
+            # LLMServerController and then talked to like any other
+            # OpenAI-compatible server. Config sanitizes an unknown
+            # "llm_backend" to this backend, so it is also the catch-all.
+            self.llm_backend = "llama-server"
+            logging.info("Using llama-server LLM backend (server subprocess).")
+            self.llm_mgr = LLMManager(model=config.LLM_SERVER_MODEL)
 
         # Compose the view: it builds and owns the widgets, and forwards widget
         # callbacks back to this controller through an explicit ViewCallbacks
@@ -424,10 +420,10 @@ class PronunciationTrainerGUI:
                 # SourceTextPhraseProvider (see __init__).
                 self.root.after(0, self.view.append_system_msg,
                                 "LLM is off - phrases are taken from the practice text.")
-            elif self.llm_backend in config.LOCAL_SUBPROCESS_BACKENDS:
+            elif self.llm_backend == "llama-server":
                 model_name = os.path.basename(config.EXTERNAL_MODEL_PATH)
                 self.root.after(0, self.view.append_system_msg,
-                                f"Starting {self.llm_backend} with {model_name}...")
+                                f"Starting llama-server with {model_name}...")
                 self.root.after(0, self.view.enter_server_starting)
                 if not self.llm_server.start(self.llm_mgr):
                     self.root.after(0, self.view.append_error_msg, "Error: LLM server failed to start. Check model path and GPU memory.")

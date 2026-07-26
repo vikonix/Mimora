@@ -3,32 +3,25 @@
 
 """Lifecycle control for the local LLM server subprocess.
 
-Used with the two backends that run a server of their own
-(config.LOCAL_SUBPROCESS_BACKENDS): "local_server" launches
-llm_server/server.py (llama-cpp-python), "llama-server" launches the official
-llama.cpp binary. Either way the controller waits until the server answers and
-terminates it on app shutdown; phrase generation itself goes through
-LLMManager (llm.py).
+Used with the "llama-server" backend, the only one that runs a server of its
+own: the controller launches the official llama.cpp binary, waits until it
+answers, and terminates it on app shutdown. Phrase generation itself goes
+through LLMManager (llm.py).
 
-The two backends differ in exactly one thing - the command line - so the
-mechanism below (lock, log file, readiness poll, terminate with a kill
-fallback) is shared and only _build_command() branches. Both servers speak the
-same OpenAI-compatible API on the same host/port and answer 503 while the
-model is still loading, so the readiness poll needs no backend knowledge.
+The server speaks the same OpenAI-compatible API as LM Studio and answers 503
+while the model is still loading, so the readiness poll is just
+LLMManager.check_connection against config.LLM_SERVER_URL.
 """
 
 import logging
 import os
 import subprocess
-import sys
 import threading
 import time
 from typing import Optional
 
 from mimora import config, llama_server_fetch
 from mimora.llm import LLMManager
-
-SERVER_SCRIPT = str(config.BASE_DIR / "llm_server" / "server.py")
 
 # How long to wait for a graceful exit before killing the subprocess.
 SERVER_TERMINATE_TIMEOUT_SEC = 5
@@ -45,20 +38,6 @@ SERVER_TERMINATE_TIMEOUT_SEC = 5
 # cache to fill free VRAM.
 LLAMA_SERVER_PARALLEL_SLOTS = 1
 LLAMA_SERVER_CACHE_REUSE = 256
-
-
-def local_server_command(model_path: str, host: str, port: int,
-                         n_gpu_layers: int, n_ctx: int) -> list:
-    """Command line for llm_server/server.py (the "local_server" backend)."""
-    return [
-        sys.executable,
-        SERVER_SCRIPT,
-        "--model", model_path,
-        "--host", host,
-        "--port", str(port),
-        "--n-gpu-layers", str(n_gpu_layers),
-        "--n-ctx", str(n_ctx),
-    ]
 
 
 def llama_server_command(exe_path: str, model_path: str, host: str, port: int,
@@ -82,7 +61,7 @@ def llama_server_command(exe_path: str, model_path: str, host: str, port: int,
 
 
 class LLMServerController:
-    """Starts and stops the LLM server subprocess of the selected backend."""
+    """Starts and stops the llama-server subprocess."""
 
     def __init__(self):
         self._process: Optional[subprocess.Popen] = None
@@ -98,7 +77,7 @@ class LLMServerController:
         self._shutdown_requested = False
 
     def _build_command(self) -> Optional[list]:
-        """Command line for the configured backend, or None on a bad setup.
+        """Command line for llama-server, or None on a bad setup.
 
         Every "cannot start" reason is logged here and reported to the caller
         as None, so start() has a single failure path and main.py keeps its
@@ -108,11 +87,6 @@ class LLMServerController:
         if not model_path:
             logging.error("EXTERNAL_MODEL_PATH is empty - cannot start the LLM server.")
             return None
-
-        args = (model_path, config.LOCAL_SERVER_HOST, config.LOCAL_SERVER_PORT,
-                config.EXTERNAL_N_GPU_LAYERS, config.EXTERNAL_N_CTX)
-        if config.LLM_BACKEND != "llama-server":
-            return local_server_command(*args)
 
         exe_path = config.LLAMA_SERVER_PATH
         if not exe_path:
@@ -127,7 +101,10 @@ class LLMServerController:
             logging.error("llama-server binary not found at %s (settings.json "
                           "'llama_server_path').", exe_path)
             return None
-        return llama_server_command(exe_path, *args)
+        return llama_server_command(
+            exe_path, model_path, config.LLM_SERVER_HOST,
+            config.LLM_SERVER_PORT, config.EXTERNAL_N_GPU_LAYERS,
+            config.EXTERNAL_N_CTX)
 
     def start(self, llm_mgr: LLMManager) -> bool:
         """Launch the server subprocess and block until it responds.
@@ -165,9 +142,9 @@ class LLMServerController:
                 self._log_file = None
                 raise
 
-        deadline = time.time() + config.LOCAL_SERVER_STARTUP_TIMEOUT
-        llm_mgr.init_client(base_url=config.LOCAL_SERVER_URL,
-                            api_key=config.LOCAL_SERVER_API_KEY)
+        deadline = time.time() + config.LLM_SERVER_STARTUP_TIMEOUT
+        llm_mgr.init_client(base_url=config.LLM_SERVER_URL,
+                            api_key=config.LLM_SERVER_API_KEY)
         while time.time() < deadline:
             # Snapshot the process reference: shutdown() (called from quit_app
             # on the Tk main thread while this loop runs on the loader thread)

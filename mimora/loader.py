@@ -46,6 +46,30 @@ def read_json(path: Path) -> dict:
     return data
 
 
+# settings.json values that named a backend which no longer exists, mapped to
+# their successor. "local_server" was the llama-cpp-python FastAPI wrapper
+# (llm_server/server.py); it was replaced by the official llama.cpp binary,
+# which loads the same GGUF on the same host/port - so an existing settings.json
+# keeps working and the user is only told that the name changed.
+LEGACY_LLM_BACKENDS = {"local_server": "llama-server"}
+
+
+def migrate_llm_backend(value):
+    """Successor of a retired llm_backend *value*, or *value* unchanged.
+
+    Pure and separate from config.py so the rule is unit-testable: config.py
+    runs its migration at import time, where nothing can observe it. Anything
+    that is not a retired name (including a non-string or an outright invalid
+    value) is returned as-is for the caller's normal validation to reject.
+    """
+    successor = LEGACY_LLM_BACKENDS.get(value) if isinstance(value, str) else None
+    if successor is None:
+        return value
+    print(f"[config] settings.json: llm_backend {value!r} has been replaced by "
+          f"{successor!r}; using {successor!r}", file=sys.stderr)
+    return successor
+
+
 def user_number(user_data: dict, key: str, default, minimum=None, maximum=None):
     """Numeric setting from *user_data*.
 

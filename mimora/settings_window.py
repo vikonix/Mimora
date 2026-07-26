@@ -265,13 +265,13 @@ def build_sections() -> tuple:
                                               config.LLM_BACKEND),
                   choices=lambda: config.LLM_BACKEND_CHOICES, restart=True,
                   runtime_value=lambda: config.LLM_BACKEND,
-                  help="local_server and llama-server both start a server for "
-                       "you and use the GGUF model below; llama-server is the "
-                       "official llama.cpp binary and needs "
-                       "'llama_server_path' in settings.json (empty = look in "
-                       "bin/llama and on PATH). lm-studio requires LM Studio "
-                       "running separately. off = no LLM: phrases are the "
-                       "practice text's own sentences, taken as-is."),
+                  help="llama-server starts the official llama.cpp binary for "
+                       "you and uses the GGUF model below; the binary is named "
+                       "by 'llama_server_path' in settings.json (empty = look "
+                       "in bin/llama and on PATH, install it with 'python -m "
+                       "mimora.llama_server_fetch'). lm-studio requires LM "
+                       "Studio running separately. off = no LLM: phrases are "
+                       "the practice text's own sentences, taken as-is."),
             Field("lm_studio_host", "LM Studio address", "text",
                   lambda: config.user_setting("lm_studio_host",
                                               config.LM_STUDIO_HOST),
@@ -953,10 +953,10 @@ class SettingsWindow:
         With backend "off" no prompt is ever built: phrases are whole
         source-text sentences taken verbatim (mimora/phrase_source.py), so the
         phrase-length choice and the sliding-window tuning are all inert. The
-        GGUF model path and context size configure only the backends that start
-        a server themselves (local_server, llama-server), so they are
-        additionally inert for "lm-studio" (LM Studio loads its own model); the
-        LM Studio address is the mirror case, used only by "lm-studio". The
+        GGUF model path and context size configure only "llama-server", the
+        backend that starts a server itself, so they are additionally inert for
+        "lm-studio" (LM Studio loads its own model); the LM Studio address is
+        the mirror case, used only by "lm-studio". The
         selected (combobox) value drives this, so
         the fields grey the moment the backend is switched, before the
         pending restart applies.
@@ -968,8 +968,7 @@ class SettingsWindow:
                     "phrase_gen_window_repeats"):
             self._set_field_enabled(key, llm_used)
         for key in ("external_model_path", "external_n_ctx"):
-            self._set_field_enabled(
-                key, backend in config.LOCAL_SUBPROCESS_BACKENDS)
+            self._set_field_enabled(key, backend == "llama-server")
         self._set_field_enabled("lm_studio_host", backend == "lm-studio")
 
     def _set_field_enabled(self, key: str, enabled: bool):

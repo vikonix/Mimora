@@ -1,5 +1,13 @@
 # LLM Server
 
+> **Retired.** This server backed the `local_server` LLM backend, which no
+> longer exists: Mimora now runs the official llama.cpp binary instead (see the
+> `llama-server` backend in the root README). No application code references
+> anything in this directory. It survives only because `install.py` and
+> `tools/detect_hardware.py` still depend on `llama-cpp-python`; both are
+> reworked in step 2 of `prototypes-pronunciation/tasks/llama-cpp.md`, and this
+> directory is deleted with them. The text below is kept for that transition.
+
 A standalone HTTP server for running local GGUF models. Runs as a separate process so that llama_cpp and Kokoro TTS operate in independent CUDA contexts - no GPU contention.
 
 Fully compatible with the OpenAI Chat Completions API, so the main application communicates with it through the standard `openai` client.

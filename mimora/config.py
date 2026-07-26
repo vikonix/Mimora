@@ -100,7 +100,7 @@ USER_SETTING_DEFAULTS = {
     "pronunciation_score_threshold": 70.0,
     "phoneme_good_mode": "global",
     "max_record_seconds": 20,
-    "llm_backend": "local_server",
+    "llm_backend": "llama-server",
     "lm_studio_host": "localhost:1234",
     # Empty means "find the binary yourself" - see LLAMA_SERVER_PATH below.
     "llama_server_path": "",
@@ -328,28 +328,26 @@ DEVICE = loader.detect_device(_HW.get("DEVICE"))
 # LLM Backend Settings
 # =====================================================================
 # Backend selection, read from settings.json ("llm_backend"):
+#   "llama-server" - the official llama.cpp binary started automatically as a
+#                    subprocess (see LLAMA_SERVER_PATH below)
 #   "lm-studio"    - external LM Studio app (must be running separately)
-#   "local_server" - llm_server.py started automatically as a subprocess
-#   "llama-server" - the official llama.cpp binary started as a subprocess
-#                    (same GGUF, same host/port; see LLAMA_SERVER_PATH below)
 #   "off"          - no LLM at all: nothing is loaded or started; practice
 #                    phrases are taken verbatim from the source text, one
 #                    sentence at a time (mimora/phrase_source.py). The
 #                    phrase-length selector is disabled in this mode (a
 #                    sentence is never shortened into a fragment).
-LLM_BACKEND_CHOICES = ("local_server", "llama-server", "lm-studio", "off")
-LLM_BACKEND = _USER.get("llm_backend", "local_server")
+LLM_BACKEND_CHOICES = ("llama-server", "lm-studio", "off")
+# Retired names are rewritten in the in-memory view too, not just in the
+# constant: user_setting() reads _USER directly, and the settings window would
+# otherwise be handed a combobox value that is no longer among its choices.
+if "llm_backend" in _USER:
+    _USER["llm_backend"] = loader.migrate_llm_backend(_USER["llm_backend"])
+LLM_BACKEND = _USER.get("llm_backend", "llama-server")
 if LLM_BACKEND not in LLM_BACKEND_CHOICES:
     print(f"[config] settings.json: unknown llm_backend {LLM_BACKEND!r} "
           f"(expected one of {', '.join(LLM_BACKEND_CHOICES)}); "
-          f"using 'local_server'", file=sys.stderr)
-    LLM_BACKEND = "local_server"
-
-# Backends that run a local server subprocess of their own (mimora/
-# llm_server_ctl.py) and therefore share LOCAL_SERVER_* plus the GGUF settings
-# below. Named here so main.py and the settings window branch on one list
-# instead of repeating the pair.
-LOCAL_SUBPROCESS_BACKENDS = ("local_server", "llama-server")
+          f"using 'llama-server'", file=sys.stderr)
+    LLM_BACKEND = "llama-server"
 
 # =====================================================================
 # LM Studio backend (for "lm-studio" backend)
@@ -370,27 +368,26 @@ LM_STUDIO_API_KEY = "lm-studio"
 LM_STUDIO_MODEL = "local-model"
 
 # =====================================================================
-# Local LLM Server (shared by LOCAL_SUBPROCESS_BACKENDS)
+# Local LLM Server (the "llama-server" backend)
 # =====================================================================
-# Address and credentials of the server Mimora starts itself. Identical for
-# "local_server" and "llama-server": both are OpenAI-compatible, ignore the
-# model name, and take no API key - so the client path is the same and only
-# the launched process differs.
-LOCAL_SERVER_HOST = "127.0.0.1"
-LOCAL_SERVER_PORT = 8765
-LOCAL_SERVER_URL = f"http://{LOCAL_SERVER_HOST}:{LOCAL_SERVER_PORT}/v1"
-LOCAL_SERVER_API_KEY = "local"
-LOCAL_SERVER_MODEL = "local-model"
+# Address and credentials of the server Mimora starts itself. It is
+# OpenAI-compatible, ignores the model name and takes no API key, so the client
+# path is the same one the "lm-studio" backend uses - only the address differs.
+LLM_SERVER_HOST = "127.0.0.1"
+LLM_SERVER_PORT = 8765
+LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}/v1"
+LLM_SERVER_API_KEY = "local"
+LLM_SERVER_MODEL = "local-model"
 
 # How long (seconds) to wait for the server to become ready after launching
-LOCAL_SERVER_STARTUP_TIMEOUT = 60
+LLM_SERVER_STARTUP_TIMEOUT = 60
 
 # =====================================================================
 # llama-server binary (for the "llama-server" backend)
 # =====================================================================
-# The official llama.cpp server is launched as a subprocess exactly like
-# local_server and reuses every LOCAL_SERVER_* constant above plus the GGUF
-# settings below; only the command line differs (mimora/llm_server_ctl.py).
+# The official llama.cpp server is launched as a subprocess and uses the
+# LLM_SERVER_* constants above plus the GGUF settings below
+# (mimora/llm_server_ctl.py builds its command line).
 #
 # settings.json ("llama_server_path") names the binary. An empty value - the
 # default - resolves in this order:
@@ -421,10 +418,10 @@ def _resolve_llama_server(setting) -> str:
 LLAMA_SERVER_PATH = _resolve_llama_server(_USER.get("llama_server_path", ""))
 
 # =====================================================================
-# GGUF Model Settings (used by the local-subprocess backends)
+# GGUF Model Settings (used by the "llama-server" backend)
 # =====================================================================
-# Shared by "local_server" and "llama-server": both load this file with these
-# parameters, so switching backends changes the server, never the model.
+# The model llama-server loads and the parameters it loads it with. Unused by
+# "lm-studio" (LM Studio manages its own model) and by "off".
 # GGUF file, read from settings.json ("external_model_path"); a relative path
 # resolves against the project root.
 EXTERNAL_MODEL_PATH = _path(
@@ -801,10 +798,11 @@ PRACTICE_TEXT_FALLBACK = _LANG_PROFILE["practice_text_fallback"]
 # token budgets are language-independent tuning; the prompts and asks are
 # language text, so they come from the active profile (see LANGUAGE_PROFILES).
 PHRASE_GEN_TEMPERATURE = 0.7
-# Nucleus sampling, sent explicitly so every backend samples identically.
-# llm_server/server.py applies 0.9 as its own request default while
-# llama-server and LM Studio default to 0.95; without this the same prompt
-# would be sampled differently depending on which server answers.
+# Nucleus sampling, sent explicitly so every backend samples identically:
+# llama-server and LM Studio default to 0.95, and the retired local_server
+# backend applied 0.9, so leaving it unset made the same prompt sample
+# differently depending on which server answered. The value is 0.9 to keep the
+# phrases comparable with everything generated before the migration.
 PHRASE_GEN_TOP_P = 0.9
 PHRASE_GEN_MAX_TOKENS = 40
 _PHRASE_GEN = _LANG_PROFILE["phrase_gen"]
