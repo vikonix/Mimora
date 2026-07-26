@@ -15,9 +15,11 @@ LLMManager.check_connection against config.LLM_SERVER_URL.
 
 import logging
 import os
+import re
 import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 from mimora import config, llama_server_fetch
@@ -41,11 +43,17 @@ LLAMA_SERVER_CACHE_REUSE = 256
 
 
 def llama_server_command(exe_path: str, model_path: str, host: str, port: int,
-                         n_gpu_layers: int, n_ctx: int) -> list:
+                         n_gpu_layers: int, n_ctx: int, api_key: str) -> list:
     """Command line for the llama.cpp binary (the "llama-server" backend).
 
-    --no-webui drops the bundled browser UI: the app talks HTTP only, and not
-    serving the assets keeps the surface small.
+    --no-ui drops the bundled browser UI: the app talks HTTP only, and not
+    serving the assets keeps the surface small. (--no-webui is the same switch
+    under its former name; the binary now reports that spelling as deprecated.)
+
+    --api-key answers the warning llama-server prints when it starts without
+    one. The server allows every CORS origin, so without a key any page open in
+    a browser could call this port and read the answer. The value is the one
+    LLMManager already sends, so requiring it costs nothing.
     """
     return [
         exe_path,
@@ -56,8 +64,46 @@ def llama_server_command(exe_path: str, model_path: str, host: str, port: int,
         "--ctx-size", str(n_ctx),
         "--parallel", str(LLAMA_SERVER_PARALLEL_SLOTS),
         "--cache-reuse", str(LLAMA_SERVER_CACHE_REUSE),
-        "--no-webui",
+        "--api-key", api_key,
+        "--no-ui",
     ]
+
+
+def log_compute_devices(exe_path: str) -> None:
+    """Record which devices llama-server sees; warn on a silent CPU fallback.
+
+    llama.cpp drops to the CPU *without an error* when a CUDA build cannot load
+    its runtime DLLs: it still logs "offloaded N/N layers to GPU", still
+    answers every request, and is merely about three times slower. At the
+    default verbosity the server's own log shows neither the buffer names nor
+    the chosen devices, so nothing in a normal run would reveal this - only a
+    speed comparison would, and only if someone thought to make one.
+
+    Purely diagnostic: the probe loads no model, and any failure here is
+    reported and shrugged off rather than blocking a server that would have
+    started fine.
+    """
+    exe = Path(exe_path)
+    try:
+        devices = llama_server_fetch.list_devices(exe).strip()
+    except llama_server_fetch.LlamaServerFetchError as exc:
+        logging.warning("Could not list llama-server compute devices: %s", exc)
+        return
+    logging.info("llama-server compute devices:\n%s", devices)
+
+    variant_name = llama_server_fetch.installed_variant(exe)
+    if variant_name is None:
+        # A binary the user manages themselves: we have no idea which backend
+        # it was built with, so the listing above is the whole report.
+        return
+    pattern = llama_server_fetch.VARIANTS[variant_name].device_pattern
+    if pattern is None or re.search(pattern, devices):
+        return
+    logging.warning(
+        "llama-server is installed as %s but reports no matching compute "
+        "device - it will run on the CPU, roughly three times slower, without "
+        "reporting an error. Re-run `python -m mimora.llama_server_fetch "
+        "--force` to repair the installation.", variant_name)
 
 
 class LLMServerController:
@@ -104,7 +150,7 @@ class LLMServerController:
         return llama_server_command(
             exe_path, model_path, config.LLM_SERVER_HOST,
             config.LLM_SERVER_PORT, config.EXTERNAL_N_GPU_LAYERS,
-            config.EXTERNAL_N_CTX)
+            config.EXTERNAL_N_CTX, config.LLM_SERVER_API_KEY)
 
     def start(self, llm_mgr: LLMManager) -> bool:
         """Launch the server subprocess and block until it responds.
@@ -118,6 +164,10 @@ class LLMServerController:
         cmd = self._build_command()
         if cmd is None:
             return False
+
+        # Before the model load makes the wait long: the probe is sub-second
+        # and its answer is the only record of which backend came up.
+        log_compute_devices(cmd[0])
 
         log_path = config.LLM_SERVER_LOG_FILE
         logging.info(f"Starting LLM server: {' '.join(cmd)}")

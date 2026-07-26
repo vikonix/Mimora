@@ -412,8 +412,8 @@ class PronunciationTrainerGUI:
             if config.TRANSLATION_LANGUAGE:
                 self.root.after(0, self.view.append_system_msg,
                                 "Loading translator (NLLB, ~2.4 GB)...")
+                # load_model() logs the success itself - do not repeat it here.
                 self.translator_mgr.load_model()
-                logging.info("Translator model loaded.")
 
             if self.llm_backend == "off":
                 # Nothing to start or connect to; generation is served by

@@ -12,9 +12,9 @@ tests can check without ever spawning a process. Run from the project root with:
 
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
-from mimora import config
+from mimora import config, llama_server_fetch, llm_server_ctl
 from mimora.llm_server_ctl import LLMServerController, llama_server_command
 
 MODEL = "/models/llama-3.2-3b-instruct-q4_k_m.gguf"
@@ -22,6 +22,7 @@ HOST = "127.0.0.1"
 PORT = 8765
 NGL = 20
 NCTX = 2048
+API_KEY = "local"
 
 
 def flag_value(cmd, flag):
@@ -32,7 +33,7 @@ def flag_value(cmd, flag):
 class LlamaServerCommandTests(unittest.TestCase):
     def setUp(self):
         self.cmd = llama_server_command(
-            "/opt/llama/llama-server", MODEL, HOST, PORT, NGL, NCTX)
+            "/opt/llama/llama-server", MODEL, HOST, PORT, NGL, NCTX, API_KEY)
 
     def test_runs_the_binary_directly(self):
         self.assertEqual(self.cmd[0], "/opt/llama/llama-server")
@@ -59,7 +60,15 @@ class LlamaServerCommandTests(unittest.TestCase):
         self.assertEqual(flag_value(self.cmd, "--cache-reuse"), "256")
 
     def test_web_ui_is_disabled(self):
-        self.assertIn("--no-webui", self.cmd)
+        # --no-webui is the same switch under its former name; the pinned build
+        # accepts it but reports it as deprecated.
+        self.assertIn("--no-ui", self.cmd)
+        self.assertNotIn("--no-webui", self.cmd)
+
+    def test_api_key_is_required_by_the_server(self):
+        # Without it llama-server accepts unauthenticated requests from any
+        # CORS origin - i.e. from any page open in a browser on this machine.
+        self.assertEqual(flag_value(self.cmd, "--api-key"), API_KEY)
 
     def test_every_argument_is_a_string(self):
         for arg in self.cmd:
@@ -76,6 +85,7 @@ class BuildCommandTests(unittest.TestCase):
             "LLM_SERVER_PORT": PORT,
             "EXTERNAL_N_GPU_LAYERS": NGL,
             "EXTERNAL_N_CTX": NCTX,
+            "LLM_SERVER_API_KEY": API_KEY,
             # __file__ stands in for the binary: _build_command only checks
             # that the path exists, and this file certainly does.
             "LLAMA_SERVER_PATH": __file__,
@@ -91,7 +101,8 @@ class BuildCommandTests(unittest.TestCase):
         self.assertEqual(flag_value(cmd, "-m"), MODEL)
         self.assertEqual(flag_value(cmd, "--port"), str(PORT))
         self.assertEqual(flag_value(cmd, "--ctx-size"), str(NCTX))
-        self.assertIn("--no-webui", cmd)
+        self.assertEqual(flag_value(cmd, "--api-key"), API_KEY)
+        self.assertIn("--no-ui", cmd)
 
     def _assert_refused(self, **overrides):
         """The build returns None AND says why.
@@ -116,6 +127,55 @@ class BuildCommandTests(unittest.TestCase):
     def test_binary_that_does_not_exist_is_refused(self):
         message = self._assert_refused(LLAMA_SERVER_PATH="/no/such/llama-server")
         self.assertIn("/no/such/llama-server", message)
+
+
+class LogComputeDevicesTests(unittest.TestCase):
+    """The startup device probe - diagnostic only, must never raise."""
+
+    CUDA_LISTING = "Available devices:\n  CUDA0: NVIDIA GeForce RTX 3090 (24576 MiB)"
+    CPU_LISTING = "Available devices:\n  (none)"
+
+    def _run(self, listing=CUDA_LISTING, variant="win-cuda-12.4-x64",
+             error=None):
+        """Run the probe with the fetch module's two lookups stubbed out.
+
+        Both stubs stand in for a subprocess and a file on disk, neither of
+        which a unit test should need.
+        """
+        list_devices = (Mock(side_effect=error) if error
+                        else Mock(return_value=listing))
+        with patch.multiple(llama_server_fetch,
+                            list_devices=list_devices,
+                            installed_variant=Mock(return_value=variant)):
+            with self.assertLogs(level="INFO") as captured:
+                llm_server_ctl.log_compute_devices("/opt/llama/llama-server")
+        return captured.output
+
+    def test_device_listing_is_recorded(self):
+        self.assertIn("CUDA0", "\n".join(self._run()))
+
+    def test_missing_gpu_device_is_a_warning(self):
+        # The silent CPU fallback: the promised backend is simply not there.
+        output = "\n".join(self._run(listing=self.CPU_LISTING))
+        self.assertIn("WARNING", output)
+        self.assertIn("llama_server_fetch", output)
+
+    def test_cpu_variant_is_not_warned_about(self):
+        # Nothing was promised, so nothing is missing.
+        output = self._run(listing=self.CPU_LISTING, variant="win-cpu-x64")
+        self.assertNotIn("WARNING", "\n".join(output))
+
+    def test_foreign_binary_is_only_reported(self):
+        # No stamp means no documented expectation to compare the listing to.
+        output = self._run(listing=self.CPU_LISTING, variant=None)
+        self.assertNotIn("WARNING", "\n".join(output))
+
+    def test_probe_failure_does_not_propagate(self):
+        # A server that would have started must not be blocked by diagnostics.
+        error = llama_server_fetch.LlamaServerFetchError("binary would not run")
+        output = "\n".join(self._run(error=error))
+        self.assertIn("WARNING", output)
+        self.assertIn("binary would not run", output)
 
 
 class BackendListTests(unittest.TestCase):

@@ -458,6 +458,36 @@ def verify_build(exe: Path, tag: str) -> int:
     return build
 
 
+def list_devices(exe: Path) -> str:
+    """Raw `--list-devices` output of *exe*.
+
+    Split out of verify_devices because the running app wants the same answer
+    without the pass/fail verdict: llama-server's own log shows neither the
+    buffer names nor the selected devices at its default verbosity, so this is
+    the only cheap evidence of which backend actually came up. Loads no model.
+    """
+    return _probe(exe, ["--list-devices"])
+
+
+def installed_variant(exe: Path, dest: Path = INSTALL_DIR) -> Optional[str]:
+    """Variant *exe* was installed as, or None when it is not our install.
+
+    Lets a caller tell "the CUDA build we put there" from "some llama-server
+    the user manages themselves": only for the former is there a documented
+    expectation about which devices must show up.
+    """
+    stamp = read_stamp(dest)
+    if stamp is None:
+        return None
+    try:
+        if Path(exe).resolve() != (dest / EXE_NAME).resolve():
+            return None
+    except OSError:
+        return None
+    variant = stamp.get("variant")
+    return variant if variant in VARIANTS else None
+
+
 def verify_devices(exe: Path, variant_name: str) -> None:
     """Check that the GPU backend the variant promises actually came up.
 
@@ -468,7 +498,7 @@ def verify_devices(exe: Path, variant_name: str) -> None:
     it loads no model and takes well under a second.
     """
     variant = VARIANTS[variant_name]
-    output = _probe(exe, ["--list-devices"])
+    output = list_devices(exe)
     if variant.device_pattern is None:
         log.info("Device check: CPU build, nothing to verify.")
         return
