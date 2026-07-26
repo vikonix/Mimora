@@ -372,20 +372,25 @@ if not isinstance(LM_STUDIO_HOST, str) or not LM_STUDIO_HOST.strip():
           file=sys.stderr)
     LM_STUDIO_HOST = "localhost:1234"
 LM_STUDIO_URL = loader.server_url(LM_STUDIO_HOST, LM_STUDIO_DEFAULT_PORT)
+# LM Studio checks no key, but the OpenAI client refuses to send an empty one.
 LM_STUDIO_API_KEY = "lm-studio"
-LM_STUDIO_MODEL = "local-model"
+# The model name is not here: LM Studio serves whatever is loaded and ignores
+# the field, so it configures nothing - see llm.PLACEHOLDER_MODEL.
 
 # =====================================================================
 # Local LLM Server (the "llama-server" backend)
 # =====================================================================
 # Address and credentials of the server Mimora starts itself. It is
-# OpenAI-compatible, ignores the model name and takes no API key, so the client
-# path is the same one the "lm-studio" backend uses - only the address differs.
+# OpenAI-compatible and ignores the model name, so the client path is the same
+# one the "lm-studio" backend uses - only the address and the key differ.
 LLM_SERVER_HOST = "127.0.0.1"
 LLM_SERVER_PORT = 8765
 LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}/v1"
+# Shared secret between the two halves of this backend, NOT a placeholder:
+# llm_server_ctl passes it to the binary as --api-key and llm.py sends it back
+# as the bearer token. Without a key llama-server accepts every CORS origin, so
+# any page open in a browser could call 127.0.0.1:8765 and read the answer.
 LLM_SERVER_API_KEY = "local"
-LLM_SERVER_MODEL = "local-model"
 
 # How long (seconds) to wait for the server to become ready after launching
 LLM_SERVER_STARTUP_TIMEOUT = 60

@@ -235,7 +235,7 @@ class PronunciationTrainerGUI:
             # "llm_backend" to this backend, so it is also the catch-all.
             self.llm_backend = "llama-server"
             logging.info("Using llama-server LLM backend (server subprocess).")
-            self.llm_mgr = LLMManager(model=config.LLM_SERVER_MODEL)
+            self.llm_mgr = LLMManager()
 
         # Compose the view: it builds and owns the widgets, and forwards widget
         # callbacks back to this controller through an explicit ViewCallbacks
