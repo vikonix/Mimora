@@ -112,8 +112,10 @@ your version (e.g. `brew install python-tk@3.12` for Homebrew Python 3.12).
 ### Models
 
 `install.py` pre-downloads all of these (see [Quick install](#quick-install-script-recommended)).
-Otherwise the Hugging Face models are fetched automatically on first run,
-and only the GGUF chat model must be obtained manually.
+Otherwise the Hugging Face models are fetched automatically on first run, while
+the GGUF chat model and the llama-server binary must be obtained by hand
+(`python -m mimora.gguf_fetch` and `python -m mimora.llama_server_fetch`) -
+the app does not download those two on its own yet.
 
 | Model | Used by | Notes |
 |---|---|---|
@@ -140,9 +142,10 @@ or CUDA toolkit for the standard setup.
 ### Quick install (script, recommended)
 
 `install.py` automates the whole setup: it installs the Python dependencies,
-auto-detects an NVIDIA GPU and installs the matching CUDA builds of `torch` and
-`llama-cpp-python`, checks for `espeak-ng`, pre-downloads the Hugging Face models
-into `model_cache/`, and downloads the GGUF chat model into `models/`.
+auto-detects an NVIDIA GPU and installs the matching CUDA build of `torch`,
+checks for `espeak-ng`, pre-downloads the Hugging Face models into
+`model_cache/`, installs the pinned llama-server binary into `bin/llama/` and
+downloads the GGUF chat model into `models/`.
 
 ```bash
 git clone https://github.com/vikonix/Mimora.git Mimora
@@ -187,8 +190,8 @@ cd Mimora
 
 # 2. All dependencies in one step
 #    The root requirements.txt already pulls in the subproject files via -r:
-#    llm_server/, pronunciation/acoustic/ and pronunciation/phoneme/ (panphon for
-#    the default phoneme engine). No separate per-engine install is needed.
+#    pronunciation/acoustic/ and pronunciation/phoneme/ (panphon for the
+#    default phoneme engine). No separate per-engine install is needed.
 pip install -r requirements.txt
 ```
 
@@ -226,7 +229,7 @@ Then restart Mimora.
 
 ### GPU support (recommended)
 
-The default `torch` and `llama-cpp-python` wheels are CPU-only. For NVIDIA GPUs:
+The default `torch` wheel is CPU-only. For NVIDIA GPUs:
 
 - **PyTorch** - install a CUDA build (other CUDA versions: see [pytorch.org](https://pytorch.org/get-started/locally/)):
   ```powershell
@@ -235,19 +238,14 @@ The default `torch` and `llama-cpp-python` wheels are CPU-only. For NVIDIA GPUs:
   Reinstall `torch` and `torchaudio` **together**: force-reinstalling `torch` alone
   leaves a `torchaudio` built against the previous torch, which then fails to
   import (`OSError: [WinError 127]`) and breaks pronunciation analysis.
-- **llama-cpp-python** - build with CUDA (see [`llm_server/README.md`](llm_server/README.md) for details):
-  ```powershell
-  $env:CMAKE_ARGS="-DGGML_CUDA=on"
-  pip install llama-cpp-python --force-reinstall --upgrade --no-cache-dir
-  ```
-  This package is **no longer used by the app** - it now runs the official
-  llama.cpp binary instead (see below). It is still installed because
-  `install.py` and `tools/detect_hardware.py` have not been reworked yet.
+- **The LLM** needs no pip package at all: it runs in the official llama.cpp
+  binary, and the fetcher below picks the CUDA build automatically (see the
+  next section).
 
 ### Get the llama-server binary
 
 The default LLM backend runs the official **llama.cpp** server as a subprocess.
-`install.py` does not fetch it yet, so install it once by hand:
+`install.py` installs it; to do it separately, or to change the build:
 
 ```bash
 python -m mimora.llama_server_fetch
@@ -264,8 +262,10 @@ falls back to the CPU **silently** and just runs about three times slower.
 
 ### Get a GGUF model
 
-`install.py` already downloads `llama-3.2-3b-instruct-q4_k_m.gguf` into `models/`.
-To do it manually instead, download a small instruct model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M.gguf`) and place it at the path set by `EXTERNAL_MODEL_PATH` in `mimora/config.py` (default: `models/llama-3.2-3b-instruct-q4_k_m.gguf`).
+`install.py` already downloads `llama-3.2-3b-instruct-q4_k_m.gguf` into `models/`,
+and `python -m mimora.gguf_fetch` does the same on its own (`--list` shows the
+target path and whether the file is there).
+To use a different model instead, download a small instruct model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M.gguf`) and place it at the path set by `EXTERNAL_MODEL_PATH` in `mimora/config.py` (default: `models/llama-3.2-3b-instruct-q4_k_m.gguf`).
 
 ---
 
@@ -323,7 +323,7 @@ Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by
 - **[NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-600M)** (Hugging Face Transformers) - offline translation for the translation panel.
 - **[espeak-ng](https://github.com/espeak-ng/espeak-ng)** / **[phonemizer-fork](https://github.com/bootphon/phonemizer)** - reference phonemization (espeak IPA).
 - **[panphon](https://github.com/dmort27/panphon)** - articulatory feature distance used by the phoneme edit-distance scoring.
-- **[llama.cpp](https://github.com/ggerganov/llama.cpp)** / **[llama-cpp-python](https://github.com/abetlen/llama-cpp-python)** - local LLM inference.
+- **[llama.cpp](https://github.com/ggerganov/llama.cpp)** - local LLM inference; the official `llama-server` binary is run as a subprocess.
 
 ## License
 

@@ -8,14 +8,15 @@ run Mimora on a fresh machine:
 
   1. Verify the Python version.
   2. Detect an NVIDIA GPU / CUDA version (via nvidia-smi, no extra packages).
-  3. (GPU only) install torch/torchaudio and llama-cpp-python as CUDA builds.
+  3. (GPU only) install torch/torchaudio as CUDA builds.
   4. pip install the project requirements (root file pulls in the subprojects).
   5. Check for the native espeak-ng binary (optionally help install it).
   6. Pre-download the Hugging Face models into model_cache/.
   7. Pre-download the Supertonic 3 TTS model into model_cache/supertonic3/
      (the Spanish TTS backend; kept outside the HF hub cache because the
      supertonic package uses its own cache directory).
-  8. Download the GGUF chat model into models/.
+  8. Install the LLM stack: the pinned llama-server binary into bin/llama/ and
+     the GGUF chat model into models/.
   9. Run tools/detect_hardware.py to write config/hardware_config.json.
  10. Write run_mimora.bat / run_mimora.sh: one-click launchers that activate
      the project's virtual environment and run main.py.
@@ -29,14 +30,19 @@ Design notes
 * If a step's target is already installed/present, the installer does NOT
   silently redo it: it says so and asks reinstall vs. skip (defaulting to
   skip). Under --yes such steps are skipped unless --reinstall is also given.
+* Nothing that can be downloaded is downloaded by this script itself: the
+  three fetchers live in the package (mimora/model_fetch.py,
+  mimora/gguf_fetch.py, mimora/llama_server_fetch.py) and the steps below are
+  thin wrappers around them. The app needs the same code for its own first-run
+  check, and a PyPI install has no install.py at all - see tasks/llama-cpp.md,
+  step 2a. Their log output is bridged into logs/install.log (see _LogBridge).
 * GPU detection deliberately relies only on `nvidia-smi`, because
-  detect_hardware.py imports torch/llama-cpp (which may not be installed yet) -
-  a classic bootstrap chicken-and-egg. detect_hardware.py is run at the very
-  end, once those packages exist.
-* The GPU CUDA wheels are installed before the requirements file so that the
-  `llama-cpp-python` / `torch` constraints in requirements.txt are already
-  satisfied - otherwise pip would try to source-build a CPU llama-cpp-python
-  (no PyPI wheels on recent versions) only for it to be replaced afterwards.
+  detect_hardware.py imports torch (which may not be installed yet) - a classic
+  bootstrap chicken-and-egg. detect_hardware.py is run at the very end, once
+  those packages exist.
+* The CUDA torch wheels are installed before the requirements file so that the
+  `torch` constraint in requirements.txt is already satisfied - otherwise pip
+  would pull the CPU build from PyPI only for it to be replaced afterwards.
 * Packages install into the interpreter that runs this script (sys.executable);
   the script does not create a venv. It checks up front whether it is inside a
   virtual environment and, if not, warns and asks before installing globally
@@ -52,7 +58,9 @@ Run:  python install.py            (interactive)
 from __future__ import annotations
 
 import argparse
+import importlib
 import importlib.metadata as ilmeta
+import logging
 import os
 import platform
 import re
@@ -71,13 +79,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_FILE = LOG_DIR / "install.log"
 REQUIREMENTS = PROJECT_ROOT / "requirements.txt"
-MODELS_DIR = PROJECT_ROOT / "models"
-MODEL_CACHE_DIR = PROJECT_ROOT / "model_cache"
-# The supertonic package keeps its model in its own cache directory (NOT under
-# the HF hub cache), overridable via the SUPERTONIC_CACHE_DIR env var. This
-# path must match mimora/config.py, which sets the same variable for the app.
-SUPERTONIC_CACHE_DIR = MODEL_CACHE_DIR / "supertonic3"
-SUPERTONIC_MODEL_NAME = "supertonic-3"
 DETECT_HW_SCRIPT = PROJECT_ROOT / "tools" / "detect_hardware.py"
 LAUNCHER_BAT = PROJECT_ROOT / "run_mimora.bat"
 LAUNCHER_SH = PROJECT_ROOT / "run_mimora.sh"
@@ -99,36 +100,12 @@ WHEEL_TESTED_MAX = (3, 12)
 # without this exemption. Pure-Python - builds from sdist with no compiler.
 SOURCE_ONLY_PACKAGES = ("fastdtw", "docopt", "unicodecsv")
 
-# The GGUF chat model. Default filename matches EXTERNAL_MODEL_PATH in
-# mimora/config.py, so the app finds it without any settings change.
-GGUF_REPO_ID = "hugging-quants/Llama-3.2-3B-Instruct-Q4_K_M-GGUF"
-GGUF_FILENAME = "llama-3.2-3b-instruct-q4_k_m.gguf"
-
-# Hugging Face models Mimora pulls on first run; pre-fetching them here means
-# the first launch is offline-ready. Repo ids match what the app requests.
-# The Supertonic 3 TTS model is NOT in this list on purpose: the supertonic
-# package downloads with snapshot_download(local_dir=...) into its own cache
-# directory (SUPERTONIC_CACHE_DIR), so caching its repo under HF_HOME/hub here
-# would be dead weight the app never reads - it has a dedicated step instead.
-HF_MODEL_REPOS = [
-    ("facebook/wav2vec2-large-960h", "Wav2Vec2 (acoustic pronunciation engine, ~1.2 GB)"),
-    ("facebook/wav2vec2-xlsr-53-espeak-cv-ft", "Wav2Vec2 phoneme engine (espeak IPA ASR, ~1.2 GB)"),
-    ("hexgrad/Kokoro-82M", "Kokoro-82M (text-to-speech)"),
-    ("facebook/nllb-200-distilled-600M", "NLLB-200 distilled 600M (offline translator, ~2.4 GB)"),
-]
-
 # CUDA wheel series, newest first. We pick the newest series whose CUDA version
 # is not greater than the one the driver reports (CUDA 12.x is forward
 # compatible at runtime, so e.g. a cu124 build runs fine on a 12.8 driver).
-#
-# torch publishes its own indexes (up to cu128); llama-cpp-python's prebuilt
-# wheels (abetlen's index) currently top out at cu124. They are independent
-# stacks, so the two lists differ on purpose.
 TORCH_CU_SERIES = ["cu128", "cu126", "cu124", "cu121", "cu118"]
-LLAMA_CU_SERIES = ["cu124", "cu123", "cu122", "cu121"]
 
 TORCH_INDEX_URL = "https://download.pytorch.org/whl/{series}"
-LLAMA_INDEX_URL = "https://abetlen.github.io/llama-cpp-python/whl/{series}"
 
 PIP = [sys.executable, "-m", "pip"]
 
@@ -138,7 +115,7 @@ PIP = [sys.executable, "-m", "pip"]
 # python-Levenshtein) are the distribution names importlib.metadata expects.
 REQUIRED_DISTS = [
     "numpy", "soundfile", "sounddevice", "kokoro", "supertonic", "openai",
-    "torch", "transformers", "fastapi", "uvicorn", "llama-cpp-python",
+    "torch", "transformers",
     "torchaudio", "librosa", "scipy", "scikit-learn", "fastdtw",
     "phonemizer-fork", "python-Levenshtein", "panphon", "sentencepiece",
     "ttkbootstrap", "pillow", "onnxruntime", "wordfreq",
@@ -175,42 +152,6 @@ def all_requirements_installed() -> bool:
     return all(is_installed(name) for name in REQUIRED_DISTS)
 
 
-def hf_repo_fully_cached(repo_id: str) -> bool:
-    """True only if a COMPLETE snapshot of the repo is in the local HF cache.
-
-    A folder existing under model_cache/hub/ is not enough: an interrupted run
-    can leave a partial snapshot (missing files). snapshot_download in offline
-    mode returns the path only when every file of the recorded revision is
-    present, and raises otherwise - so partial downloads are correctly reported
-    as not-installed and will be re-offered. Requires HF_HOME to be set first.
-    """
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError:
-        # huggingface_hub not installed yet → nothing can be cached.
-        return False
-    try:
-        snapshot_download(repo_id=repo_id, local_files_only=True)
-        return True
-    except Exception:  # noqa: BLE001 - any miss/partial means "not fully cached"
-        return False
-
-
-def supertonic_model_cached() -> bool:
-    """True when the Supertonic 3 model is fully present in its cache dir.
-
-    Unlike the HF hub cache above, no manifest check is needed: the supertonic
-    package downloads atomically (into a temp directory that is renamed onto
-    the cache dir only on success), so a present, non-empty directory is a
-    complete download. Mirrors mimora/config.py _supertonic_model_cached.
-    """
-    try:
-        return (SUPERTONIC_CACHE_DIR.is_dir()
-                and any(SUPERTONIC_CACHE_DIR.iterdir()))
-    except OSError:
-        return False
-
-
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -233,6 +174,41 @@ class Logger:
         self.log(line)
         self.log(title)
         self.log(line)
+
+
+class _LogBridge(logging.Handler):
+    """Forwards the fetcher modules' logging output into the installer's log.
+
+    The download steps call functions in mimora/* instead of subprocesses, so
+    run_command's "stream the child's output into logs/install.log" no longer
+    applies to them. Without this bridge their progress and, worse, their
+    diagnostics (checksum mismatches, the CUDA device probe) would appear on
+    the console but never in the log file the user is asked to send in.
+    """
+
+    def __init__(self, logger: Logger):
+        super().__init__(level=logging.INFO)
+        self._logger = logger
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self._logger.log(f"    | {record.getMessage()}")
+
+
+def bridge_module_logging(logger: Logger) -> None:
+    """Route mimora.* log records into *logger* (idempotent).
+
+    Attached to the "mimora" parent logger, so every fetcher module is covered
+    by one handler. Propagation is switched off because the root logger has no
+    handler here: without it, logging's last-resort handler would print every
+    WARNING and ERROR to stderr a second time, next to the copy this bridge
+    already wrote to stdout and the log file.
+    """
+    mimora_logger = logging.getLogger("mimora")
+    if any(isinstance(h, _LogBridge) for h in mimora_logger.handlers):
+        return
+    mimora_logger.setLevel(logging.INFO)
+    mimora_logger.propagate = False
+    mimora_logger.addHandler(_LogBridge(logger))
 
 
 # ---------------------------------------------------------------------------
@@ -459,6 +435,29 @@ def run_or_fail(cmd: list[str], log: Logger, report: StepReport,
         raise InstallError(step_name)
 
 
+def _import_fetcher(module_name: str, log: Logger, report: StepReport,
+                    step_name: str):
+    """Import one of the mimora/* download helpers, failing the step cleanly.
+
+    The fetchers live in the package rather than in this script (see the design
+    notes at the top), so every download step starts by importing one. Only
+    mimora.llama_server_fetch is stdlib-only; the other two need
+    huggingface_hub, so a failure here almost always means the requirements
+    step was skipped or aborted.
+    """
+    # install.py is normally run from the project root, which already puts it
+    # on sys.path; this also covers `python /somewhere/else/install.py`.
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    try:
+        return importlib.import_module(module_name)
+    except ImportError as exc:
+        log.log(f"    Could not import {module_name}: {exc}")
+        log.log("    Run the project dependencies step (4/10) first.")
+        report.add(step_name, FAILED, f"{module_name} unimportable")
+        raise InstallError(step_name) from exc
+
+
 # ---------------------------------------------------------------------------
 # GPU / CUDA detection (no third-party packages required)
 # ---------------------------------------------------------------------------
@@ -606,15 +605,15 @@ def check_virtualenv(log: Logger, args: argparse.Namespace) -> None:
 def step_check_vcredist(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
-    """On Windows, verify the MSVC runtime DLLs that torch / llama-cpp need.
+    """On Windows, verify the MSVC runtime DLLs that torch / llama-server need.
 
-    torch's torch_python.dll and llama-cpp-python's llama.dll link against the
+    torch's torch_python.dll and the llama-server binary both link against the
     Microsoft Visual C++ runtime (vcruntime140.dll, vcruntime140_1.dll,
     msvcp140.dll). A clean Windows install often lacks it, and the failure only
-    surfaces at RUNTIME (import torch / model load), long after pip reports
-    success. Loading the DLLs here turns that into an up-front, actionable
-    message. We do NOT auto-install the redistributable: it needs an elevated GUI
-    installer, which is out of scope for this pip-only setup.
+    surfaces at RUNTIME (import torch / starting the server), long after pip
+    reports success. Loading the DLLs here turns that into an up-front,
+    actionable message. We do NOT auto-install the redistributable: it needs an
+    elevated GUI installer, which is out of scope for this pip-only setup.
     """
     log.banner("Step 0/10 - Visual C++ runtime (Windows)")
     if sys.platform != "win32":
@@ -641,9 +640,9 @@ def step_check_vcredist(
     # --yes); the report already records the manual action either way.
     confirmer.warn_continue([
         f"Microsoft Visual C++ runtime DLL(s) not found: {', '.join(missing)}.",
-        "Without the Visual C++ Redistributable (x64), torch and "
-        "llama-cpp-python fail to load at runtime (the hardware-detection step "
-        "below would fail too).",
+        "Without the Visual C++ Redistributable (x64), torch and the "
+        "llama-server binary fail to load at runtime (the llama-server "
+        "verification and hardware-detection steps below would fail too).",
         "Install it, then re-run install.py:",
         "  https://aka.ms/vs/17/release/vc_redist.x64.exe",
     ])
@@ -792,7 +791,8 @@ def step_install_requirements(
                  "--only-binary", ":all:",
                  "--no-binary", ",".join(SOURCE_ONLY_PACKAGES)]
     desc = ("Install all Python dependencies (requirements.txt also pulls in "
-            "llm_server/ and pronunciation/acoustic/ requirements).")
+            "the pronunciation/acoustic/ and pronunciation/phoneme/ "
+            "requirements).")
     if installed:
         log.log("    All expected dependencies are already installed.")
     if not confirmer.confirm(desc, " ".join(cmd), installed=installed):
@@ -828,177 +828,6 @@ def step_gpu_torch(
                    "already CUDA build" if installed else "")
         return
     run_or_fail(cmd, log, report, "torch (CUDA)", series)
-
-
-def _ensure_cmake_macos(
-    log: Logger, confirmer: Confirmer, report: StepReport
-) -> bool:
-    """Make sure the cmake binary exists before the macOS source build.
-
-    The llama-cpp-python sdist builds its native library via scikit-build-core,
-    which invokes cmake; without it pip fails mid-build with a confusing
-    backend error. Checked only right before the build actually runs (not in
-    Step 0) so machines that skip the build are never asked to install it.
-    Returns True when cmake is available; a failed Homebrew install aborts the
-    run via run_or_fail (the build is doomed without it).
-    """
-    if shutil.which("cmake"):
-        log.log("    cmake found on PATH.")
-        report.add("cmake", DONE, "already present")
-        return True
-
-    log.log("    cmake NOT found on PATH (required to build llama-cpp-python).")
-    if not shutil.which("brew"):
-        log.log("    Homebrew not found. Install cmake manually (brew.sh or "
-                "cmake.org), then re-run install.py.")
-        report.add("cmake", MANUAL, "install manually, see log")
-        return False
-
-    brew_cmd = ["brew", "install", "cmake"]
-    if not confirmer.confirm("Install cmake via Homebrew (needed to compile "
-                             "llama-cpp-python).", " ".join(brew_cmd)):
-        report.add("cmake", SKIPPED)
-        return False
-    run_or_fail(brew_cmd, log, report, "cmake")
-    return True
-
-
-def step_cpu_llama(
-    log: Logger, confirmer: Confirmer, report: StepReport
-) -> None:
-    """Install the CPU build of llama-cpp-python.
-
-    Recent llama-cpp-python releases publish no CPU wheel on PyPI (only an
-    sdist), and Step 4 installs requirements with --only-binary, which forbids
-    a source build. The package is therefore installed here - BEFORE Step 4 -
-    so the requirements.txt constraint is already satisfied and pip never
-    reaches for the missing PyPI wheel. How it is installed depends on the OS:
-
-    * macOS on Apple Silicon: build from the PyPI sdist. abetlen's
-      GitHub-hosted wheels can arrive corrupted through corporate proxies
-      (Bad CRC-32 / zlib errors at install time - pip can't detect it earlier
-      because that index publishes no hashes), and a source build on Apple
-      Silicon enables Metal GPU acceleration, which the generic CPU wheel
-      lacks anyway. Needs cmake (checked below) and the Xcode Command Line
-      Tools. Intel Macs deliberately stay on the wheel path: Metal does not
-      apply there, and the older x86_64 wheels are known to install and work.
-    * elsewhere: pull the prebuilt CPU-only wheel from abetlen's index.
-    """
-    build_from_source = (sys.platform == "darwin"
-                         and platform.machine() == "arm64")
-    # Presence-only check: metadata can't tell a CPU build from a CUDA one, so
-    # any installed llama-cpp-python triggers the reinstall/skip prompt.
-    installed = is_installed("llama-cpp-python")
-    # When the user answers "[r]einstall" the command must actually reinstall:
-    # without --force-reinstall pip answers "Requirement already satisfied"
-    # and exits 0 without touching a possibly broken/CUDA install. --no-deps
-    # keeps the forced reinstall from also dragging every dependency to its
-    # newest version (e.g. numpy past the <2.5 cap in requirements.txt, which
-    # the presence-only requirements step would then never downgrade back);
-    # the dependencies are already present from the prior install.
-    reinstall_flags = (["--upgrade", "--force-reinstall", "--no-deps"]
-                       if installed else [])
-
-    if build_from_source:
-        # --no-binary pins the source path even if a macOS wheel ever appears
-        # on PyPI; dependencies still install as wheels (the flag names only
-        # this package). pip picks the sdist from the default index - abetlen's
-        # index is deliberately not used here (see docstring).
-        cmd = PIP + ["install", *reinstall_flags, "--no-cache-dir",
-                     "--no-binary", "llama-cpp-python", "llama-cpp-python"]
-        desc = ("Build llama-cpp-python from source (PyPI sdist; enables Metal "
-                "on Apple Silicon). Needs cmake and the Xcode Command Line "
-                "Tools; the compile takes several minutes.")
-    else:
-        index = LLAMA_INDEX_URL.format(series="cpu")
-        # --only-binary forbids a source build: --extra-index-url merely *adds*
-        # abetlen's index to PyPI, and pip picks the highest version across both.
-        # PyPI's latest release is often newer than abetlen's prebuilt CPU wheel
-        # and ships only an sdist, so without this flag pip would compile it
-        # from source.
-        # --extra-index-url (not --index-url) keeps PyPI reachable for other deps.
-        cmd = PIP + ["install", *reinstall_flags, "--no-cache-dir",
-                     "--only-binary", ":all:",
-                     "llama-cpp-python", "--extra-index-url", index]
-        desc = ("Install prebuilt CPU wheel of llama-cpp-python from abetlen's "
-                "index (no CPU wheel exists on PyPI; avoids a doomed source build).")
-
-    if installed:
-        log.log(f"    llama-cpp-python already installed "
-                f"({dist_version('llama-cpp-python')}).")
-    if not confirmer.confirm(desc, " ".join(cmd), installed=installed):
-        report.add("llama-cpp-python (CPU)", SKIPPED,
-                   "already installed" if installed else "")
-        return
-    # cmake is checked only once the build is actually going to run, so a
-    # skipped/already-installed step never triggers a needless Homebrew prompt.
-    if build_from_source and not _ensure_cmake_macos(log, confirmer, report):
-        report.add("llama-cpp-python (CPU)", MANUAL,
-                   "install cmake, then re-run install.py")
-        return
-    run_or_fail(cmd, log, report, "llama-cpp-python (CPU)")
-
-
-def step_gpu_llama(
-    log: Logger, confirmer: Confirmer, report: StepReport,
-    driver_cuda: tuple[int, int] | None,
-) -> None:
-    """Install the prebuilt CUDA wheel of llama-cpp-python (newest available)."""
-    series = pick_cu_series(LLAMA_CU_SERIES, driver_cuda)
-    if series is None:
-        log.log("    No prebuilt llama-cpp-python CUDA wheel for this driver.")
-        log.log("    Build manually with CUDA: set CMAKE_ARGS=-DGGML_CUDA=on then")
-        log.log("    pip install llama-cpp-python --force-reinstall --no-cache-dir")
-        report.add("llama-cpp-python (CUDA)", MANUAL, "no prebuilt wheel")
-        return
-
-    index = LLAMA_INDEX_URL.format(series=series)
-    # Presence-only check: metadata can't tell a CPU build from a CUDA one, so
-    # any installed llama-cpp-python triggers the reinstall/skip prompt.
-    installed = is_installed("llama-cpp-python")
-    # --no-deps on the reinstall path: --force-reinstall would otherwise drag
-    # every dependency to its newest version (e.g. numpy past the <2.5 cap in
-    # requirements.txt, which the presence-only requirements step would then
-    # never downgrade back); the dependencies are already present from the
-    # prior install. On a fresh install the deps must come along, and the
-    # later requirements step enforces the caps anyway.
-    reinstall_flags = ["--no-deps"] if installed else []
-    # No version pin: pip picks the newest wheel published in this index.
-    # --only-binary forbids a source build: --extra-index-url merely *adds*
-    # abetlen's index to PyPI, and pip picks the highest version across both.
-    # A newer PyPI sdist would otherwise be compiled from source instead of
-    # using the prebuilt CUDA wheel from abetlen's index.
-    # --extra-index-url (not --index-url) keeps PyPI available for deps.
-    cmd = PIP + ["install", "--upgrade", "--force-reinstall", *reinstall_flags,
-                 "--no-cache-dir", "--only-binary", ":all:",
-                 "llama-cpp-python", "--extra-index-url", index]
-    desc = (f"Install prebuilt CUDA wheel of llama-cpp-python from the {series} "
-            f"index (newest version available there).")
-    if installed:
-        log.log(f"    llama-cpp-python already installed "
-                f"({dist_version('llama-cpp-python')}).")
-    if not confirmer.confirm(desc, " ".join(cmd), installed=installed):
-        report.add("llama-cpp-python (CUDA)", SKIPPED,
-                   "already installed" if installed else "")
-    else:
-        run_or_fail(cmd, log, report, "llama-cpp-python (CUDA)", series)
-
-    # With no system CUDA Toolkit, the CUDA runtime libraries come from these
-    # pip packages; detect_hardware.py / llm_server / smoke_test_llama.py each
-    # register them (DLLs on PATH on Windows, ctypes-preloaded on Linux) before
-    # importing llama_cpp - see _register_nvidia_dll_dirs() in those files.
-    # Not needed on macOS (no CUDA there).
-    if sys.platform != "darwin":
-        runtime_cmd = PIP + ["install",
-                             "nvidia-cuda-runtime-cu12", "nvidia-cublas-cu12"]
-        runtime_present = (is_installed("nvidia-cuda-runtime-cu12")
-                           and is_installed("nvidia-cublas-cu12"))
-        rdesc = ("Install CUDA runtime libraries (nvidia-cuda-runtime-cu12, "
-                 "nvidia-cublas-cu12) so llama-cpp can load without a system "
-                 "CUDA Toolkit.")
-        if confirmer.confirm(rdesc, " ".join(runtime_cmd),
-                             installed=runtime_present):
-            run_or_fail(runtime_cmd, log, report, "CUDA runtime libraries")
 
 
 def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
@@ -1070,209 +899,144 @@ def _linux_espeak_command() -> list[str] | None:
     return None
 
 
-def configure_hf_symlink_fallback(log: Logger) -> None:
-    """On Windows, keep HF off the hf-xet path that crashes without symlinks.
-
-    huggingface_hub's cache points snapshots/ at blobs/ via symlinks. Creating a
-    symlink on Windows needs Developer Mode or admin rights.
-
-    The native hf-xet downloader links files into the cache itself and fails hard
-    with WinError 1314 when that privilege is missing - and, unlike the pure-
-    Python HTTP path, it does NOT fall back to copying. Crucially it can hit this
-    even when a plain symlink probe passes (the privilege can be present at probe
-    time yet unavailable to xet's linker), so a probe is not a reliable gate.
-
-    We therefore disable hf-xet on every Windows run. Downloads then take the
-    HTTP path, which checks symlink support itself and copies into the cache when
-    symlinks are unavailable (uses more disk, but always works). Must run before
-    huggingface_hub is first imported.
-    """
-    if sys.platform != "win32":
-        return
-    MODEL_CACHE_DIR.mkdir(exist_ok=True)
-
-    # Unconditional: xet is the only path that raises 1314 without a copy
-    # fallback, and it can do so regardless of the symlink probe below.
-    os.environ["HF_HUB_DISABLE_XET"] = "1"
-
-    import tempfile
-    supported = True
-    try:
-        with tempfile.TemporaryDirectory(dir=MODEL_CACHE_DIR) as tmp:
-            src = Path(tmp) / "probe_src"
-            src.touch()
-            try:
-                os.symlink(src, Path(tmp) / "probe_dst")
-            except OSError:
-                supported = False
-    except OSError:
-        supported = False
-
-    if supported:
-        log.log("    Symlink support: OK (hf-xet disabled on Windows for safety).")
-        return
-
-    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
-    log.log("    Symlinks unavailable (no Developer Mode / admin): HF downloads")
-    log.log("    will COPY into the cache instead of symlinking (more disk use).")
-    log.log("    Tip: enabling Windows Developer Mode lets HF use symlinks.")
-
-
-def prepare_hf_env(log: Logger) -> None:
-    """Point HF_HOME at model_cache/ and arm the Windows symlink/xet fallbacks.
-
-    Shared by every step that downloads from Hugging Face (prefetch and the
-    GGUF download - the latter also runs standalone under --skip-models, so it
-    cannot rely on the prefetch step having done this). Must run before
-    huggingface_hub is first imported: HF_HOME and HF_HUB_DISABLE_XET are read
-    at import time. Idempotent.
-    """
-    # Match mimora/config.py: HF_HOME points at the project's model_cache/.
-    MODEL_CACHE_DIR.mkdir(exist_ok=True)
-    os.environ["HF_HOME"] = str(MODEL_CACHE_DIR)
-    # Avoid the Windows symlink-privilege crash (WinError 1314).
-    configure_hf_symlink_fallback(log)
-
-
 def step_prefetch_models(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the Hugging Face models into model_cache/ (HF_HOME)."""
     log.banner("Step 6/10 - Pre-download Hugging Face models")
+    model_fetch = _import_fetcher("mimora.model_fetch", log, report,
+                                  "HF model cache")
 
-    prepare_hf_env(log)
-
-    repos = ", ".join(repo for repo, _ in HF_MODEL_REPOS)
-    installed = all(hf_repo_fully_cached(repo) for repo, _ in HF_MODEL_REPOS)
-    desc = (f"Download HF models into {MODEL_CACHE_DIR.name}/ (HF_HOME): {repos}. "
-            f"Several GB; already-cached files are reused.")
-    if installed:
-        log.log(f"    All {len(HF_MODEL_REPOS)} model repos already present in the cache.")
-    if not confirmer.confirm(desc, installed=installed):
-        report.add("HF model cache", SKIPPED,
-                   "already cached" if installed else "")
+    repos = ", ".join(repo for repo, _ in model_fetch.HF_MODEL_REPOS)
+    cached = all(model_fetch.hf_repo_cached(repo)
+                 for repo, _ in model_fetch.HF_MODEL_REPOS)
+    desc = (f"Download HF models into {model_fetch.MODEL_CACHE_DIR.name}/ "
+            f"(HF_HOME): {repos}. Several GB; already-cached files are reused.")
+    if cached:
+        log.log(f"    All {len(model_fetch.HF_MODEL_REPOS)} model repos already "
+                f"present in the cache.")
+    if not confirmer.confirm(desc, installed=cached):
+        report.add("HF model cache", SKIPPED, "already cached" if cached else "")
         return
 
+    # force=cached: reaching this line with cached=True means the user answered
+    # "[r]einstall" at the already-present prompt, so the fetcher must not skip
+    # the repos its own predicate would also call cached. Every download step
+    # below follows the same pattern.
     try:
-        from huggingface_hub import snapshot_download
-    except ImportError:
-        log.log("    huggingface_hub not installed (did the deps step run?).")
-        report.add("HF model cache", FAILED, "huggingface_hub missing")
+        model_fetch.ensure_hf_models(force=cached)
+    except model_fetch.ModelFetchError as exc:
+        log.log(f"    -> FAILED: {exc}")
+        report.add("HF model cache", FAILED)
         raise InstallError("HF model cache")
-
-    all_ok = True
-    for repo_id, label in HF_MODEL_REPOS:
-        log.log(f"    Fetching {label} [{repo_id}] ...")
-        try:
-            snapshot_download(repo_id=repo_id)
-            log.log(f"    -> done: {repo_id}")
-        except Exception as exc:  # noqa: BLE001 - record which repo failed
-            all_ok = False
-            log.log(f"    -> FAILED: {repo_id}: {exc}")
-    report.add("HF model cache", DONE if all_ok else FAILED)
-    if not all_ok:
-        raise InstallError("HF model cache")
+    report.add("HF model cache", DONE)
 
 
 def step_prefetch_supertonic(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
-    """Download the Supertonic 3 TTS model into model_cache/supertonic3/.
-
-    The Spanish TTS backend (mimora/tts.py SupertonicBackend). A dedicated
-    step because the supertonic package does not read the HF hub cache: it
-    downloads with snapshot_download(local_dir=...) into the directory named
-    by SUPERTONIC_CACHE_DIR (set here to match mimora/config.py). Pre-fetching
-    matters for offline mode: the app flips HF_HUB_OFFLINE=1 once its models
-    are cached, and this download goes through huggingface_hub, so it must
-    happen while the Hub is still online. The weights are OpenRAIL-M licensed
-    (code is MIT), which is why they are downloaded at install time rather
-    than shipped with Mimora.
-    """
+    """Download the Supertonic 3 TTS model into model_cache/supertonic3/."""
     log.banner("Step 7/10 - Supertonic 3 TTS model (Spanish)")
-    # Same HF plumbing as the hub prefetch: the download runs through
-    # huggingface_hub, so the Windows xet/symlink fallbacks apply here too.
-    prepare_hf_env(log)
-    os.environ.setdefault("SUPERTONIC_CACHE_DIR", str(SUPERTONIC_CACHE_DIR))
+    model_fetch = _import_fetcher("mimora.model_fetch", log, report,
+                                  "Supertonic model")
 
-    installed = supertonic_model_cached()
+    cache_dir = model_fetch.supertonic_cache_dir()
+    cached = model_fetch.supertonic_cached()
     desc = (f"Download the Supertonic 3 TTS model (~400 MB, weights licensed "
-            f"OpenRAIL-M) into {MODEL_CACHE_DIR.name}/{SUPERTONIC_CACHE_DIR.name}/ "
-            f"- the Spanish text-to-speech backend.")
-    if installed:
-        log.log(f"    Supertonic model already present: {SUPERTONIC_CACHE_DIR}")
-    if not confirmer.confirm(desc, installed=installed):
+            f"OpenRAIL-M) into {cache_dir} - the Spanish text-to-speech "
+            f"backend.")
+    if cached:
+        log.log(f"    Supertonic model already present: {cache_dir}")
+    if not confirmer.confirm(desc, installed=cached):
         report.add("Supertonic model", SKIPPED,
-                   "already downloaded" if installed else "")
+                   "already downloaded" if cached else "")
         return
 
     try:
-        # loader-level functions download without loading the ONNX sessions
-        # (no synthesis warm-up needed at install time). get_cache_dir honors
-        # SUPERTONIC_CACHE_DIR, so the download lands where the app looks.
-        from supertonic.loader import download_model, get_cache_dir
-    except ImportError:
-        log.log("    supertonic not installed (did the deps step run?).")
-        report.add("Supertonic model", FAILED, "supertonic missing")
-        raise InstallError("Supertonic model")
-
-    try:
-        target = get_cache_dir(SUPERTONIC_MODEL_NAME)
-        log.log(f"    Fetching Supertonic 3 [{SUPERTONIC_MODEL_NAME}] into {target} ...")
-        download_model(target, SUPERTONIC_MODEL_NAME)
-        log.log("    -> done: Supertonic 3")
-        report.add("Supertonic model", DONE)
-    except Exception as exc:  # noqa: BLE001 - report and fail fast, as HF step does
+        model_fetch.ensure_supertonic(force=cached)
+    except model_fetch.ModelFetchError as exc:
         log.log(f"    -> FAILED: {exc}")
         report.add("Supertonic model", FAILED)
         raise InstallError("Supertonic model")
+    report.add("Supertonic model", DONE)
+
+
+def step_llama_server(
+    log: Logger, confirmer: Confirmer, report: StepReport
+) -> None:
+    """Install the pinned llama-server binary into bin/llama/.
+
+    First half of the LLM stack (the GGUF model below is the second). The
+    fetcher verifies the install by running --version and --list-devices, which
+    is what catches llama.cpp's silent fallback to CPU when the cudart DLLs are
+    missing or of the wrong major version - see tasks/llama-cpp.md, phase 0.
+
+    A platform with no pinned build (currently everything except Windows x64)
+    is recorded as a manual action rather than a hard failure: the rest of the
+    install is perfectly usable, and such a machine can point
+    "llama_server_path" at its own binary or switch to the lm-studio backend.
+    """
+    log.banner("Step 8/10 - LLM stack: llama-server binary")
+    fetch = _import_fetcher("mimora.llama_server_fetch", log, report,
+                            "llama-server binary")
+
+    installed = fetch.installed_exe() is not None
+    desc = (f"Download the pinned llama.cpp release {fetch.RELEASE_TAG} "
+            f"(~600 MB with the CUDA runtime) into "
+            f"{fetch.INSTALL_DIR.parent.name}/{fetch.INSTALL_DIR.name}/ and "
+            f"verify that its GPU backend actually comes up.")
+    if installed:
+        log.log(f"    llama-server already installed: {fetch.installed_exe()}")
+    if not confirmer.confirm(desc, installed=installed):
+        report.add("llama-server binary", SKIPPED,
+                   "already installed" if installed else "")
+        return
+
+    try:
+        exe = fetch.ensure_llama_server(force=installed)
+    except fetch.UnsupportedPlatformError as exc:
+        # No pinned build for this OS/arch yet: say so and move on.
+        log.log(f"    {exc}")
+        report.add("llama-server binary", MANUAL, "no pinned build, see log")
+        return
+    except fetch.LlamaServerFetchError as exc:
+        log.log(f"    -> FAILED: {exc}")
+        report.add("llama-server binary", FAILED)
+        raise InstallError("llama-server binary")
+    report.add("llama-server binary", DONE, fetch.RELEASE_TAG)
+    log.log(f"    Installed: {exe}")
 
 
 def step_download_gguf(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the GGUF chat model into models/ if not already present."""
-    log.banner("Step 8/10 - GGUF chat model")
-    prepare_hf_env(log)
-    MODELS_DIR.mkdir(exist_ok=True)
-    target = MODELS_DIR / GGUF_FILENAME
+    log.banner("Step 8/10 - LLM stack: GGUF chat model")
+    gguf_fetch = _import_fetcher("mimora.gguf_fetch", log, report, "GGUF model")
 
-    installed = target.exists()
-    desc = (f"Download {GGUF_FILENAME} (~2 GB) from {GGUF_REPO_ID} into "
-            f"{MODELS_DIR.name}/.")
-    if installed:
+    target = gguf_fetch.DEFAULT_GGUF_PATH
+    present = gguf_fetch.gguf_present(target)
+    desc = (f"Download {target.name} (~{gguf_fetch.GGUF_SIZE_MB} MB) from "
+            f"{gguf_fetch.GGUF_REPO_ID} into {target.parent.name}/.")
+    if present:
         log.log(f"    Already present: {target}")
-    if not confirmer.confirm(desc, installed=installed):
-        report.add("GGUF model", SKIPPED,
-                   "already downloaded" if installed else "")
+    if not confirmer.confirm(desc, installed=present):
+        report.add("GGUF model", SKIPPED, "already downloaded" if present else "")
         return
 
     try:
-        from huggingface_hub import hf_hub_download
-    except ImportError:
-        log.log("    huggingface_hub not installed (did the deps step run?).")
-        report.add("GGUF model", FAILED, "huggingface_hub missing")
-        raise InstallError("GGUF model")
-
-    try:
-        # local_dir=models/ places the file exactly where config.py expects it
-        # (rather than inside the HF cache structure).
-        path = hf_hub_download(
-            repo_id=GGUF_REPO_ID, filename=GGUF_FILENAME,
-            local_dir=str(MODELS_DIR),
-        )
-        log.log(f"    -> downloaded: {path}")
-        report.add("GGUF model", DONE)
-    except Exception as exc:  # noqa: BLE001
+        gguf_fetch.ensure_gguf(target, force=present)
+    except gguf_fetch.GgufFetchError as exc:
         log.log(f"    -> FAILED: {exc}")
         report.add("GGUF model", FAILED)
         raise InstallError("GGUF model")
+    report.add("GGUF model", DONE)
 
 
 def step_detect_hardware(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
-    """Run detect_hardware.py last, when torch/llama-cpp are installed."""
+    """Run detect_hardware.py late, once torch is installed."""
     log.banner("Step 9/10 - Hardware detection (writes hardware_config.json)")
     if not DETECT_HW_SCRIPT.exists():
         log.log(f"    {DETECT_HW_SCRIPT} not found; skipping.")
@@ -1406,12 +1170,19 @@ def parse_args() -> argparse.Namespace:
                         help="skip the Hugging Face model pre-download")
     parser.add_argument("--skip-gguf", action="store_true",
                         help="skip the GGUF chat-model download")
+    parser.add_argument("--skip-llm", action="store_true",
+                        help="skip the whole LLM stack (llama-server binary "
+                             "and GGUF model) - for the lm-studio or off "
+                             "backend, which need neither")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     log = Logger(LOG_FILE)
+    # The download steps call into mimora/* instead of spawning subprocesses,
+    # so their logging has to be routed into logs/install.log explicitly.
+    bridge_module_logging(log)
     confirmer = Confirmer(log, assume_yes=args.yes, dry_run=args.dry_run,
                           force_reinstall=args.reinstall)
     report = StepReport()
@@ -1427,7 +1198,8 @@ def main() -> int:
     # half-built environment and printing a misleading "ready to launch" line.
     try:
         # Step 0: refuse to silently install into the global interpreter, then
-        # (on Windows) verify the MSVC runtime torch/llama need at runtime.
+        # (on Windows) verify the MSVC runtime torch and llama-server need at
+        # runtime.
         check_virtualenv(log, args)
         step_check_vcredist(log, confirmer, report)
         step_check_tkinter(log, confirmer, report)
@@ -1435,7 +1207,7 @@ def main() -> int:
         # Step 1: Python version (hard min gate; warn above the tested max).
         step_check_python(log, confirmer, report)
 
-        # Step 2: GPU detection (informs steps 4a/4b; no packages needed).
+        # Step 2: GPU detection (informs step 3; no packages needed).
         log.banner("Step 2/10 - GPU / CUDA detection")
         gpu_name, driver_cuda = detect_gpu(log)
         use_gpu = (gpu_name is not None or args.gpu) and not args.cpu
@@ -1449,18 +1221,19 @@ def main() -> int:
         report.add("GPU detection", DONE,
                    gpu_name or ("forced" if args.gpu else "none"))
 
-        # Step 3: hardware-specific builds, installed BEFORE requirements so the
-        # llama-cpp-python / torch constraints in requirements.txt are already
-        # satisfied (avoids a doomed CPU source-build of llama-cpp-python).
-        # torch ships CPU wheels on PyPI, so the CPU path only needs llama here.
+        # Step 3: the CUDA torch build, installed BEFORE requirements so the
+        # torch constraint in requirements.txt is already satisfied (otherwise
+        # pip pulls the CPU wheel from PyPI first and it is replaced right
+        # after). torch ships CPU wheels on PyPI, so the CPU path needs no
+        # step of its own here.
         if use_gpu:
             log.banner("Step 3/10 - GPU (CUDA) builds")
             step_gpu_torch(log, confirmer, report, driver_cuda)
-            step_gpu_llama(log, confirmer, report, driver_cuda)
         else:
             log.banner("Step 3/10 - CPU builds")
+            log.log("    Nothing to pre-install: every remaining dependency "
+                    "has a CPU wheel on PyPI.")
             report.add("torch (CUDA)", SKIPPED, "CPU-only")
-            step_cpu_llama(log, confirmer, report)
 
         # Step 4: project dependencies.
         step_install_requirements(log, confirmer, report)
@@ -1476,13 +1249,22 @@ def main() -> int:
             step_prefetch_models(log, confirmer, report)
             step_prefetch_supertonic(log, confirmer, report)
 
-        # Step 8: GGUF.
-        if args.skip_gguf:
-            report.add("GGUF model", SKIPPED, "--skip-gguf")
+        # Step 8: the LLM stack - the llama-server binary and the GGUF model it
+        # loads. Both are skipped together under --skip-llm: the lm-studio and
+        # off backends need neither. The binary comes first because step 9
+        # probes it, and both come after pip because a 2.6 GB download is a bad
+        # place to discover that the dependency install fails.
+        if args.skip_llm:
+            report.add("llama-server binary", SKIPPED, "--skip-llm")
+            report.add("GGUF model", SKIPPED, "--skip-llm")
         else:
-            step_download_gguf(log, confirmer, report)
+            step_llama_server(log, confirmer, report)
+            if args.skip_gguf:
+                report.add("GGUF model", SKIPPED, "--skip-gguf")
+            else:
+                step_download_gguf(log, confirmer, report)
 
-        # Step 9: hardware detection (after torch/llama exist).
+        # Step 9: hardware detection (after torch exists).
         step_detect_hardware(log, confirmer, report)
 
         # Step 10: launcher scripts, written last so they reflect the fully

@@ -64,10 +64,11 @@ wordfreq>=3.0
 pillow>=9.1
 
 # Subproject dependencies (paths are relative to this file).
-# llm_server brings llama-cpp-python - CPU-only build by default; for the CUDA
-# build (GPU offload for the LLM) see "llama-cpp-python with CUDA Support"
-# in llm_server/README.md.
--r llm_server/requirements.txt
+# The retired llm_server/ subproject is deliberately NOT chained in here any
+# more: it brought llama-cpp-python, which publishes no CPU wheel on recent
+# PyPI releases, so with install.py's --only-binary the resolve would fail
+# outright. The LLM now runs in the official llama-server binary, installed by
+# mimora/llama_server_fetch.py rather than by pip (see tasks/llama-cpp.md).
 -r pronunciation/acoustic/requirements.txt
 # Phoneme engine (engine="phoneme"). Mostly overlaps the acoustic engine above; its
 # one extra dependency is panphon (articulatory feature distance for phone scoring).

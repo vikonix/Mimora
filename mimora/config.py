@@ -8,7 +8,7 @@ import threading
 from functools import partial
 from pathlib import Path
 
-from . import llama_server_fetch, loader
+from . import llama_server_fetch, loader, model_fetch
 from .languages import english, spanish
 
 # Project root - always absolute, regardless of working directory at launch.
@@ -239,7 +239,14 @@ if not isinstance(USER_NAME, str):
 # "Offline-mode gating" section below (after the active engine and its model name
 # are known) all land early enough. We use setdefault() so an externally set
 # HF_HOME is respected.
-MODEL_CACHE_DIR = BASE_DIR / "model_cache"
+#
+# The two cache locations are defined in mimora/model_fetch.py, the module that
+# downloads into them, so the app and the downloader cannot drift apart. Only
+# the paths are shared: model_fetch.prepare_hf_env() is NOT called here on
+# purpose, because it also disables hf-xet on Windows, which is a download-time
+# workaround and not something the app should decide for a cache it merely
+# reads (see tasks/llama-cpp.md, step 3, where the app gains its own download).
+MODEL_CACHE_DIR = model_fetch.MODEL_CACHE_DIR
 loader.ensure_dir(MODEL_CACHE_DIR)
 os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 
@@ -251,9 +258,10 @@ os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 # to the code, matching the HF_HOME policy above. The package resolves the env
 # var on every call (not at import), but setting it here - before any
 # supertonic import - keeps the timing rules identical to HF_HOME's.
-# install.py sets the same variable so the installer pre-download lands in the
-# exact directory the app reads.
-os.environ.setdefault("SUPERTONIC_CACHE_DIR", str(MODEL_CACHE_DIR / "supertonic3"))
+# model_fetch sets the same variable, so the installer pre-download lands in
+# the exact directory the app reads.
+os.environ.setdefault("SUPERTONIC_CACHE_DIR",
+                      str(model_fetch.DEFAULT_SUPERTONIC_CACHE_DIR))
 # Read back from the environment (like HF_HOME below in the offline gating) so
 # an externally set cache location is honored by the offline check too.
 SUPERTONIC_CACHE_DIR = Path(os.environ["SUPERTONIC_CACHE_DIR"])
@@ -925,23 +933,13 @@ _CACHED_REPOS = (
 )
 
 
-def _supertonic_model_cached() -> bool:
-    """True when the Supertonic 3 model is fully present in its cache.
-
-    The package downloads atomically (into a temp directory that is renamed
-    onto SUPERTONIC_CACHE_DIR only on success), so a present, non-empty cache
-    directory is a *complete* one - no per-file manifest check is needed.
-    Relevant because the Supertonic download itself goes through
-    huggingface_hub: flipping HF_HUB_OFFLINE=1 before the model exists would
-    block that first download.
-    """
-    try:
-        return SUPERTONIC_CACHE_DIR.is_dir() and any(SUPERTONIC_CACHE_DIR.iterdir())
-    except OSError:
-        return False
-
-
-_TTS_MODEL_CACHED = (_supertonic_model_cached() if TTS_BACKEND == "supertonic"
+# model_fetch.supertonic_cached() owns this check: it reads the same env var
+# set above and is pure filesystem work, so calling it here pulls in no
+# huggingface_hub import. It matters at all because the Supertonic download
+# itself goes through huggingface_hub - flipping HF_HUB_OFFLINE=1 before the
+# model exists would block that first download.
+_TTS_MODEL_CACHED = (model_fetch.supertonic_cached()
+                     if TTS_BACKEND == "supertonic"
                      else True)  # Kokoro is covered by _CACHED_REPOS above
 # HF_HOME is read from os.environ (not MODEL_CACHE_DIR) so an externally set cache
 # location is honored.
