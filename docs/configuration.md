@@ -15,7 +15,7 @@ Key options in [`mimora/config.py`](../mimora/config.py) (overridable via [`conf
 | `PHRASE_GEN_TEMPERATURE` / `PHRASE_GEN_MAX_TOKENS` | `0.7` / `40` | Phrase-generation sampling. |
 | `PHRASE_GEN_WINDOW_SENTENCES` | `5` | Sentences of the source text sent to the model per request (sliding window). |
 | `PHRASE_GEN_WINDOW_REPEATS` | `5` | Phrases generated per window position before it slides forward by half its size. |
-| `LLM_BACKEND` | `llama-server` | `llama-server` (the official llama.cpp binary, auto-started as a subprocess; install it with `python -m mimora.llama_server_fetch`), `lm-studio`, or `off` - no LLM is loaded or started; phrases are the practice text's own sentences, verbatim and in order. Aimed primarily at low-end machines. The retired `local_server` value is read as `llama-server`. |
+| `LLM_BACKEND` | `llama-server` | `llama-server` (the official llama.cpp binary, auto-started as a subprocess; install it with `python -m mimora.llama_server_fetch`), `lm-studio`, or `off` - no LLM is loaded or started; phrases are the practice text's own sentences, verbatim and in order. Aimed primarily at low-end machines. |
 | `LLAMA_SERVER_PATH` | resolved | The binary the `llama-server` backend launches. settings.json `"llama_server_path"` wins (relative to the project root); empty falls back to `bin/llama/` (installed by `mimora.llama_server_fetch`), then to `llama-server` on `PATH`. |
 | `MAX_RECORD_SECONDS` | `20` | Safety cap on recording length. |
 | `RANDOM_VOICE` | `False` | Speak every new phrase with a fresh random voice of the active language/variant (never the one just heard). Needs at least two voices. The `voice` setting is kept and used again when this is off. |

@@ -20,7 +20,6 @@ Mimora is built on SpeakLoop, an MVP voice-tutor project. Its default **phoneme*
 | `mimora/loader.py` | Pure, stateless config-loading helpers (JSON parsing, setting validation, device probe) used by `config.py`. |
 | `mimora/prosody_utils.py` | Pure plotting helpers (`to_semitones`, `resample_series`) kept free of the ML/audio stack. |
 | `mimora/config.py` | All configuration: device, model names, score threshold, practice-text path, phrase-generation settings, audio settings. |
-| `llm_server/server.py` | **Retired.** Standalone FastAPI server loading GGUF models via `llama_cpp`, formerly the `local_server` backend. No application code references it; it is still installed because `install.py` has not been reworked yet. |
 | `pronunciation/phoneme/speech.py` | **Default** pronunciation engine - espeak reference phonemes vs a wav2vec2 phoneme recognizer, feature-weighted edit distance, calibrated 0-5 grade. No GUI dependency. |
 | `pronunciation/phoneme/calibrate.py` | On-request scoring calibration for the **default** phoneme engine: reads the per-attempt samples from `logs/phoneme_samples.jsonl` and writes `pronunciation/phoneme/calibration.json`. |
 | `pronunciation/acoustic/speech.py` | Alternative pronunciation engine (adapted from OpenPronounce). Single entry point `analyze(...)`; Wav2Vec2 embeddings + DTW, phoneme comparison, scoring. No GUI dependency. |
@@ -28,4 +27,4 @@ Mimora is built on SpeakLoop, an MVP voice-tutor project. Its default **phoneme*
 | `config/` | User configuration data: `settings.json` (hand-edited preferences), `hardware_config.json` (machine-derived overrides written by `tools/detect_hardware.py`), and `themes/` (UI color schemes). |
 | `texts/practice_text.txt` | Default source text shown in the input panel at startup; put your own practice texts in `texts/` (personal texts stay local - `texts/` is gitignored, only the bundled starter texts are committed). |
 | `tools/detect_hardware.py` | Standalone hardware probe (RAM/CPU/GPU/VRAM/audio). Writes `config/hardware_config.json`, whose `config` section supplies machine-derived overrides (e.g. `EXTERNAL_N_GPU_LAYERS`, `WAV2VEC2_DEVICE`) that `mimora/config.py` reads in preference to its defaults. |
-| `install.py` | Standalone, idempotent installer: checks Python, detects GPU/CUDA and installs matching torch / llama-cpp-python, installs requirements, checks espeak-ng, pre-downloads the HF models and the GGUF chat model, then runs `detect_hardware.py`. |
+| `install.py` | Standalone, idempotent installer: checks Python, detects GPU/CUDA and installs the matching torch, installs requirements, checks espeak-ng, pre-downloads the HF models, the llama-server binary and the GGUF chat model, then runs `detect_hardware.py`. |

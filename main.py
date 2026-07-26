@@ -1421,7 +1421,7 @@ class PronunciationTrainerGUI:
         in progress (so the capture thread exits its loop and closes the input
         stream), and kills the local LLM server subprocess - the hard exit
         (lifecycle.hard_exit) does NOT terminate children, so without this
-        the llama_cpp server would leak, keep holding VRAM, and (on restart)
+        the llama-server process would leak, keep holding VRAM, and (on restart)
         still occupy the server port the new process needs.
         """
         self.shutdown_event.set()

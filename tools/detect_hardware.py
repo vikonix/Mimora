@@ -15,9 +15,10 @@ Run it manually whenever the hardware changes:
 
     python tools/detect_hardware.py
 
-It only relies on packages the project already uses (torch, sounddevice);
-each probe degrades gracefully if its package is missing or broken, and any
-such problem is recorded in the "warnings" list of the output file.
+It only relies on packages the project already uses (torch, sounddevice) plus
+the stdlib-only mimora.llama_server_fetch; each probe degrades gracefully if
+its package is missing or broken, and any such problem is recorded in the
+"warnings" list of the output file.
 """
 
 import ctypes
@@ -25,22 +26,24 @@ import json
 import logging
 import os
 import platform
-import site
+import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
 # The tool lives in tools/ but its output is a config artifact, so it is written
 # to the project's config/ directory (read by mimora/config.py), not next to the
 # script.
-OUTPUT_FILE = Path(__file__).resolve().parent.parent / "config" / "hardware_config.json"
+OUTPUT_FILE = PROJECT_ROOT / "config" / "hardware_config.json"
 
 # A timestamped record of each run is kept in the project-wide logs/ directory
 # (the same one config.py uses for main.log), alongside the human-friendly
 # console print()s. The log file is the place to look when diagnosing why a
 # given machine was detected the way it was - it captures the warnings too.
-LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOG_DIR = PROJECT_ROOT / "logs"
 LOG_FILE = LOG_DIR / "hwdetect.log"
 
 logger = logging.getLogger("hwdetect")
@@ -101,12 +104,12 @@ def detect_ram_gb(warnings: list) -> float | None:
 def detect_cpu_features(warnings: list) -> dict:
     """SIMD CPU features relevant to llama.cpp, read from numpy (already a dep).
 
-    AVX512 is the one that bites: prebuilt llama-cpp-python wheels from 0.3.29 on
-    are built with it and crash with 0xC000001D on CPUs without it. The repair
-    tool tools/sweep_llama_versions.py reads the same flag to install an
-    AVX2-safe version on such machines. Recorded here purely for diagnostics.
-    numpy exposes a CPUID-based feature map, the cleanest cross-platform source
-    without a new dependency or fragile Windows API calls.
+    Diagnostics only, but the first thing to look at when the pinned
+    llama-server build dies on startup: a binary compiled for an instruction
+    set the CPU lacks crashes outright (0xC000001D on Windows) instead of
+    degrading, and AVX512 is the usual culprit. numpy exposes a CPUID-based
+    feature map, the cleanest cross-platform source without a new dependency
+    or fragile Windows API calls.
     """
     features: dict = {}
     try:
@@ -137,9 +140,10 @@ def detect_gpu(warnings: list) -> dict:
 
     Two independent consumers, probed separately:
 
-    - llama-cpp-python ships its own CUDA runtime, fully independent of torch.
-      ``llama_gpu_offload`` reflects its own capability probe (None when the
-      probe is unavailable - physical GPU presence is the fallback signal).
+    - llama-server runs as its own process with its own CUDA runtime, fully
+      independent of torch. ``llama_gpu_offload`` reflects the installed
+      build's own device probe (None when there is no install to ask -
+      physical GPU presence is the fallback signal).
     - torch (used only by Wav2Vec2 in pronunciation/acoustic/) reports CUDA via
       ``torch_cuda``. A CPU-only torch build is normal here and only means
       pronunciation analysis runs on CPU; it says nothing about the LLM.
@@ -153,7 +157,7 @@ def detect_gpu(warnings: list) -> dict:
         "name": None,
         "vram_gb": None,
         "torch_cuda": False,
-        "llama_gpu_offload": _probe_llama_offload(warnings),
+        "llama_gpu_offload": None,
         "device_count": 0,
         "all_adapters": _list_video_adapters(),
     }
@@ -178,115 +182,99 @@ def detect_gpu(warnings: list) -> dict:
             warnings.append(
                 f"'{gpu['name']}' is present but torch has no CUDA (CPU-only "
                 "build) - pronunciation analysis (Wav2Vec2) will run on CPU; "
-                "the LLM is unaffected, it uses llama-cpp's own CUDA"
+                "the LLM is unaffected, llama-server carries its own CUDA "
+                "runtime"
             )
     except ImportError:
         warnings.append("torch is not installed; Wav2Vec2 device defaults to CPU")
     except Exception as exc:  # noqa: BLE001 - a broken CUDA runtime must not kill detection
         warnings.append(f"torch CUDA probe failed: {exc}")
 
+    # Probed last, once presence is settled: the probe stays quiet on machines
+    # that have no GPU at all, where "the LLM cannot use the GPU" is not news.
+    gpu["llama_gpu_offload"] = _probe_llama_offload(warnings, gpu["present"])
+
     return gpu
 
 
-def _register_nvidia_dll_dirs() -> None:
-    """Make the CUDA runtime (libcudart / libcublas) findable before llama_cpp
-    is imported.
+def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
+    """Whether the installed llama-server binary can offload to the GPU.
 
-    Without a system CUDA Toolkit, these come from the nvidia-cuda-runtime-cu12
-    / nvidia-cublas-cu12 pip packages that install.py's GPU step installs (or,
-    when torch is a CUDA build, are already bundled inside torch/lib/). Windows
-    and Linux need different tricks because the two platforms resolve a native
-    library's own dependencies differently:
+    Asks the binary itself with `--list-devices` (loads no model, sub-second)
+    and matches the answer against the device pattern of the variant it was
+    installed as. That comparison is the point: a CUDA build whose cudart DLLs
+    are missing or of the wrong major version starts fine, still logs
+    "offloaded N/N layers to GPU", and simply runs about three times slower on
+    the CPU - see tasks/llama-cpp.md, phase 0. The same probe guards every app
+    start in mimora/llm_server_ctl.py (log_compute_devices).
 
-    - Windows: llama.dll needs cudart64_12.dll / cublas64_12.dll on PATH. It is
-      loaded with winmode=RTLD_GLOBAL (0), which selects the legacy DLL search
-      (PATH is consulted, os.add_dll_directory() dirs are not) - so the pip
-      packages' site-packages/nvidia/*/bin folders are prepended to PATH
-      (add_dll_directory is still called too, in case a future llama_cpp
-      switches winmode).
-    - Linux: libllama.so needs libcudart.so.12 / libcublas.so.12 resolvable by
-      the dynamic linker. Setting os.environ["LD_LIBRARY_PATH"] from within an
-      already-running process has NO effect - glibc's loader reads it once at
-      process startup, before this function ever runs. Instead, each library is
-      preloaded here with ctypes.CDLL(path, mode=RTLD_GLOBAL): once a shared
-      object with a given SONAME is loaded anywhere in the process, the loader
-      reuses that same instance to satisfy any other module's dependency on
-      that SONAME - which is exactly what libllama.so asks for when it is
-      imported next.
+    Only the project's own install in bin/llama/ is probed. A llama-server the
+    user manages themselves carries no record of which backend it was built
+    for, so there is nothing to compare its device list against; it yields None
+    like an absent install does.
 
-    No-op on macOS (no CUDA there) or when no candidate library is found - the
-    subsequent `import llama_cpp` then fails with its original error, which
-    callers already catch.
-    (llm_server/server.py and tools/smoke_test_llama.py carry the same helper -
-    keep all three in sync.)
+    Returns True/False, or None when the question cannot be answered - callers
+    then fall back to physical GPU presence, which is what build_config does.
+    *gpu_present* only decides whether a negative answer is worth a warning: on
+    a machine without a GPU "the LLM cannot use the GPU" is not news, and
+    build_config zeroes the LLM's VRAM budget on absence anyway.
     """
-    if sys.platform == "win32":
-        for site_dir in site.getsitepackages():
-            for bin_dir in Path(site_dir).glob("nvidia/*/bin"):
-                os.add_dll_directory(str(bin_dir))
-                os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ["PATH"]
-        return
-
-    if not sys.platform.startswith("linux"):
-        return  # macOS: no CUDA.
-
-    nvidia_dirs = [Path(site_dir) / "nvidia" for site_dir in site.getsitepackages()]
-    lib_dirs = [
-        nvidia_dir / pkg / "lib"
-        for nvidia_dir in nvidia_dirs
-        for pkg in ("cuda_runtime", "cublas")
-        if (nvidia_dir / pkg / "lib").is_dir()
-    ]
+    # detect_hardware.py runs as a script, so sys.path starts at tools/ and the
+    # package next door is not importable without this. llama_server_fetch is
+    # stdlib-only and side-effect-free on import, which is why it is safe to
+    # pull in from a tool that may run before the requirements are installed.
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
     try:
-        import torch
-        lib_dirs.append(Path(torch.__file__).resolve().parent / "lib")
-    except ImportError:
-        pass
-
-    # cudart first: cublas's own dependency on it must already be resolvable
-    # when cublas itself gets preloaded next.
-    for stem in ("libcudart.so", "libcublas.so"):
-        for lib_dir in lib_dirs:
-            matches = sorted(lib_dir.glob(f"{stem}*")) if lib_dir.is_dir() else []
-            if matches:
-                try:
-                    ctypes.CDLL(str(matches[0]), mode=ctypes.RTLD_GLOBAL)
-                except OSError:
-                    pass
-                break
-
-
-def _probe_llama_offload(warnings: list) -> bool | None:
-    """Whether the installed llama-cpp-python build can offload to GPU.
-
-    Returns None when it cannot be determined (package missing or too old to
-    expose the probe) - callers should then fall back to physical GPU presence.
-    """
-    _register_nvidia_dll_dirs()
-    try:
-        import llama_cpp
-    except ImportError:
-        warnings.append("llama-cpp-python is not installed; "
+        from mimora import llama_server_fetch
+    except ImportError as exc:
+        warnings.append(f"mimora.llama_server_fetch is not importable ({exc}); "
                         "GPU offload capability unknown")
         return None
-    except Exception as exc:  # noqa: BLE001 - native DLL load errors
-        warnings.append(f"llama_cpp import failed: {exc}")
+
+    exe = llama_server_fetch.installed_exe()
+    if exe is None:
+        if gpu_present:
+            warnings.append(
+                "llama-server is not installed in bin/llama (run "
+                "'python -m mimora.llama_server_fetch'); GPU offload "
+                "capability unknown")
         return None
 
-    probe = getattr(llama_cpp, "llama_supports_gpu_offload", None)
-    if probe is None:
+    variant_name = llama_server_fetch.installed_variant(exe)
+    if variant_name is None:
+        # installed_exe() already required a readable stamp, so the only way
+        # here is a stamp naming a variant this version of the module dropped.
+        warnings.append(f"{exe} was installed as a variant this build does not "
+                        "know; GPU offload capability unknown")
         return None
+
+    pattern = llama_server_fetch.VARIANTS[variant_name].device_pattern
+    if pattern is None:
+        # A CPU build cannot offload, full stop - the same verdict the old
+        # llama-cpp-python probe returned for a CPU-only wheel.
+        if gpu_present:
+            warnings.append(
+                f"the installed llama-server is the '{variant_name}' build - "
+                "the LLM cannot use the GPU; reinstall it with "
+                "'python -m mimora.llama_server_fetch --force' to pick up the "
+                "CUDA build")
+        return False
+
     try:
-        supported = bool(probe())
-    except Exception as exc:  # noqa: BLE001
-        warnings.append(f"llama_supports_gpu_offload() failed: {exc}")
+        devices = llama_server_fetch.list_devices(exe)
+    except llama_server_fetch.LlamaServerFetchError as exc:
+        warnings.append(f"llama-server --list-devices failed: {exc}")
         return None
-    if not supported:
-        warnings.append(
-            "llama-cpp-python is a CPU-only build - the LLM cannot use the "
-            "GPU; reinstall it with CUDA support to enable offload"
-        )
-    return supported
+
+    if re.search(pattern, devices):
+        return True
+    warnings.append(
+        f"the '{variant_name}' llama-server build lists no matching device, so "
+        f"it would silently run on the CPU (about three times slower); check "
+        f"that the cudart DLLs sit next to {exe.name} and that their major "
+        f"version matches the build. --list-devices said:\n{devices.strip()}")
+    return False
 
 
 def _query_nvidia_smi(warnings: list) -> dict | None:
@@ -375,15 +363,15 @@ def build_config(hardware: dict) -> dict:
 
     The names match the constants in config.py so the app can apply them
     directly. LLM parameters (N_GPU_LAYERS, N_CTX) follow the physical GPU and
-    llama-cpp's own offload capability - NOT torch, which is a separate stack
-    used only by Wav2Vec2. Threshold rationale: the GGUF model weighs ~2 GB at
-    Q4_K_M and Kokoro/Wav2Vec2 also claim VRAM when they run on the GPU, so
-    full offload plus GPU-side Wav2Vec2 needs a comfortable margin.
+    the installed llama-server build's own device probe - NOT torch, which is a
+    separate stack used only by Wav2Vec2. Threshold rationale: the GGUF model
+    weighs ~2 GB at Q4_K_M and Kokoro/Wav2Vec2 also claim VRAM when they run on
+    the GPU, so full offload plus GPU-side Wav2Vec2 needs a comfortable margin.
     """
     gpu = hardware["gpu"]
 
-    # LLM side: usable unless llama-cpp explicitly reports a CPU-only build
-    # (None = probe unavailable, assume a present GPU is usable).
+    # LLM side: usable unless llama-server explicitly reported no usable device
+    # (None = nothing to ask, assume a present GPU is usable).
     llm_vram = gpu["vram_gb"] or 0
     if not gpu["present"] or gpu["llama_gpu_offload"] is False:
         llm_vram = 0
@@ -460,7 +448,7 @@ def main() -> int:
     if gpu["present"]:
         llama_state = {True: "yes", False: "NO", None: "unknown"}[gpu["llama_gpu_offload"]]
         gpu_line = (f"GPU: {gpu['name']} ({gpu['vram_gb']} GB VRAM, "
-                    f"llama offload: {llama_state}, torch CUDA: "
+                    f"llama-server offload: {llama_state}, torch CUDA: "
                     f"{'yes' if gpu['torch_cuda'] else 'no'})")
     else:
         gpu_line = "GPU: none detected"

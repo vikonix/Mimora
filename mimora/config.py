@@ -345,17 +345,17 @@ DEVICE = loader.detect_device(_HW.get("DEVICE"))
 #                    phrase-length selector is disabled in this mode (a
 #                    sentence is never shortened into a fragment).
 LLM_BACKEND_CHOICES = ("llama-server", "lm-studio", "off")
-# Retired names are rewritten in the in-memory view too, not just in the
-# constant: user_setting() reads _USER directly, and the settings window would
-# otherwise be handed a combobox value that is no longer among its choices.
-if "llm_backend" in _USER:
-    _USER["llm_backend"] = loader.migrate_llm_backend(_USER["llm_backend"])
 LLM_BACKEND = _USER.get("llm_backend", "llama-server")
 if LLM_BACKEND not in LLM_BACKEND_CHOICES:
     print(f"[config] settings.json: unknown llm_backend {LLM_BACKEND!r} "
           f"(expected one of {', '.join(LLM_BACKEND_CHOICES)}); "
           f"using 'llama-server'", file=sys.stderr)
     LLM_BACKEND = "llama-server"
+    # The correction has to land in the in-memory view as well, not just in
+    # the constant: user_setting() reads _USER directly, so the settings
+    # window would otherwise be handed a combobox value that is not among its
+    # choices.
+    _USER["llm_backend"] = LLM_BACKEND
 
 # =====================================================================
 # LM Studio backend (for "lm-studio" backend)
@@ -772,7 +772,7 @@ WAV2VEC2_MODEL_NAME = "facebook/wav2vec2-large-960h"
 # emits espeak-style IPA, so its phone inventory matches the espeak reference.
 WAV2VEC2_PHONEME_MODEL_NAME = "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
 # Device for Wav2Vec2. Defaults to the shared DEVICE; hardware detection may pin
-# it to "cpu" to avoid VRAM contention with llama_cpp / Kokoro on a single GPU.
+# it to "cpu" to avoid VRAM contention with llama-server / Kokoro on a single GPU.
 WAV2VEC2_DEVICE = _HW.get("WAV2VEC2_DEVICE") or DEVICE
 # Target score (0-100): feeds each engine's result.passed. NOT used by the app
 # yet - computed and logged only, reserved for a future pass/repeat gate (see
@@ -807,10 +807,10 @@ PRACTICE_TEXT_FALLBACK = _LANG_PROFILE["practice_text_fallback"]
 # language text, so they come from the active profile (see LANGUAGE_PROFILES).
 PHRASE_GEN_TEMPERATURE = 0.7
 # Nucleus sampling, sent explicitly so every backend samples identically:
-# llama-server and LM Studio default to 0.95, and the retired local_server
-# backend applied 0.9, so leaving it unset made the same prompt sample
-# differently depending on which server answered. The value is 0.9 to keep the
-# phrases comparable with everything generated before the migration.
+# llama-server and LM Studio both default to 0.95, but a default is not a
+# promise, and leaving the parameter unset makes the same prompt sample
+# differently the moment a backend changes its mind. 0.9 is the value the
+# phrases in the logs were generated with.
 PHRASE_GEN_TOP_P = 0.9
 PHRASE_GEN_MAX_TOKENS = 40
 _PHRASE_GEN = _LANG_PROFILE["phrase_gen"]
@@ -894,7 +894,7 @@ NLLB_TRANSLATOR_MODEL_NAME = "facebook/nllb-200-distilled-600M"
 # Device for the translator. Defaults to CPU on purpose: translation is
 # latency-tolerant (it runs in the background after the phrase is shown and the
 # reference has played), and keeping NLLB off the GPU avoids VRAM contention
-# with Kokoro / Wav2Vec2 / llama_cpp - matching the translator's RAM (not VRAM) budget.
+# with Kokoro / Wav2Vec2 / llama-server - matching the translator's RAM (not VRAM) budget.
 # hardware detection may pin it to "cuda" on a machine with VRAM to spare.
 TRANSLATOR_DEVICE = _HW.get("TRANSLATOR_DEVICE") or "cpu"
 # The translator's source language is the language being practiced: NLLB

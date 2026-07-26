@@ -184,12 +184,6 @@ class BackendListTests(unittest.TestCase):
         self.assertEqual(config.USER_SETTING_DEFAULTS["llm_backend"],
                          "llama-server")
 
-    def test_retired_backend_is_gone(self):
-        # local_server (the llama-cpp-python wrapper) must not come back as a
-        # selectable value; settings.json files naming it are migrated instead
-        # (loader.migrate_llm_backend).
-        self.assertNotIn("local_server", config.LLM_BACKEND_CHOICES)
-
 
 if __name__ == "__main__":
     unittest.main()

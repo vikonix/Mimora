@@ -130,35 +130,6 @@ class UserBoolTests(unittest.TestCase):
             self.assertTrue(loader.user_bool({"k": "yes"}, "k", True))
 
 
-class MigrateLlmBackendTests(unittest.TestCase):
-    """migrate_llm_backend - retired backend names map to their successor."""
-
-    def test_retired_name_becomes_its_successor(self):
-        with redirect_stderr(io.StringIO()):
-            self.assertEqual(loader.migrate_llm_backend("local_server"),
-                             "llama-server")
-
-    def test_migration_is_announced(self):
-        # Silent rewriting would be indistinguishable from the app ignoring the
-        # setting, so the user has to be told the name changed.
-        stderr = io.StringIO()
-        with redirect_stderr(stderr):
-            loader.migrate_llm_backend("local_server")
-        self.assertIn("local_server", stderr.getvalue())
-        self.assertIn("llama-server", stderr.getvalue())
-
-    def test_current_name_passes_through_untouched(self):
-        for value in ("llama-server", "lm-studio", "off"):
-            self.assertEqual(loader.migrate_llm_backend(value), value)
-
-    def test_unknown_and_non_string_values_pass_through(self):
-        # Rejecting them is the caller's job (config.py validates against
-        # LLM_BACKEND_CHOICES); this helper only renames.
-        self.assertEqual(loader.migrate_llm_backend("nonsense"), "nonsense")
-        self.assertEqual(loader.migrate_llm_backend(7), 7)
-        self.assertIsNone(loader.migrate_llm_backend(None))
-
-
 class ServerUrlTests(unittest.TestCase):
     """server_url - every accepted spelling normalizes to the same base URL."""
 

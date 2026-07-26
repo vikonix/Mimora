@@ -63,7 +63,6 @@ import importlib.metadata as ilmeta
 import logging
 import os
 import platform
-import re
 import shutil
 import subprocess
 import sys
@@ -466,26 +465,35 @@ def detect_gpu(log: Logger) -> tuple[str | None, tuple[int, int] | None]:
     """Return (gpu_name, cuda_version) using nvidia-smi only.
 
     Both are None when no NVIDIA GPU / nvidia-smi is found. cuda_version is the
-    maximum CUDA the installed driver supports, parsed from the smi header.
+    maximum CUDA the installed driver supports and comes from
+    mimora.llama_server_fetch.detect_driver_cuda() rather than from a private
+    copy of the parsing: the smi header was renamed in the 610 drivers
+    ("CUDA UMD Version" in place of "CUDA Version") and only that module knew
+    about it, so this function used to report "unknown" on a perfectly healthy
+    machine. The module is stdlib-only and side-effect-free on import, so it is
+    safe here, before the requirements step; its own log lines reach
+    logs/install.log through bridge_module_logging().
     """
     smi = shutil.which("nvidia-smi")
     if not smi:
         log.log("    nvidia-smi not found - treating this machine as CPU-only.")
         return None, None
 
-    try:
-        out = subprocess.run(
-            [smi], capture_output=True, text=True, timeout=15
-        ).stdout
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        log.log(f"    nvidia-smi failed ({exc}) - treating as CPU-only.")
-        return None, None
-
-    # Driver's max supported CUDA appears in the header: "CUDA Version: 12.8".
     cuda_version: tuple[int, int] | None = None
-    match = re.search(r"CUDA Version:\s*(\d+)\.(\d+)", out)
-    if match:
-        cuda_version = (int(match.group(1)), int(match.group(2)))
+    # install.py is normally run from the project root, which already puts it
+    # on sys.path; this also covers `python /somewhere/else/install.py`.
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    try:
+        from mimora.llama_server_fetch import detect_driver_cuda
+    except ImportError as exc:
+        # Not fatal, and deliberately not an InstallError: an unknown version
+        # makes pick_cu_series fall back to the newest wheel series, which is
+        # what this function did on an unparsable header anyway.
+        log.log(f"    Could not import mimora.llama_server_fetch ({exc}) - "
+                f"driver CUDA version stays unknown.")
+    else:
+        cuda_version = detect_driver_cuda()
 
     # GPU name comes from a dedicated query (robust across smi layouts).
     name = None
