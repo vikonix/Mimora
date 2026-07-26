@@ -63,6 +63,7 @@ import importlib.metadata as ilmeta
 import logging
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -155,8 +156,19 @@ def all_requirements_installed() -> bool:
 # Logging
 # ---------------------------------------------------------------------------
 
+# CSI escape sequences (ESC [ ... final byte) - what pip, tqdm and any coloured
+# child process emit. The terminal consumes them; a text file does not, and
+# logs/install.log is exactly the file users are asked to send in when an
+# install goes wrong, so it is stripped on the way to disk only.
+_ANSI_CSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
 class Logger:
-    """Writes to both stdout and logs/install.log (append-mode, line-buffered)."""
+    """Writes to both stdout and logs/install.log (append-mode, line-buffered).
+
+    The console copy keeps whatever escape sequences a child process produced
+    (pip's colours are worth having); the file copy is stripped of them.
+    """
 
     def __init__(self, path: Path):
         # Ensure logs/ exists, then append (keeps a history across runs).
@@ -165,7 +177,7 @@ class Logger:
 
     def log(self, message: str = "") -> None:
         print(message)
-        self._fh.write(message + "\n")
+        self._fh.write(_ANSI_CSI_RE.sub("", message) + "\n")
 
     def banner(self, title: str) -> None:
         line = "=" * 70
@@ -452,7 +464,7 @@ def _import_fetcher(module_name: str, log: Logger, report: StepReport,
         return importlib.import_module(module_name)
     except ImportError as exc:
         log.log(f"    Could not import {module_name}: {exc}")
-        log.log("    Run the project dependencies step (4/10) first.")
+        log.log("    Run the project dependencies step (step 4) first.")
         report.add(step_name, FAILED, f"{module_name} unimportable")
         raise InstallError(step_name) from exc
 
@@ -567,7 +579,7 @@ def check_virtualenv(log: Logger, args: argparse.Namespace) -> None:
     global site-packages, so we detect a venv/virtualenv/conda env and, when
     absent, make the user confirm before continuing.
     """
-    log.banner("Step 0/10 - Environment check")
+    log.banner("Step 0 - Environment check")
     in_venv = (sys.prefix != sys.base_prefix
                or bool(os.environ.get("CONDA_PREFIX")))
     log.log(f"    Interpreter: {sys.executable}")
@@ -623,7 +635,7 @@ def step_check_vcredist(
     actionable message. We do NOT auto-install the redistributable: it needs an
     elevated GUI installer, which is out of scope for this pip-only setup.
     """
-    log.banner("Step 0/10 - Visual C++ runtime (Windows)")
+    log.banner("Step 0 - Visual C++ runtime (Windows)")
     if sys.platform != "win32":
         log.log("    Not Windows; the MSVC runtime check does not apply.")
         report.add("VC++ runtime", SKIPPED, "not Windows")
@@ -689,7 +701,7 @@ def step_check_tkinter(
     already, so in practice this only bites Linux (and Homebrew Python on
     macOS).
     """
-    log.banner("Step 0/10 - tkinter (GUI toolkit)")
+    log.banner("Step 0 - tkinter (GUI toolkit)")
     if sys.platform == "win32":
         log.log("    Windows Python installers bundle tkinter; skipping.")
         report.add("tkinter", SKIPPED, "not Linux/Unix")
@@ -759,7 +771,7 @@ def step_check_python(
 ) -> None:
     """Gate the interpreter: hard-fail below the minimum, warn above the tested
     maximum (no upper version block - newer Pythons may just lack wheels)."""
-    log.banner("Step 1/10 - Python version")
+    log.banner("Step 1 - Python version")
     current = sys.version_info[:2]
     log.log(f"    Running Python {platform.python_version()} ({sys.executable})")
     if current < MIN_PYTHON:
@@ -783,7 +795,7 @@ def step_install_requirements(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Install the project requirements; the root file chains the subprojects."""
-    log.banner("Step 4/10 - Project dependencies")
+    log.banner("Step 4 - Project dependencies")
     if not REQUIREMENTS.exists():
         log.log(f"    ERROR: {REQUIREMENTS} not found. Aborting.")
         report.add("pip requirements", FAILED, "requirements.txt missing")
@@ -840,7 +852,7 @@ def step_gpu_torch(
 
 def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
     """Ensure the native espeak-ng binary exists; offer to install it."""
-    log.banner("Step 5/10 - espeak-ng (native binary for phonemizer)")
+    log.banner("Step 5 - espeak-ng (native binary for phonemizer)")
     if shutil.which("espeak-ng") or shutil.which("espeak"):
         log.log("    espeak-ng found on PATH.")
         report.add("espeak-ng", DONE, "already present")
@@ -911,7 +923,7 @@ def step_prefetch_models(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the Hugging Face models into model_cache/ (HF_HOME)."""
-    log.banner("Step 6/10 - Pre-download Hugging Face models")
+    log.banner("Step 6 - Pre-download Hugging Face models")
     model_fetch = _import_fetcher("mimora.model_fetch", log, report,
                                   "HF model cache")
 
@@ -944,7 +956,7 @@ def step_prefetch_supertonic(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the Supertonic 3 TTS model into model_cache/supertonic3/."""
-    log.banner("Step 7/10 - Supertonic 3 TTS model (Spanish)")
+    log.banner("Step 7 - Supertonic 3 TTS model (Spanish)")
     model_fetch = _import_fetcher("mimora.model_fetch", log, report,
                                   "Supertonic model")
 
@@ -984,7 +996,7 @@ def step_llama_server(
     install is perfectly usable, and such a machine can point
     "llama_server_path" at its own binary or switch to the lm-studio backend.
     """
-    log.banner("Step 8/10 - LLM stack: llama-server binary")
+    log.banner("Step 8 - LLM stack: llama-server binary")
     fetch = _import_fetcher("mimora.llama_server_fetch", log, report,
                             "llama-server binary")
 
@@ -1019,7 +1031,7 @@ def step_download_gguf(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the GGUF chat model into models/ if not already present."""
-    log.banner("Step 8/10 - LLM stack: GGUF chat model")
+    log.banner("Step 8 - LLM stack: GGUF chat model")
     gguf_fetch = _import_fetcher("mimora.gguf_fetch", log, report, "GGUF model")
 
     target = gguf_fetch.DEFAULT_GGUF_PATH
@@ -1045,7 +1057,7 @@ def step_detect_hardware(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Run detect_hardware.py late, once torch is installed."""
-    log.banner("Step 9/10 - Hardware detection (writes hardware_config.json)")
+    log.banner("Step 9 - Hardware detection (writes hardware_config.json)")
     if not DETECT_HW_SCRIPT.exists():
         log.log(f"    {DETECT_HW_SCRIPT} not found; skipping.")
         report.add("hardware detection", SKIPPED, "script missing")
@@ -1083,7 +1095,7 @@ def step_create_launchers(
     hints at it (find_local_venv_name()), so the script still works if the
     venv was created under a name other than '.venv'.
     """
-    log.banner("Step 10/10 - Launcher script")
+    log.banner("Step 10 - Launcher script")
     venv_name = find_local_venv_name()
     target = LAUNCHER_BAT if sys.platform == "win32" else LAUNCHER_SH
 
@@ -1135,20 +1147,32 @@ def step_create_launchers(
 # Main
 # ---------------------------------------------------------------------------
 
-def finish(log: Logger, report: StepReport, *, success: bool) -> None:
+def finish(log: Logger, report: StepReport, *, success: bool,
+           dry_run: bool = False) -> None:
     """Print the end-of-run summary.
 
     The "run main.py" hint is printed ONLY on a fully successful run, so a
     failed or aborted install never reads as ready to launch. A successful run
     that still has manual-action items says so before the launch hint.
+
+    Under --dry-run every step reports "skipped", which is the same word the
+    installer uses for "already present, left alone". The note below is what
+    tells the two apart, and it is also why the launch hint is withheld: a
+    rehearsal installed nothing.
     """
     log.banner("Summary")
     log.log(report.render())
     log.log("")
+    if dry_run:
+        log.log("    [dry-run] nothing was executed: every 'skipped' above")
+        log.log("    means 'not attempted', not 'already installed'.")
     log.log(f"    finished: {datetime.now(timezone.utc).isoformat(timespec='seconds')}")
     if not success:
         log.log("    Installation INCOMPLETE - fix the error above and re-run")
         log.log("    install.py. Do NOT run main.py until it finishes cleanly.")
+        return
+    if dry_run:
+        log.log("    Re-run without --dry-run to install.")
         return
     if MANUAL in report.statuses():
         log.log("    Some steps need manual action (see 'needs manual action'")
@@ -1216,7 +1240,7 @@ def main() -> int:
         step_check_python(log, confirmer, report)
 
         # Step 2: GPU detection (informs step 3; no packages needed).
-        log.banner("Step 2/10 - GPU / CUDA detection")
+        log.banner("Step 2 - GPU / CUDA detection")
         gpu_name, driver_cuda = detect_gpu(log)
         use_gpu = (gpu_name is not None or args.gpu) and not args.cpu
         if args.cpu:
@@ -1235,10 +1259,10 @@ def main() -> int:
         # after). torch ships CPU wheels on PyPI, so the CPU path needs no
         # step of its own here.
         if use_gpu:
-            log.banner("Step 3/10 - GPU (CUDA) builds")
+            log.banner("Step 3 - GPU (CUDA) builds")
             step_gpu_torch(log, confirmer, report, driver_cuda)
         else:
-            log.banner("Step 3/10 - CPU builds")
+            log.banner("Step 3 - CPU builds")
             log.log("    Nothing to pre-install: every remaining dependency "
                     "has a CPU wheel on PyPI.")
             report.add("torch (CUDA)", SKIPPED, "CPU-only")
@@ -1282,10 +1306,10 @@ def main() -> int:
         log.log("")
         log.log(f"    ABORTED: step '{exc}' failed - stopping the installer "
                 f"so the error is not masked.")
-        finish(log, report, success=False)
+        finish(log, report, success=False, dry_run=args.dry_run)
         return 1
 
-    finish(log, report, success=True)
+    finish(log, report, success=True, dry_run=args.dry_run)
     return 0
 
 
