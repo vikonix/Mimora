@@ -265,7 +265,8 @@ def missing_models() -> list[str]:
 # ---------------------------------------------------------------------------
 
 def ensure_hf_models(repos: Optional[Sequence[models_info.HfRepo]] = None, *,
-                     force: bool = False) -> None:
+                     force: bool = False,
+                     tqdm_class: Optional[type] = None) -> None:
     """Download every Hugging Face repo Mimora needs into the hub cache.
 
     Already-cached repos are skipped unless *force* is set; already-downloaded
@@ -273,6 +274,13 @@ def ensure_hf_models(repos: Optional[Sequence[models_info.HfRepo]] = None, *,
     snapshot_download's own behaviour). Every repo is attempted even when one
     fails, so a single flaky download does not hide the state of the rest;
     the failures are collected and reported together.
+
+    *tqdm_class* is huggingface_hub's own hook for replacing the progress bar,
+    forwarded untouched. The app's first-run window passes a stand-in that
+    records bytes instead of drawing (mimora/first_run_download.py); the CLI
+    and install.py pass nothing and keep the normal bars. It is omitted from
+    the call rather than passed as None so that a huggingface_hub without the
+    argument still works - it is not pinned anywhere and arrives transitively.
     """
     prepare_hf_env()
     try:
@@ -282,6 +290,8 @@ def ensure_hf_models(repos: Optional[Sequence[models_info.HfRepo]] = None, *,
             "huggingface_hub is not installed - install the project "
             "requirements first (python install.py).") from exc
 
+    progress_arg = {} if tqdm_class is None else {"tqdm_class": tqdm_class}
+
     failures: list[str] = []
     for repo in repos if repos is not None else HF_MODEL_REPOS:
         repo_id = repo.repo_id
@@ -290,7 +300,7 @@ def ensure_hf_models(repos: Optional[Sequence[models_info.HfRepo]] = None, *,
             continue
         log.info("Fetching %s, %d MB [%s] ...", repo.label, repo.size_mb, repo_id)
         try:
-            snapshot_download(repo_id=repo_id)
+            snapshot_download(repo_id=repo_id, **progress_arg)
             log.info("-> done: %s", repo_id)
         except Exception as exc:  # noqa: BLE001 - record which repo failed
             log.error("-> FAILED: %s: %s", repo_id, exc)

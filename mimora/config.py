@@ -430,6 +430,26 @@ def _resolve_llama_server(setting) -> str:
 
 LLAMA_SERVER_PATH = _resolve_llama_server(_USER.get("llama_server_path", ""))
 
+
+def refresh_llama_server_path() -> str:
+    """Re-resolve LLAMA_SERVER_PATH and return it.
+
+    The constant above is computed while this module is imported, i.e. before
+    the first-run window has had a chance to download anything. A binary
+    fetched during that window would otherwise stay invisible for the rest of
+    the process - the value would still be the empty string and
+    LLMServerController would refuse to start on a machine that now has a
+    perfectly good server.
+
+    Only the first-run flow needs this. The lasting fix is to resolve the path
+    where it is used, in llm_server_ctl._build_command(), so that "where is the
+    binary" stops being a property of import time at all; see
+    tasks/first-run-fetch.md, work 6.
+    """
+    global LLAMA_SERVER_PATH
+    LLAMA_SERVER_PATH = _resolve_llama_server(_USER.get("llama_server_path", ""))
+    return LLAMA_SERVER_PATH
+
 # =====================================================================
 # GGUF Model Settings (used by the "llama-server" backend)
 # =====================================================================

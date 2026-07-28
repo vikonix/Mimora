@@ -84,12 +84,17 @@ def gguf_present(target: Optional[Path] = None) -> bool:
 
 
 def ensure_gguf(target: Optional[Path] = None, *,
-                force: bool = False) -> Path:
+                force: bool = False,
+                tqdm_class: Optional[type] = None) -> Path:
     """Make sure the GGUF chat model sits at *target*; return its path.
 
     local_dir is used rather than the plain hub cache so the file lands exactly
     where config.EXTERNAL_MODEL_PATH points, instead of inside the cache's
     blobs/snapshots layout.
+
+    *tqdm_class* is huggingface_hub's own progress-bar hook, forwarded
+    untouched; see model_fetch.ensure_hf_models for why it is omitted from the
+    call instead of being passed as None.
     """
     path = Path(target) if target is not None else DEFAULT_GGUF_PATH
     if not force and gguf_present(path):
@@ -111,6 +116,7 @@ def ensure_gguf(target: Optional[Path] = None, *,
         downloaded = hf_hub_download(
             repo_id=GGUF_REPO_ID, filename=path.name,
             local_dir=str(path.parent),
+            **({} if tqdm_class is None else {"tqdm_class": tqdm_class}),
         )
     except Exception as exc:  # noqa: BLE001 - network, disk, gated repo
         raise GgufFetchError(

@@ -55,7 +55,7 @@ from tkinter import ttk
 from pathlib import Path
 import numpy as np
 
-from mimora import config, lifecycle, prosody
+from mimora import config, first_run_window, lifecycle, prosody
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.phrase_source import SourceTextPhraseProvider
@@ -1470,5 +1470,16 @@ class PronunciationTrainerGUI:
 if __name__ == "__main__":
     # CLI arguments (--version) were already parsed at the top of the module,
     # before the heavy imports, so reaching this point means "run the app".
+
+    # First run on a machine where nothing has been downloaded: ask, fetch, and
+    # only then build the app. It happens BEFORE the constructor because a
+    # refusal of the optional level changes what the constructor builds - it
+    # picks LLMManager or SourceTextPhraseProvider from config.LLM_BACKEND, and
+    # ensure_ready has to have rewritten that first. Returns immediately when
+    # nothing is missing, which is every run after the first.
+    if not first_run_window.ensure_ready():
+        logging.info("First-run download declined; exiting before startup.")
+        raise SystemExit(0)
+
     app = PronunciationTrainerGUI()
     app.run()
