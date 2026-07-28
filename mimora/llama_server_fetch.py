@@ -75,10 +75,26 @@ class Asset(NamedTuple):
 
     ``name`` is a template because the llama-* archives embed the release tag
     in their filename while the cudart-* archives do not.
+
+    size_mb is the download size in decimal MB (bytes / 1_000_000), needed
+    before the download starts: the first-run dialog has to name the volume
+    before the user agrees to it, and the progress bar needs a denominator that
+    is known in advance so its percentage cannot jump backwards when it moves on
+    to the next file (tasks/first-run-fetch.md, works 2 and 3). It sits here,
+    next to the name and the checksum, because all three describe the same file
+    of the same pinned release: bumping RELEASE_TAG rewrites them together, and
+    a size kept in another module would not fail loudly when forgotten, it would
+    quietly mis-scale the bar. Snap the values with
+    ``python tools/measure_model_sizes.py``.
+
+    At download time Content-Length is the truth and this is only the plan; the
+    two are not reconciled on the fly, because re-scaling a running bar makes
+    its percentage jump (see _download).
     """
 
     name: str
     sha256: str
+    size_mb: int
 
 
 class Variant(NamedTuple):
@@ -97,17 +113,26 @@ class Variant(NamedTuple):
 
 # Known builds. Windows x64 only for now; macOS/Linux entries are one line each
 # and get added when there is a machine to verify them on.
+#
+# Bumping RELEASE_TAG means re-snapping every size_mb below with
+# `python tools/measure_model_sizes.py`, in the same commit as the checksums. A
+# wrong size does not break the install, it only makes the first-run dialog and
+# the progress bar lie, which is exactly the kind of error nothing else catches.
 VARIANTS: dict[str, Variant] = {
     "win-cuda-12.4-x64": Variant(
         assets=(
             Asset("llama-{tag}-bin-win-cuda-12.4-x64.zip",
-                  "02dc3cb4a1a336cb91c53c41522cfd994cb307c5c881f442be80c6ff54443330"),
+                  "02dc3cb4a1a336cb91c53c41522cfd994cb307c5c881f442be80c6ff54443330",
+                  size_mb=250),  # measured 2026-07-28
             # The CUDA runtime that ships with the release. Its major version
             # MUST match the build (cuda-12.4 loads cudart64_12.dll,
             # cublas64_12.dll, cublasLt64_12.dll) - a cudart from another major
             # version is exactly what caused the silent CPU fallback in phase 0.
+            # Note that it is the LARGER of the two archives: most of what a CUDA
+            # install downloads is NVIDIA's runtime, not llama.cpp.
             Asset("cudart-llama-bin-win-cuda-12.4-x64.zip",
-                  "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6"),
+                  "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
+                  size_mb=391),  # measured 2026-07-28
         ),
         min_driver_cuda=(12, 4),
         device_pattern=r"\bCUDA\d+\b",
@@ -115,7 +140,8 @@ VARIANTS: dict[str, Variant] = {
     "win-cpu-x64": Variant(
         assets=(
             Asset("llama-{tag}-bin-win-cpu-x64.zip",
-                  "b1db6ea811e564f4bffe6c5eb699a025bb14b16b4f641404cb95189fe3f550b1"),
+                  "b1db6ea811e564f4bffe6c5eb699a025bb14b16b4f641404cb95189fe3f550b1",
+                  size_mb=18),  # measured 2026-07-28
         ),
         min_driver_cuda=None,
         device_pattern=None,
@@ -125,6 +151,17 @@ VARIANTS: dict[str, Variant] = {
 # Auto-selection order for Windows x64: the first variant whose requirements
 # the machine satisfies wins, so GPU builds must come before the CPU fallback.
 WINDOWS_X64_PREFERENCE = ("win-cuda-12.4-x64", "win-cpu-x64")
+
+
+def variant_size_mb(variant_name: str) -> int:
+    """Download size of a whole variant: the sum over its assets.
+
+    A variant has no size of its own on purpose. The CUDA build is two archives
+    that are fetched one after another, and the progress callback reports per
+    file, so per-asset numbers are what the bar actually needs; the total is
+    derived from them and therefore cannot drift away from them.
+    """
+    return sum(asset.size_mb for asset in VARIANTS[variant_name].assets)
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -138,7 +175,8 @@ STAMP_NAME = "installed.json"
 EXE_NAME = "llama-server.exe" if sys.platform == "win32" else "llama-server"
 
 # 1 MiB read chunks: large enough that the loop overhead disappears next to the
-# network, small enough that progress stays smooth on a 373 MB archive.
+# network, small enough that progress stays smooth on the largest asset (the
+# cudart archive, 391 MB - see VARIANTS).
 _CHUNK_SIZE = 1024 * 1024
 _HTTP_TIMEOUT_SEC = 60
 # --list-devices and --version load no model, so they return in well under a
@@ -321,9 +359,17 @@ def _no_window() -> dict:
 
 
 def _human(size: Optional[int]) -> str:
+    """Render a byte count as decimal MB, the unit Asset.size_mb is stated in.
+
+    Decimal on purpose (bytes / 1_000_000, not / 1024**2). This function labels
+    its output "MB", and the same label appears next to the planned sizes in
+    VARIANTS and in models_info; rendering MiB under it would make a finished
+    391 MB download report "372.9 MB" and leave the user comparing two numbers
+    that disagree for no visible reason.
+    """
     if size is None:
         return "unknown size"
-    return f"{size / (1024 * 1024):.1f} MB"
+    return f"{size / 1_000_000:.1f} MB"
 
 
 def _download(url: str, target: Path, expected_sha256: str,
@@ -663,9 +709,10 @@ def _print_plan(variant_name: str, dest: Path, tag: str) -> None:
     print(f"Variant : {variant_name}")
     print(f"Release : {tag}  ({RELEASE_PAGE_URL.format(tag=tag)})")
     print(f"Target  : {dest}")
+    print(f"Download: {variant_size_mb(variant_name)} MB")
     print("Assets  :")
     for asset in spec.assets:
-        print(f"    {asset.name.format(tag=tag)}")
+        print(f"    {asset.name.format(tag=tag)}  ({asset.size_mb} MB)")
         print(f"        {DOWNLOAD_URL.format(tag=tag, asset=asset.name.format(tag=tag))}")
         print(f"        sha256 {asset.sha256}")
     stamp = read_stamp(dest)
@@ -696,14 +743,27 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[list[str]] = None) -> int:
     args = parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # stream=stdout, not the default stderr, matching model_fetch and
+    # gguf_fetch: this CLI also print()s reports to stdout, and two streams with
+    # different buffering come out in whatever order the OS feels like - the
+    # "Driver CUDA: x.y" line select_variant() logs before the plan ended up
+    # printed after it.
+    #
+    # It also puts the download log on the same stream as the non-interactive
+    # progress report, which _cli_progress print()s to stdout; those two used to
+    # be split across stdout and stderr, which is worst exactly when the output
+    # is redirected to a file. Interactive progress stays on stderr on purpose
+    # (a terminal flushes both promptly, and \r updates do not belong in a pipe).
+    logging.basicConfig(level=logging.INFO, format="%(message)s",
+                        stream=sys.stdout)
 
     if args.list:
         print(f"Pinned release: {RELEASE_TAG}")
         for name, spec in sorted(VARIANTS.items()):
             need = (f"driver CUDA >= {spec.min_driver_cuda[0]}.{spec.min_driver_cuda[1]}"
                     if spec.min_driver_cuda else "no GPU requirement")
-            print(f"  {name}  ({need}, {len(spec.assets)} asset(s))")
+            print(f"  {name}  ({need}, {len(spec.assets)} asset(s), "
+                  f"{variant_size_mb(name)} MB)")
         return 0
 
     try:

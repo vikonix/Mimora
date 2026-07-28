@@ -927,11 +927,13 @@ def step_prefetch_models(
     model_fetch = _import_fetcher("mimora.model_fetch", log, report,
                                   "HF model cache")
 
-    repos = ", ".join(repo for repo, _ in model_fetch.HF_MODEL_REPOS)
-    cached = all(model_fetch.hf_repo_cached(repo)
-                 for repo, _ in model_fetch.HF_MODEL_REPOS)
+    repos = ", ".join(repo.repo_id for repo in model_fetch.HF_MODEL_REPOS)
+    cached = all(model_fetch.hf_repo_cached(repo.repo_id)
+                 for repo in model_fetch.HF_MODEL_REPOS)
+    total_mb = sum(repo.size_mb for repo in model_fetch.HF_MODEL_REPOS)
     desc = (f"Download HF models into {model_fetch.MODEL_CACHE_DIR.name}/ "
-            f"(HF_HOME): {repos}. Several GB; already-cached files are reused.")
+            f"(HF_HOME): {repos}. {total_mb} MB in total; already-cached files "
+            f"are reused.")
     if cached:
         log.log(f"    All {len(model_fetch.HF_MODEL_REPOS)} model repos already "
                 f"present in the cache.")
@@ -962,7 +964,8 @@ def step_prefetch_supertonic(
 
     cache_dir = model_fetch.supertonic_cache_dir()
     cached = model_fetch.supertonic_cached()
-    desc = (f"Download the Supertonic 3 TTS model (~400 MB, weights licensed "
+    desc = (f"Download the Supertonic 3 TTS model "
+            f"({model_fetch.SUPERTONIC_SIZE_MB} MB, weights licensed "
             f"OpenRAIL-M) into {cache_dir} - the Spanish text-to-speech "
             f"backend.")
     if cached:
@@ -1001,8 +1004,22 @@ def step_llama_server(
                             "llama-server binary")
 
     installed = fetch.installed_exe() is not None
+
+    # Resolve the variant BEFORE asking. Two reasons: the prompt can then name
+    # the real download size (a single hardcoded number fits only the CUDA
+    # build, and the CPU one is 18 MB against 641), and a platform with no
+    # pinned build is recognised here instead of after the user has agreed to a
+    # download that cannot happen.
+    try:
+        variant = fetch.select_variant()
+    except fetch.UnsupportedPlatformError as exc:
+        # No pinned build for this OS/arch yet: say so and move on.
+        log.log(f"    {exc}")
+        report.add("llama-server binary", MANUAL, "no pinned build, see log")
+        return
+
     desc = (f"Download the pinned llama.cpp release {fetch.RELEASE_TAG} "
-            f"(~600 MB with the CUDA runtime) into "
+            f"({variant}, {fetch.variant_size_mb(variant)} MB) into "
             f"{fetch.INSTALL_DIR.parent.name}/{fetch.INSTALL_DIR.name}/ and "
             f"verify that its GPU backend actually comes up.")
     if installed:
@@ -1013,12 +1030,9 @@ def step_llama_server(
         return
 
     try:
-        exe = fetch.ensure_llama_server(force=installed)
-    except fetch.UnsupportedPlatformError as exc:
-        # No pinned build for this OS/arch yet: say so and move on.
-        log.log(f"    {exc}")
-        report.add("llama-server binary", MANUAL, "no pinned build, see log")
-        return
+        # Passing the resolved variant keeps the install identical to what the
+        # prompt described and saves a second nvidia-smi probe.
+        exe = fetch.ensure_llama_server(variant=variant, force=installed)
     except fetch.LlamaServerFetchError as exc:
         log.log(f"    -> FAILED: {exc}")
         report.add("llama-server binary", FAILED)
@@ -1036,7 +1050,7 @@ def step_download_gguf(
 
     target = gguf_fetch.DEFAULT_GGUF_PATH
     present = gguf_fetch.gguf_present(target)
-    desc = (f"Download {target.name} (~{gguf_fetch.GGUF_SIZE_MB} MB) from "
+    desc = (f"Download {target.name} ({gguf_fetch.GGUF_SIZE_MB} MB) from "
             f"{gguf_fetch.GGUF_REPO_ID} into {target.parent.name}/.")
     if present:
         log.log(f"    Already present: {target}")
@@ -1284,7 +1298,7 @@ def main() -> int:
         # Step 8: the LLM stack - the llama-server binary and the GGUF model it
         # loads. Both are skipped together under --skip-llm: the lm-studio and
         # off backends need neither. The binary comes first because step 9
-        # probes it, and both come after pip because a 2.6 GB download is a bad
+        # probes it, and both come after pip because a 2.7 GB download is a bad
         # place to discover that the dependency install fails.
         if args.skip_llm:
             report.add("llama-server binary", SKIPPED, "--skip-llm")

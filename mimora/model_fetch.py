@@ -30,6 +30,11 @@ Design notes
   soon as the models are cached, which would switch the network off exactly
   when a download is wanted. The dependency runs the other way: config takes
   the cache paths and the Supertonic predicate from here.
+* What each model IS (repo id, label, download size) comes from
+  mimora/models_info.py, which config reads as well - that is how the same
+  facts reach both sides without either importing the other. It is pure data
+  with no imports of its own, so it costs this module nothing. Paths stay here,
+  next to the code that writes into them.
 * prepare_hf_env() must run before huggingface_hub is first imported anywhere
   in the process - HF_HOME and HF_HUB_DISABLE_XET are read at import time. Each
   ensure_* function calls it, so callers do not have to remember the ordering.
@@ -44,6 +49,15 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Optional, Sequence
+
+if __package__ in (None, ""):
+    # Executed as a plain script (python mimora/model_fetch.py) rather than
+    # with -m: that form gives the module no package context and the relative
+    # import below fails. Same shim, and the same reason, as in gguf_fetch.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    __package__ = "mimora"
+
+from . import models_info
 
 log = logging.getLogger(__name__)
 
@@ -61,22 +75,20 @@ MODEL_CACHE_DIR = BASE_DIR / "model_cache"
 # SUPERTONIC_CACHE_DIR env var (whose own default would be ~/.cache/supertonic3).
 # Pinning it under model_cache/ keeps the weights next to the code.
 DEFAULT_SUPERTONIC_CACHE_DIR = MODEL_CACHE_DIR / "supertonic3"
-SUPERTONIC_MODEL_NAME = "supertonic-3"
+
+# Identity and size of every model live in mimora/models_info.py. The names
+# below BIND to those records rather than restating them: a binding cannot
+# drift from what it points at, which a second copy of the string could and did
+# (the same repo ids used to be spelled out here, in config.py and in tts.py).
+SUPERTONIC_MODEL_NAME = models_info.SUPERTONIC.name
+SUPERTONIC_SIZE_MB = models_info.SUPERTONIC.size_mb
 
 # Repos Mimora pulls on first run; pre-fetching them makes the first launch
 # offline-ready. Repo ids match what the app requests.
 # Supertonic is NOT in this list on purpose: it does not use the hub cache
 # (see above), so caching its repo under HF_HOME/hub would be dead weight the
 # app never reads. It has its own ensure_supertonic() instead.
-HF_MODEL_REPOS: tuple[tuple[str, str], ...] = (
-    ("facebook/wav2vec2-large-960h",
-     "Wav2Vec2 (acoustic pronunciation engine, ~1.2 GB)"),
-    ("facebook/wav2vec2-xlsr-53-espeak-cv-ft",
-     "Wav2Vec2 phoneme engine (espeak IPA ASR, ~1.2 GB)"),
-    ("hexgrad/Kokoro-82M", "Kokoro-82M (text-to-speech)"),
-    ("facebook/nllb-200-distilled-600M",
-     "NLLB-200 distilled 600M (offline translator, ~2.4 GB)"),
-)
+HF_MODEL_REPOS: tuple[models_info.HfRepo, ...] = models_info.HF_REPOS
 
 
 class ModelFetchError(RuntimeError):
@@ -238,7 +250,8 @@ def missing_models() -> list[str]:
     Empty means a run needs no network for these models. Intended for the app's
     first-run check as much as for the installer.
     """
-    missing = [repo for repo, _ in HF_MODEL_REPOS if not hf_repo_cached(repo)]
+    missing = [repo.repo_id for repo in HF_MODEL_REPOS
+               if not hf_repo_cached(repo.repo_id)]
     if not supertonic_cached():
         missing.append(SUPERTONIC_MODEL_NAME)
     return missing
@@ -248,7 +261,7 @@ def missing_models() -> list[str]:
 # Downloads
 # ---------------------------------------------------------------------------
 
-def ensure_hf_models(repos: Optional[Sequence[tuple[str, str]]] = None, *,
+def ensure_hf_models(repos: Optional[Sequence[models_info.HfRepo]] = None, *,
                      force: bool = False) -> None:
     """Download every Hugging Face repo Mimora needs into the hub cache.
 
@@ -267,11 +280,12 @@ def ensure_hf_models(repos: Optional[Sequence[tuple[str, str]]] = None, *,
             "requirements first (python install.py).") from exc
 
     failures: list[str] = []
-    for repo_id, label in repos if repos is not None else HF_MODEL_REPOS:
+    for repo in repos if repos is not None else HF_MODEL_REPOS:
+        repo_id = repo.repo_id
         if not force and hf_repo_cached(repo_id):
             log.info("Already cached: %s", repo_id)
             continue
-        log.info("Fetching %s [%s] ...", label, repo_id)
+        log.info("Fetching %s, %d MB [%s] ...", repo.label, repo.size_mb, repo_id)
         try:
             snapshot_download(repo_id=repo_id)
             log.info("-> done: %s", repo_id)
@@ -338,12 +352,14 @@ def _print_status() -> None:
     print(f"HF cache : {hf_home()}")
     print(f"Supertonic cache: {supertonic_cache_dir()}")
     print("Models   :")
-    for repo_id, label in HF_MODEL_REPOS:
-        mark = "present" if hf_repo_cached(repo_id) else "MISSING"
-        print(f"    [{mark:>7}] {repo_id}  - {label}")
+    for repo in HF_MODEL_REPOS:
+        mark = "present" if hf_repo_cached(repo.repo_id) else "MISSING"
+        print(f"    [{mark:>7}] {repo.repo_id}  - {repo.label}, "
+              f"{repo.size_mb} MB")
+    supertonic = models_info.SUPERTONIC
     mark = "present" if supertonic_cached() else "MISSING"
-    print(f"    [{mark:>7}] {SUPERTONIC_MODEL_NAME}  - Supertonic 3 TTS "
-          f"(Spanish, ~400 MB)")
+    print(f"    [{mark:>7}] {supertonic.name}  - {supertonic.label}, "
+          f"{supertonic.size_mb} MB")
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:

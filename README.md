@@ -117,14 +117,19 @@ the GGUF chat model and the llama-server binary must be obtained by hand
 (`python -m mimora.gguf_fetch` and `python -m mimora.llama_server_fetch`) -
 the app does not download those two on its own yet.
 
-| Model | Used by | Notes |
-|---|---|---|
-| `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | pronunciation analysis (**phoneme** engine, default) | espeak IPA phoneme recognizer, ~1.2 GB; via `install.py` or on first run |
-| `facebook/wav2vec2-large-960h` | pronunciation analysis (**acoustic** engine) | ~1.2 GB; via `install.py` or on first run |
-| Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech (English) | via `install.py` or on first run |
-| Supertonic 3 (`Supertone/supertonic-3`) | text-to-speech (Spanish) | ~400 MB into `model_cache/supertonic3/`; via `install.py` or on first run. Weights are **OpenRAIL-M** licensed (code MIT), so they are downloaded, never bundled |
-| `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | NLLB-200 200-language translator, ~2.4 GB; via `install.py` or on first run |
-| A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | via `install.py`, or **download manually** into `models/`. Not needed with `"llm_backend": "off"` (phrases come verbatim from the practice text) |
+Download sizes below are measured, not estimated, and are kept as data in
+[`mimora/models_info.py`](mimora/models_info.py); re-snap them with
+`python tools/measure_model_sizes.py`.
+
+| Model | Used by | Download | Notes |
+|---|---|---|---|
+| `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | pronunciation analysis (**phoneme** engine, default) | 1264 MB | espeak IPA phoneme recognizer; via `install.py` or on first run |
+| `facebook/wav2vec2-large-960h` | pronunciation analysis (**acoustic** engine) | 1262 MB | via `install.py` or on first run |
+| Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech (English) | 363 MB | via `install.py` or on first run |
+| Supertonic 3 (`Supertone/supertonic-3`) | text-to-speech (Spanish) | 404 MB | into `model_cache/supertonic3/`; via `install.py` or on first run. Weights are **OpenRAIL-M** licensed (code MIT), so they are downloaded, never bundled |
+| `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | 2483 MB | NLLB-200 200-language translator; via `install.py` or on first run |
+| A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | 2019 MB | via `install.py`, or **download manually** into `models/`. Not needed with `"llm_backend": "off"` (phrases come verbatim from the practice text) |
+| llama-server binary (pinned llama.cpp release) | phrase generation | 641 MB CUDA, 18 MB CPU | most of the CUDA figure is NVIDIA's runtime (391 MB), not llama.cpp; via `install.py` or `python -m mimora.llama_server_fetch` |
 
 ---
 

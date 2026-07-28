@@ -46,20 +46,23 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     __package__ = "mimora"
 
-from . import model_fetch
+from . import model_fetch, models_info
 
 log = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 MODELS_DIR = BASE_DIR / "models"
 
-# The GGUF chat model. The filename matches the default of
-# config.EXTERNAL_MODEL_PATH, so the app finds it without a settings change.
-GGUF_REPO_ID = "hugging-quants/Llama-3.2-3B-Instruct-Q4_K_M-GGUF"
-GGUF_FILENAME = "llama-3.2-3b-instruct-q4_k_m.gguf"
+# The GGUF chat model. Identity and size come from mimora/models_info.py, where
+# every model's facts live; these names bind to that record rather than
+# restating it, so they cannot drift from what config and the installer see.
+# The filename matches the default of config.EXTERNAL_MODEL_PATH, so the app
+# finds the file without a settings change.
+GGUF_REPO_ID = models_info.GGUF_CHAT.repo_id
+GGUF_FILENAME = models_info.GGUF_CHAT.filename
 DEFAULT_GGUF_PATH = MODELS_DIR / GGUF_FILENAME
-# Approximate download size, for the "are you sure?" prompts a GUI will want.
-GGUF_SIZE_MB = 2020
+# Download size, for the "are you sure?" prompts a GUI will want.
+GGUF_SIZE_MB = models_info.GGUF_CHAT.size_mb
 
 
 class GgufFetchError(RuntimeError):
@@ -102,7 +105,7 @@ def ensure_gguf(target: Optional[Path] = None, *,
             "requirements first (python install.py).") from exc
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    log.info("Downloading %s (~%d MB) from %s into %s ...",
+    log.info("Downloading %s (%d MB) from %s into %s ...",
              path.name, GGUF_SIZE_MB, GGUF_REPO_ID, path.parent)
     try:
         downloaded = hf_hub_download(
@@ -128,7 +131,7 @@ def _print_status(target: Path) -> None:
     download) separable, in tests as well as by eye.
     """
     print(f"Repo   : {GGUF_REPO_ID}")
-    print(f"File   : {GGUF_FILENAME}  (~{GGUF_SIZE_MB} MB)")
+    print(f"File   : {GGUF_FILENAME}  ({GGUF_SIZE_MB} MB)")
     print(f"Target : {target}")
     print(f"State  : {'present' if gguf_present(target) else 'MISSING'}")
 

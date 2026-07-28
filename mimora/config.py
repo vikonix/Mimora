@@ -8,7 +8,7 @@ import threading
 from functools import partial
 from pathlib import Path
 
-from . import llama_server_fetch, loader, model_fetch
+from . import llama_server_fetch, loader, model_fetch, models_info
 from .languages import english, spanish
 
 # Project root - always absolute, regardless of working directory at launch.
@@ -772,10 +772,15 @@ if PHONEME_GOOD_MODE not in PHONEME_GOOD_MODE_CHOICES:
 
 # =====================================================================
 # Acoustic + transcription model used by the pronunciation/acoustic/ module.
-WAV2VEC2_MODEL_NAME = "facebook/wav2vec2-large-960h"
+# The repo ids come from mimora/models_info.py, which is also what the
+# downloaders fetch: the two used to be separate literals, so the app could ask
+# for a repo the installer had never pre-fetched. models_info imports nothing,
+# which is what lets config and the fetchers share it even though the fetchers
+# may not import config.
+WAV2VEC2_MODEL_NAME = models_info.WAV2VEC2_ACOUSTIC.repo_id
 # Phoneme-ASR model used by the pronunciation/phoneme/ module: a wav2vec2 CTC model that
 # emits espeak-style IPA, so its phone inventory matches the espeak reference.
-WAV2VEC2_PHONEME_MODEL_NAME = "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
+WAV2VEC2_PHONEME_MODEL_NAME = models_info.WAV2VEC2_PHONEME.repo_id
 # Device for Wav2Vec2. Defaults to the shared DEVICE; hardware detection may pin
 # it to "cpu" to avoid VRAM contention with llama-server / Kokoro on a single GPU.
 WAV2VEC2_DEVICE = _HW.get("WAV2VEC2_DEVICE") or DEVICE
@@ -895,7 +900,7 @@ if PHRASE_LENGTH not in PHRASE_LENGTH_CHOICES:
 # The repo is also part of _CACHED_REPOS (see the offline-mode gating below) so
 # offline-mode gating waits for it; the installer pre-fetches it into model_cache/
 # (see install.py).
-NLLB_TRANSLATOR_MODEL_NAME = "facebook/nllb-200-distilled-600M"
+NLLB_TRANSLATOR_MODEL_NAME = models_info.NLLB.repo_id
 # Device for the translator. Defaults to CPU on purpose: translation is
 # latency-tolerant (it runs in the background after the phrase is shown and the
 # reference has played), and keeping NLLB off the GPU avoids VRAM contention
@@ -920,8 +925,15 @@ TRANSLATOR_WARMUP = _LANG_PROFILE["translator_warmup"]
 # The set of required repos is engine-aware: the always-used shared models (Kokoro
 # TTS, the NLLB translator) plus the ACTIVE engine's Wav2Vec2 model only. The
 # dispatcher never loads the inactive engine's weights, so requiring them would
-# needlessly keep the Hub online (and waste ~1.2 GB the run never touches). The
+# needlessly keep the Hub online (and waste 1262 MB the run never touches). The
 # "none" engine has no recognizer model at all, so nothing extra is required then.
+#
+# This is NOT the same set as "what has to be downloaded before the app can
+# run": NLLB is in here unconditionally because offline mode cannot be entered
+# without it, while translation is off by default and the app works fine with
+# the 2483 MB missing. The first-run download check therefore builds its own
+# required set the same WAY this one is built, not from this constant - see
+# tasks/first-run-fetch.md.
 _ENGINE_MODEL_REPO = {
     "phoneme": WAV2VEC2_PHONEME_MODEL_NAME,   # default engine
     "acoustic": WAV2VEC2_MODEL_NAME,
@@ -933,7 +945,7 @@ _engine_repo = _ENGINE_MODEL_REPO.get(ENGINE)
 # keep the Hub online for weights the run never touches (and vice versa).
 _CACHED_REPOS = (
     (NLLB_TRANSLATOR_MODEL_NAME,)             # NLLB-200 offline translator
-    + (("hexgrad/Kokoro-82M",) if TTS_BACKEND == "kokoro" else ())
+    + ((models_info.KOKORO.repo_id,) if TTS_BACKEND == "kokoro" else ())
     + ((_engine_repo,) if _engine_repo else ())  # active engine's recognizer
 )
 

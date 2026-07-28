@@ -20,7 +20,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from mimora import model_fetch
+from mimora import model_fetch, models_info
 
 _saved_level = logging.NOTSET
 
@@ -124,7 +124,7 @@ class MissingModelsTests(unittest.TestCase):
                 patch.object(model_fetch, "supertonic_cached",
                              return_value=False):
             missing = model_fetch.missing_models()
-        expected = [repo for repo, _ in model_fetch.HF_MODEL_REPOS]
+        expected = [repo.repo_id for repo in model_fetch.HF_MODEL_REPOS]
         expected.append(model_fetch.SUPERTONIC_MODEL_NAME)
         self.assertEqual(missing, expected)
 
@@ -147,7 +147,8 @@ class EnsureHfModelsTests(unittest.TestCase):
     reported together rather than aborting on the first one."""
 
     def setUp(self):
-        self.repos = (("repo/one", "first"), ("repo/two", "second"))
+        self.repos = (models_info.HfRepo("repo/one", "first", 1),
+                      models_info.HfRepo("repo/two", "second", 2))
 
     def test_skips_cached_repos(self):
         downloaded = []
