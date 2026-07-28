@@ -1045,7 +1045,7 @@ def step_download_gguf(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the GGUF chat model into models/ if not already present."""
-    log.banner("Step 8 - LLM stack: GGUF chat model")
+    log.banner("Step 9 - LLM stack: GGUF chat model")
     gguf_fetch = _import_fetcher("mimora.gguf_fetch", log, report, "GGUF model")
 
     target = gguf_fetch.DEFAULT_GGUF_PATH
@@ -1071,7 +1071,7 @@ def step_detect_hardware(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Run detect_hardware.py late, once torch is installed."""
-    log.banner("Step 9 - Hardware detection (writes hardware_config.json)")
+    log.banner("Step 10 - Hardware detection (writes hardware_config.json)")
     if not DETECT_HW_SCRIPT.exists():
         log.log(f"    {DETECT_HW_SCRIPT} not found; skipping.")
         report.add("hardware detection", SKIPPED, "script missing")
@@ -1109,7 +1109,7 @@ def step_create_launchers(
     hints at it (find_local_venv_name()), so the script still works if the
     venv was created under a name other than '.venv'.
     """
-    log.banner("Step 10 - Launcher script")
+    log.banner("Step 11 - Launcher script")
     venv_name = find_local_venv_name()
     target = LAUNCHER_BAT if sys.platform == "win32" else LAUNCHER_SH
 
@@ -1295,9 +1295,9 @@ def main() -> int:
             step_prefetch_models(log, confirmer, report)
             step_prefetch_supertonic(log, confirmer, report)
 
-        # Step 8: the LLM stack - the llama-server binary and the GGUF model it
-        # loads. Both are skipped together under --skip-llm: the lm-studio and
-        # off backends need neither. The binary comes first because step 9
+        # Steps 8-9: the LLM stack - the llama-server binary and the GGUF model
+        # it loads. Both are skipped together under --skip-llm: the lm-studio
+        # and off backends need neither. The binary comes first because step 10
         # probes it, and both come after pip because a 2.7 GB download is a bad
         # place to discover that the dependency install fails.
         if args.skip_llm:
@@ -1310,10 +1310,10 @@ def main() -> int:
             else:
                 step_download_gguf(log, confirmer, report)
 
-        # Step 9: hardware detection (after torch exists).
+        # Step 10: hardware detection (after torch exists).
         step_detect_hardware(log, confirmer, report)
 
-        # Step 10: launcher scripts, written last so they reflect the fully
+        # Step 11: launcher scripts, written last so they reflect the fully
         # set-up environment (correct venv folder name).
         step_create_launchers(log, confirmer, report)
     except InstallError as exc:
