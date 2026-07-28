@@ -579,7 +579,7 @@ def check_virtualenv(log: Logger, args: argparse.Namespace) -> None:
     global site-packages, so we detect a venv/virtualenv/conda env and, when
     absent, make the user confirm before continuing.
     """
-    log.banner("Step 0 - Environment check")
+    log.banner("Environment check")
     in_venv = (sys.prefix != sys.base_prefix
                or bool(os.environ.get("CONDA_PREFIX")))
     log.log(f"    Interpreter: {sys.executable}")
@@ -635,7 +635,7 @@ def step_check_vcredist(
     actionable message. We do NOT auto-install the redistributable: it needs an
     elevated GUI installer, which is out of scope for this pip-only setup.
     """
-    log.banner("Step 0 - Visual C++ runtime (Windows)")
+    log.banner("Visual C++ runtime (Windows)")
     if sys.platform != "win32":
         log.log("    Not Windows; the MSVC runtime check does not apply.")
         report.add("VC++ runtime", SKIPPED, "not Windows")
@@ -701,7 +701,7 @@ def step_check_tkinter(
     already, so in practice this only bites Linux (and Homebrew Python on
     macOS).
     """
-    log.banner("Step 0 - tkinter (GUI toolkit)")
+    log.banner("tkinter (GUI toolkit)")
     if sys.platform == "win32":
         log.log("    Windows Python installers bundle tkinter; skipping.")
         report.add("tkinter", SKIPPED, "not Linux/Unix")
@@ -1243,9 +1243,10 @@ def main() -> int:
     # InstallError, so the run stops immediately instead of pressing on with a
     # half-built environment and printing a misleading "ready to launch" line.
     try:
-        # Step 0: refuse to silently install into the global interpreter, then
-        # (on Windows) verify the MSVC runtime torch and llama-server need at
-        # runtime.
+        # Preflight, deliberately unnumbered: these three change nothing, they
+        # only refuse to silently install into the global interpreter and (on
+        # Windows) verify the MSVC runtime torch and llama-server need at
+        # runtime. The numbered steps below are the ones that do something.
         check_virtualenv(log, args)
         step_check_vcredist(log, confirmer, report)
         step_check_tkinter(log, confirmer, report)
