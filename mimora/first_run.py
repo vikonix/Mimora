@@ -102,7 +102,11 @@ BLOCKED_BAD_SETTING = "bad-setting"    # llama_server_path names nothing
 # assets and probe patterns, not text. The variant is deliberately not part of
 # the label either - the size already distinguishes a CUDA build (641 MB) from
 # a CPU one (18 MB), and the variant is logged where it is resolved.
-_LLAMA_SERVER_LABEL = "llama.cpp server (local LLM backend)"
+#
+# Public for the same reason as the keys above: tools/preview_first_run.py
+# fabricates plans, and a preview that spelled the label out again would show
+# something the app does not.
+LLAMA_SERVER_LABEL = "llama.cpp server (local LLM backend)"
 
 # Either kind of catalogue record can end up in the required level: the English
 # TTS model is a hub repo, the Spanish one is not.
@@ -309,7 +313,7 @@ def _optional_components() -> tuple[tuple[Component, ...], Optional[str]]:
     if status == SERVER_PRESENT:
         # Size deliberately not resolved: select_variant() shells out to
         # nvidia-smi, and nothing would read the number (see Component).
-        return (Component(KEY_LLAMA_SERVER, _LLAMA_SERVER_LABEL, None, True),
+        return (Component(KEY_LLAMA_SERVER, LLAMA_SERVER_LABEL, None, True),
                 gguf_component), None
 
     if status == SERVER_MISCONFIGURED:
@@ -334,7 +338,7 @@ def _optional_components() -> tuple[tuple[Component, ...], Optional[str]]:
         return (), BLOCKED_NO_BUILD
 
     log.info("llama-server would be fetched as the %s build.", variant)
-    return (Component(KEY_LLAMA_SERVER, _LLAMA_SERVER_LABEL,
+    return (Component(KEY_LLAMA_SERVER, LLAMA_SERVER_LABEL,
                       llama_server_fetch.variant_size_mb(variant), False),
             gguf_component), None
 

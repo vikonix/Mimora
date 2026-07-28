@@ -181,8 +181,15 @@ class FirstRunWindow:
         self._bar.pack(fill=tk.X, pady=(6, 0))
         self._bar_fill = self._bar.create_rectangle(
             0, 0, 0, _BAR_HEIGHT, fill=THEME["accent"], width=0)
+        # Wrapped, because this line carries two very different things: the
+        # short "N of M MB" during a download, and an exception's own text
+        # after a failure. The latter is arbitrary - a URL, a stack of nested
+        # messages - and an unwrapped label makes a non-resizable window as
+        # wide as its longest line, which on a first failure meant a window
+        # wider than the screen is comfortable with.
         self._amount = self._label(self._progress_frame, "",
-                                   fg="text_dim", size=FONT_SIZE_CAPTION)
+                                   fg="text_dim", size=FONT_SIZE_CAPTION,
+                                   wraplength=_BAR_WIDTH)
         self._amount.pack(fill=tk.X, pady=(4, 0))
 
         # Colours follow config.py's palette, where bg_button is the primary
