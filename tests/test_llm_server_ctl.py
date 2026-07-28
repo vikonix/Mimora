@@ -78,7 +78,15 @@ class LlamaServerCommandTests(unittest.TestCase):
 class BuildCommandTests(unittest.TestCase):
     """The wiring and the "cannot start" paths of _build_command."""
 
-    def _build(self, **overrides):
+    def _build(self, exe=__file__, **overrides):
+        """Build a command with *exe* as the binary the resolver reports.
+
+        exe is the resolver's answer rather than a constant because
+        _build_command locates the binary when it runs (so a download that
+        finished after config was imported is still seen). __file__ stands in
+        for the binary - only its existence is checked, and this file exists.
+        exe=None leaves the resolver alone for a test that patches it itself.
+        """
         values = {
             "EXTERNAL_MODEL_PATH": MODEL,
             "LLM_SERVER_HOST": HOST,
@@ -86,10 +94,9 @@ class BuildCommandTests(unittest.TestCase):
             "EXTERNAL_N_GPU_LAYERS": NGL,
             "EXTERNAL_N_CTX": NCTX,
             "LLM_SERVER_API_KEY": API_KEY,
-            # __file__ stands in for the binary: _build_command only checks
-            # that the path exists, and this file certainly does.
-            "LLAMA_SERVER_PATH": __file__,
         }
+        if exe is not None:
+            values["resolve_llama_server_path"] = lambda: exe
         values.update(overrides)
         with patch.multiple(config, **values):
             return LLMServerController()._build_command()
@@ -103,6 +110,15 @@ class BuildCommandTests(unittest.TestCase):
         self.assertEqual(flag_value(cmd, "--ctx-size"), str(NCTX))
         self.assertEqual(flag_value(cmd, "--api-key"), API_KEY)
         self.assertIn("--no-ui", cmd)
+
+    def test_the_binary_is_located_when_the_command_is_built(self):
+        # Not read from a value frozen at config's import: the first-run window
+        # may download the binary after that import, and a stale empty string
+        # would refuse to start a server this machine now has.
+        resolve = Mock(return_value=__file__)
+        with patch.object(config, "resolve_llama_server_path", resolve):
+            self.assertIsNotNone(self._build(exe=None))
+        resolve.assert_called_once_with()
 
     def _assert_refused(self, **overrides):
         """The build returns None AND says why.
@@ -121,11 +137,11 @@ class BuildCommandTests(unittest.TestCase):
     def test_unresolvable_binary_is_refused(self):
         # Nothing configured, nothing installed, nothing on PATH: the message
         # has to point at the fetch command, since there is no path to blame.
-        message = self._assert_refused(LLAMA_SERVER_PATH="")
+        message = self._assert_refused(exe="")
         self.assertIn("llama_server_fetch", message)
 
     def test_binary_that_does_not_exist_is_refused(self):
-        message = self._assert_refused(LLAMA_SERVER_PATH="/no/such/llama-server")
+        message = self._assert_refused(exe="/no/such/llama-server")
         self.assertIn("/no/such/llama-server", message)
 
 

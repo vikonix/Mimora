@@ -426,7 +426,8 @@ class PronunciationTrainerGUI:
                                 f"Starting llama-server with {model_name}...")
                 self.root.after(0, self.view.enter_server_starting)
                 if not self.llm_server.start(self.llm_mgr):
-                    self.root.after(0, self.view.append_error_msg, "Error: LLM server failed to start. Check model path and GPU memory.")
+                    self.root.after(0, self.view.append_error_msg,
+                                    self._server_failure_message())
                     self.root.after(0, self.view.server_failed)
                     return
                 self.root.after(0, self.view.append_system_msg, "LLM server is ready.")
@@ -456,6 +457,30 @@ class PronunciationTrainerGUI:
             logging.exception("Error during initialization thread:")
             self.root.after(0, self.view.append_error_msg, f"Initialization Error: {e}")
             self.root.after(0, self.view.init_failed)
+
+    def _server_failure_message(self) -> str:
+        """What to tell the user when the llama-server did not come up.
+
+        Two unrelated problems reach this point. A binary that exists but would
+        not run is a question about this machine (model path, VRAM). No binary
+        at all is a question about the setup, and it has two concrete answers
+        worth naming - which matters because that is the state every start ends
+        in on a platform no llama.cpp build is pinned for, where the first-run
+        window has nothing it could offer to download (see
+        tasks/first-run-fetch.md, work 8).
+
+        isfile() rather than a truthiness test: the settings branch of the
+        resolver returns "llama_server_path" as given, without checking that
+        anything is there, so a path pointing at nothing is the second way to
+        end up with no binary - and the same advice answers it.
+        """
+        if os.path.isfile(config.resolve_llama_server_path()):
+            return ("Error: LLM server failed to start. Check model path and "
+                    "GPU memory.")
+        return ('Error: no llama-server binary was found. Point '
+                '"llama_server_path" in config/settings.json at one, or set '
+                '"llm_backend" to "lm-studio" and generate phrases with LM '
+                'Studio instead.')
 
     def load_practice_text(self):
         """Pre-fill the source panel from the practice text file (main thread)."""

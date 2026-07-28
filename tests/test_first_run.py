@@ -126,19 +126,28 @@ class PresenceTests(unittest.TestCase):
             self.assertFalse(first_run.model_present(models_info.SUPERTONIC))
         cached.assert_called_once_with()
 
-    def test_the_binary_is_taken_from_config_not_from_bin_llama(self):
-        # config.LLAMA_SERVER_PATH also covers a binary named in settings.json
-        # or found on PATH; installed_exe() would miss both and offer a 641 MB
-        # download to a machine that already works.
-        with mock.patch.object(config, "LLAMA_SERVER_PATH", __file__):
-            self.assertTrue(first_run.llama_server_present())
+    def _status(self, path):
+        with mock.patch.object(config, "resolve_llama_server_path",
+                               return_value=path):
+            return first_run.llama_server_status()
 
-    def test_an_unset_or_missing_binary_path_counts_as_absent(self):
-        with mock.patch.object(config, "LLAMA_SERVER_PATH", ""):
-            self.assertFalse(first_run.llama_server_present())
+    def test_the_binary_is_taken_from_config_not_from_bin_llama(self):
+        # config.resolve_llama_server_path() also covers a binary named in
+        # settings.json or found on PATH; installed_exe() would miss both and
+        # offer a 641 MB download to a machine that already works.
+        self.assertEqual(self._status(__file__), first_run.SERVER_PRESENT)
+
+    def test_no_path_at_all_means_absent(self):
+        self.assertEqual(self._status(""), first_run.SERVER_ABSENT)
+
+    def test_a_path_naming_nothing_is_misconfigured_not_absent(self):
+        # The difference decides whether a download is offered. Only the
+        # settings branch of the resolver can return a path that is not there,
+        # and a download would go to bin/llama/ while that setting keeps
+        # winning - so this case must not read as "absent, go fetch one".
         missing = str(Path(__file__).with_name("no-such-llama-server"))
-        with mock.patch.object(config, "LLAMA_SERVER_PATH", missing):
-            self.assertFalse(first_run.llama_server_present())
+        self.assertEqual(self._status(missing),
+                         first_run.SERVER_MISCONFIGURED)
 
 
 class OptionalLevelTests(unittest.TestCase):
@@ -149,8 +158,8 @@ class OptionalLevelTests(unittest.TestCase):
         # nothing installed. Individual tests override what they are about.
         patches = (
             mock.patch.object(config, "LLM_BACKEND", "llama-server"),
-            mock.patch.object(first_run, "llama_server_present",
-                              return_value=False),
+            mock.patch.object(first_run, "llama_server_status",
+                              return_value=first_run.SERVER_ABSENT),
             mock.patch.object(gguf_fetch, "gguf_present", return_value=False),
         )
         for patch in patches:
@@ -165,16 +174,17 @@ class OptionalLevelTests(unittest.TestCase):
                 with mock.patch.object(config, "LLM_BACKEND", backend), \
                         mock.patch.object(llama_server_fetch,
                                           "select_variant") as select:
-                    components, available = first_run._optional_components()
+                    components, blocked = first_run._optional_components()
                 self.assertEqual(components, ())
-                self.assertTrue(available)
+                # Not blocked: nothing is missing, the level does not apply.
+                self.assertIsNone(blocked)
                 select.assert_not_called()
 
     def test_a_missing_binary_is_sized_from_the_selected_variant(self):
         with mock.patch.object(llama_server_fetch, "select_variant",
                                return_value="win-cpu-x64"):
-            components, available = first_run._optional_components()
-        self.assertTrue(available)
+            components, blocked = first_run._optional_components()
+        self.assertIsNone(blocked)
         binary = components[0]
         self.assertEqual(binary.key, first_run.KEY_LLAMA_SERVER)
         self.assertFalse(binary.present)
@@ -184,13 +194,13 @@ class OptionalLevelTests(unittest.TestCase):
     def test_an_installed_binary_costs_no_variant_resolution(self):
         # select_variant() shells out to nvidia-smi. Nothing needs the size of
         # a binary that is already there, so a normal start must not pay for it.
-        with mock.patch.object(first_run, "llama_server_present",
-                               return_value=True), \
+        with mock.patch.object(first_run, "llama_server_status",
+                               return_value=first_run.SERVER_PRESENT), \
                 mock.patch.object(llama_server_fetch,
                                   "select_variant") as select:
-            components, available = first_run._optional_components()
+            components, blocked = first_run._optional_components()
         select.assert_not_called()
-        self.assertTrue(available)
+        self.assertIsNone(blocked)
         binary = components[0]
         self.assertTrue(binary.present)
         self.assertIsNone(binary.size_mb)
@@ -201,9 +211,22 @@ class OptionalLevelTests(unittest.TestCase):
         unsupported = llama_server_fetch.UnsupportedPlatformError("no build")
         with mock.patch.object(llama_server_fetch, "select_variant",
                                side_effect=unsupported):
-            components, available = first_run._optional_components()
+            components, blocked = first_run._optional_components()
         self.assertEqual(components, ())
-        self.assertFalse(available)
+        self.assertEqual(blocked, first_run.BLOCKED_NO_BUILD)
+
+    def test_a_binary_named_by_a_broken_setting_is_offered_nothing(self):
+        # The download would land in bin/llama/ while the settings.json path
+        # goes on winning in the resolver, so it would cost 641 MB and change
+        # nothing. select_variant() is not even consulted.
+        with mock.patch.object(first_run, "llama_server_status",
+                               return_value=first_run.SERVER_MISCONFIGURED), \
+                mock.patch.object(llama_server_fetch,
+                                  "select_variant") as select:
+            components, blocked = first_run._optional_components()
+        self.assertEqual(components, ())
+        self.assertEqual(blocked, first_run.BLOCKED_BAD_SETTING)
+        select.assert_not_called()
 
     def test_the_gguf_is_looked_for_where_settings_json_points(self):
         # gguf_fetch may not import config, so its own default is models/<name>
@@ -224,14 +247,14 @@ class PlanTests(unittest.TestCase):
             required=(_component("a", size_mb=100, present=True),
                       _component("b", size_mb=200, present=False)),
             optional=(_component("c", size_mb=300, present=False),),
-            llama_server_available=True)
+            llama_server_blocked=None)
         self.assertEqual([c.key for c in plan.missing_required], ["b"])
         self.assertEqual(plan.missing_required_mb, 200)
         self.assertEqual(plan.missing_optional_mb, 300)
 
     def test_an_empty_level_costs_nothing(self):
         plan = first_run.Plan(required=(), optional=(),
-                              llama_server_available=True)
+                              llama_server_blocked=None)
         self.assertEqual(plan.missing_required_mb, 0)
         self.assertEqual(plan.missing_optional_mb, 0)
 
@@ -243,7 +266,7 @@ class PlanTests(unittest.TestCase):
             optional=(_component(first_run.KEY_LLAMA_SERVER, size_mb=None,
                                  present=True),
                       _component("gguf", size_mb=2019, present=False)),
-            llama_server_available=True)
+            llama_server_blocked=None)
         self.assertEqual(plan.missing_optional_mb, 2019)
 
     def test_totalling_a_sizeless_component_fails_loudly(self):
@@ -260,8 +283,8 @@ class BuildPlanTests(unittest.TestCase):
                 mock.patch.object(config, "LLM_BACKEND", "llama-server"), \
                 mock.patch.object(first_run, "model_present",
                                   return_value=False), \
-                mock.patch.object(first_run, "llama_server_present",
-                                  return_value=False), \
+                mock.patch.object(first_run, "llama_server_status",
+                                  return_value=first_run.SERVER_ABSENT), \
                 mock.patch.object(gguf_fetch, "gguf_present",
                                   return_value=False), \
                 mock.patch.object(llama_server_fetch, "select_variant",
@@ -280,8 +303,8 @@ class BuildPlanTests(unittest.TestCase):
         with mock.patch.object(config, "LLM_BACKEND", "llama-server"), \
                 mock.patch.object(first_run, "model_present",
                                   return_value=True), \
-                mock.patch.object(first_run, "llama_server_present",
-                                  return_value=True), \
+                mock.patch.object(first_run, "llama_server_status",
+                                  return_value=first_run.SERVER_PRESENT), \
                 mock.patch.object(gguf_fetch, "gguf_present",
                                   return_value=True):
             plan = first_run.build_plan()
@@ -320,6 +343,24 @@ class ImportDisciplineTests(unittest.TestCase):
         # Stated as a test so the dependency direction is asserted rather than
         # merely described in the docstring.
         self.assertIn("config", self._imports(first_run))
+
+
+class BlockedReasonCoverageTests(unittest.TestCase):
+    """Every reason the plan can give has a note the window can show.
+
+    The window indexes its texts by reason, so a reason added without one would
+    raise KeyError while building the first-run dialog - i.e. on a machine that
+    has nothing yet, at the only moment this code ever runs.
+    """
+
+    def test_the_window_has_a_text_for_every_blocked_reason(self):
+        # Imported here rather than at the top: this file is about first_run,
+        # and only this one assertion needs the tkinter-importing window.
+        from mimora import first_run_window
+
+        reasons = {value for name, value in vars(first_run).items()
+                   if name.startswith("BLOCKED_")}
+        self.assertEqual(set(first_run_window._BLOCKED_TEXT), reasons)
 
 
 if __name__ == "__main__":

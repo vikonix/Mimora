@@ -38,7 +38,7 @@ Presence is asked of the app, not of our downloaders
 which is not the same as "did our fetcher put it in its own directory". All
 three of the predicates that suggest themselves answer the second question:
 
-* the binary comes from config.LLAMA_SERVER_PATH, which also honours
+* the binary comes from config.resolve_llama_server_path(), which also honours
   "llama_server_path" from settings.json and a llama-server on PATH.
   llama_server_fetch.installed_exe() only sees bin/llama/ and would offer a
   641 MB download on a machine that already works;
@@ -47,6 +47,13 @@ three of the predicates that suggest themselves answer the second question:
   models/<name>;
 * hub repos go through loader.models_cached, the predicate config's own offline
   gate uses, so the two answers cannot disagree.
+
+For the binary even that is not the whole question. What the dialog needs is
+not "is it there" but "would downloading it help", and the two come apart when
+settings.json names a binary that is not there: the download lands in
+bin/llama/, the resolver goes on preferring the named path, and the user has
+paid 641 MB for nothing. Hence llama_server_status()'s three answers and
+Plan.llama_server_blocked.
 
 model_fetch.hf_repo_cached() now answers the same way (it delegates to the same
 helper), and calling it here would be equally correct on the answer - but it
@@ -76,6 +83,20 @@ log = logging.getLogger(__name__)
 # dispatches on.
 KEY_LLAMA_SERVER = "llama-server"
 KEY_GGUF = "gguf-chat"
+
+# What llama_server_status() found. "Misconfigured" is its own answer rather
+# than a kind of "absent" because the two want opposite reactions: an absent
+# binary can be downloaded, one named by a broken setting cannot be helped by
+# downloading anything.
+SERVER_PRESENT = "present"
+SERVER_ABSENT = "absent"
+SERVER_MISCONFIGURED = "misconfigured"
+
+# Why the optional level ended up empty, for Plan.llama_server_blocked. Both
+# mean "downloading cannot produce a llama-server this app would launch", and
+# first_run_window renders one note per reason.
+BLOCKED_NO_BUILD = "no-build"          # no pinned build for this platform
+BLOCKED_BAD_SETTING = "bad-setting"    # llama_server_path names nothing
 
 # The binary has no display name of its own: llama_server_fetch.Variant holds
 # assets and probe patterns, not text. The variant is deliberately not part of
@@ -124,17 +145,29 @@ class Component(NamedTuple):
 class Plan(NamedTuple):
     """Everything the first-run dialog and the progress bar need.
 
-    llama_server_available is False when this machine has no llama-server and
-    cannot obtain one: no build for the platform (select_variant raises) and
-    nothing installed already. The optional level is then empty rather than
-    "the GGUF only" - one model without a server does not start the backend -
-    and the dialog should point at a hand-built binary on PATH or at the
-    lm-studio backend instead.
+    llama_server_blocked names the reason downloading cannot produce a working
+    llama-server, or is None when it can. Either way the optional level is then
+    empty rather than "the GGUF only" - one model without a server does not
+    start the backend - and the window shows the matching note instead of an
+    offer. main.py says the same thing again when the server later fails to
+    start, which is what a machine in this state does at every launch.
+
+    The distinction is the whole point of the field: the two reasons want
+    different advice, and offering a download for either would be an offer that
+    cannot help. BLOCKED_BAD_SETTING is the sharper of the two, because there
+    the binary is genuinely absent and a download would look reasonable - but
+    it would land in bin/llama/ while the resolver keeps honouring the
+    settings.json path, so the user would pay for it and change nothing.
     """
 
     required: tuple[Component, ...]
     optional: tuple[Component, ...]
-    llama_server_available: bool
+    llama_server_blocked: Optional[str]
+
+    @property
+    def llama_server_available(self) -> bool:
+        """Could downloading give this machine a llama-server it would use?"""
+        return self.llama_server_blocked is None
 
     @property
     def missing_required(self) -> tuple[Component, ...]:
@@ -230,36 +263,40 @@ def _required_components() -> tuple[Component, ...]:
 # The optional level
 # ---------------------------------------------------------------------------
 
-def llama_server_present() -> bool:
-    """Does this machine already have a llama-server the app would launch?
+def llama_server_status() -> str:
+    """What this machine has to say about the llama-server binary.
 
     Asked of config rather than of llama_server_fetch.installed_exe(), which
-    only knows about bin/llama/: config.LLAMA_SERVER_PATH also resolves
-    "llama_server_path" from settings.json and a binary on PATH, and offering a
-    641 MB download to somebody who has one of those would be plainly wrong.
+    only knows about bin/llama/: config.resolve_llama_server_path() also
+    resolves "llama_server_path" from settings.json and a binary on PATH, and
+    offering a 641 MB download to somebody who has one of those would be
+    plainly wrong.
 
-    The extra is_file() covers the settings branch of _resolve_llama_server,
-    the only one that does not verify existence (installed_exe and
-    shutil.which both do). A path that is set but missing therefore counts as
-    absent, which is the honest answer; making the app then use the freshly
-    downloaded binary instead of the broken setting is work 6's job.
+    Three answers rather than a yes/no, because "absent" and "the setting names
+    nothing" call for opposite reactions - one is downloadable, the other is
+    not. They are told apart without reading settings.json: the resolver's
+    other two branches verify existence themselves (installed_exe and
+    shutil.which both do), so a non-empty answer that is not a file can only
+    have come from the settings branch.
     """
-    path = config.LLAMA_SERVER_PATH
+    path = config.resolve_llama_server_path()
     if not path:
-        return False
+        return SERVER_ABSENT
     try:
-        return Path(path).is_file()
+        exists = Path(path).is_file()
     except OSError:
-        return False
+        exists = False
+    return SERVER_PRESENT if exists else SERVER_MISCONFIGURED
 
 
-def _optional_components() -> tuple[tuple[Component, ...], bool]:
-    """The llama-server level, plus whether the binary is obtainable at all."""
+def _optional_components() -> tuple[tuple[Component, ...], Optional[str]]:
+    """The llama-server level, plus why it is empty when it is."""
     if config.LLM_BACKEND != "llama-server":
         # "lm-studio" talks to a server somebody else runs and "off" loads no
         # LLM at all, so neither needs the binary or the GGUF. Asking either of
-        # them to agree to 2.6 GB would be a plain mistake.
-        return (), True
+        # them to agree to 2.6 GB would be a plain mistake. Not "blocked"
+        # either: nothing is missing, the level simply does not apply.
+        return (), None
 
     gguf = models_info.GGUF_CHAT
     gguf_component = Component(
@@ -268,11 +305,24 @@ def _optional_components() -> tuple[tuple[Component, ...], bool]:
         # not import config and so cannot see an overridden path.
         gguf_fetch.gguf_present(config.EXTERNAL_MODEL_PATH))
 
-    if llama_server_present():
+    status = llama_server_status()
+    if status == SERVER_PRESENT:
         # Size deliberately not resolved: select_variant() shells out to
         # nvidia-smi, and nothing would read the number (see Component).
         return (Component(KEY_LLAMA_SERVER, _LLAMA_SERVER_LABEL, None, True),
-                gguf_component), True
+                gguf_component), None
+
+    if status == SERVER_MISCONFIGURED:
+        # A download would be honest about the binary being absent and useless
+        # all the same: it lands in bin/llama/, while the resolver goes on
+        # honouring the settings.json path, so the server would fail to start
+        # exactly as before. Silently preferring the download instead is worse
+        # - the user named a binary, and quietly running a different one turns
+        # a typo into "it works, but not with what I asked for".
+        log.info("settings.json 'llama_server_path' names a file that is not "
+                 "there: the optional download is not offered, because it "
+                 "would not be the binary the app then looks for.")
+        return (), BLOCKED_BAD_SETTING
 
     try:
         variant = llama_server_fetch.select_variant()
@@ -281,12 +331,12 @@ def _optional_components() -> tuple[tuple[Component, ...], bool]:
         # would not start the backend, so there is nothing to offer at all.
         log.info("No llama-server for this machine (%s) and none installed: "
                  "the optional download is not offered.", exc)
-        return (), False
+        return (), BLOCKED_NO_BUILD
 
     log.info("llama-server would be fetched as the %s build.", variant)
     return (Component(KEY_LLAMA_SERVER, _LLAMA_SERVER_LABEL,
                       llama_server_fetch.variant_size_mb(variant), False),
-            gguf_component), True
+            gguf_component), None
 
 
 # ---------------------------------------------------------------------------
@@ -302,9 +352,9 @@ def build_plan() -> Plan:
     thread.
     """
     required = _required_components()
-    optional, llama_server_available = _optional_components()
+    optional, llama_server_blocked = _optional_components()
     plan = Plan(required=required, optional=optional,
-                llama_server_available=llama_server_available)
+                llama_server_blocked=llama_server_blocked)
 
     log.info("Startup plan: %d of %d required components missing (%d MB), "
              "%d of %d optional (%d MB).",

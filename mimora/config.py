@@ -102,7 +102,8 @@ USER_SETTING_DEFAULTS = {
     "max_record_seconds": 20,
     "llm_backend": "llama-server",
     "lm_studio_host": "localhost:1234",
-    # Empty means "find the binary yourself" - see LLAMA_SERVER_PATH below.
+    # Empty means "find the binary yourself" - see
+    # resolve_llama_server_path() below.
     "llama_server_path": "",
     "external_model_path": "models/llama-3.2-3b-instruct-q4_k_m.gguf",
     "external_n_ctx": None,
@@ -337,7 +338,7 @@ DEVICE = loader.detect_device(_HW.get("DEVICE"))
 # =====================================================================
 # Backend selection, read from settings.json ("llm_backend"):
 #   "llama-server" - the official llama.cpp binary started automatically as a
-#                    subprocess (see LLAMA_SERVER_PATH below)
+#                    subprocess (see resolve_llama_server_path() below)
 #   "lm-studio"    - external LM Studio app (must be running separately)
 #   "off"          - no LLM at all: nothing is loaded or started; practice
 #                    phrases are taken verbatim from the source text, one
@@ -409,6 +410,15 @@ LLM_SERVER_STARTUP_TIMEOUT = 60
 #   2. "llama-server" on PATH, for a build the user manages themselves.
 # An empty result is NOT reported here: the binary only matters when this
 # backend is actually selected, and LLMServerController says so at start time.
+#
+# Deliberately a function and NOT a module constant, unlike every other path in
+# this file. The first-run window (mimora/first_run_window.py) may download the
+# binary after this module has been imported, and a value frozen at import time
+# would then still be the empty string for the rest of the process -
+# LLMServerController would refuse to start on a machine that has just acquired
+# a perfectly good server. Resolving at the point of use costs a stat and an
+# occasional PATH lookup, once per app start, and makes "where is the binary" a
+# question about now rather than about import time.
 def _resolve_llama_server(setting) -> str:
     """Absolute path of the llama-server binary to launch, or "" if none."""
     if setting is None:
@@ -428,27 +438,14 @@ def _resolve_llama_server(setting) -> str:
     return shutil.which("llama-server") or ""
 
 
-LLAMA_SERVER_PATH = _resolve_llama_server(_USER.get("llama_server_path", ""))
+def resolve_llama_server_path() -> str:
+    """Where the llama-server binary is right now, or "" if there is none.
 
-
-def refresh_llama_server_path() -> str:
-    """Re-resolve LLAMA_SERVER_PATH and return it.
-
-    The constant above is computed while this module is imported, i.e. before
-    the first-run window has had a chance to download anything. A binary
-    fetched during that window would otherwise stay invisible for the rest of
-    the process - the value would still be the empty string and
-    LLMServerController would refuse to start on a machine that now has a
-    perfectly good server.
-
-    Only the first-run flow needs this. The lasting fix is to resolve the path
-    where it is used, in llm_server_ctl._build_command(), so that "where is the
-    binary" stops being a property of import time at all; see
-    tasks/first-run-fetch.md, work 6.
+    The single answer to that question in the app: llm_server_ctl builds its
+    command line from it and first_run asks it whether the binary still has to
+    be downloaded.
     """
-    global LLAMA_SERVER_PATH
-    LLAMA_SERVER_PATH = _resolve_llama_server(_USER.get("llama_server_path", ""))
-    return LLAMA_SERVER_PATH
+    return _resolve_llama_server(_USER.get("llama_server_path", ""))
 
 # =====================================================================
 # GGUF Model Settings (used by the "llama-server" backend)

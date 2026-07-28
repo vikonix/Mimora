@@ -69,6 +69,26 @@ _INTERRUPT_TEXT = (
     "The download is not finished. What has been downloaded is kept, but part "
     "of it will have to be fetched again on the next start.\n\nQuit anyway?")
 
+# Shown instead of the optional checkbox when that level is empty because
+# downloading cannot produce a usable llama-server (Plan.llama_server_blocked).
+# The app would otherwise say nothing about a backend it cannot start, and
+# neither way out of either state is guessable. One text per reason: they have
+# nothing in common except that the checkbox is missing.
+_BLOCKED_TEXT = {
+    first_run.BLOCKED_NO_BUILD: (
+        "No llama.cpp server build is available for this machine, so the "
+        "local chat model cannot be offered here. Either point "
+        "\"llama_server_path\" in config/settings.json at a llama-server you "
+        "build yourself, or set \"llm_backend\" to \"lm-studio\" and generate "
+        "phrases with LM Studio."),
+    first_run.BLOCKED_BAD_SETTING: (
+        "\"llama_server_path\" in config/settings.json points at a file that "
+        "is not there, so the local chat model cannot start. Downloading one "
+        "is not offered because it would be installed elsewhere and this "
+        "setting would still win: fix the path, or clear it to use the build "
+        "Mimora installs itself."),
+}
+
 
 class Outcome(NamedTuple):
     """What the window ended up doing, for ensure_ready() to act on."""
@@ -165,18 +185,25 @@ class FirstRunWindow:
                                    fg="text_dim", size=FONT_SIZE_CAPTION)
         self._amount.pack(fill=tk.X, pady=(4, 0))
 
+        # Colours follow config.py's palette, where bg_button is the primary
+        # action and bg_accent the quiet one, as in the settings window. Worth
+        # stating because the two were swapped here at first, and the button
+        # that ended up looking primary was the one that writes
+        # llm_backend "off".
         buttons = tk.Frame(outer, bg=THEME["bg_main"])
         buttons.pack(fill=tk.X, pady=(18, 0))
         self._secondary = FlatButton(
             buttons, text=self._secondary_text(), command=self._on_secondary,
-            bg=THEME["bg_button"], fg=THEME["text_button"],
-            activebackground=THEME["bg_button_active"],
+            bg=THEME["bg_accent"], fg=THEME["text_accent"],
+            activebackground=THEME["bg_accent_active"],
+            activeforeground=THEME["text_bright"],
             font=(FONT_FAMILY, FONT_SIZE_SMALL), padx=18, pady=7)
         self._secondary.pack(side=tk.RIGHT)
         self._primary = FlatButton(
             buttons, text="Download", command=self._on_primary,
-            bg=THEME["bg_accent"], fg=THEME["text_button"],
-            activebackground=THEME["bg_accent_active"],
+            bg=THEME["bg_button"], fg=THEME["text_button"],
+            activebackground=THEME["bg_button_active"],
+            activeforeground=THEME["text"],
             font=(FONT_FAMILY, FONT_SIZE_SMALL, "bold"), padx=18, pady=7)
         self._primary.pack(side=tk.RIGHT, padx=(0, 10))
         self._primary.focus_set()
@@ -210,6 +237,16 @@ class FirstRunWindow:
                         fg="text_muted", size=FONT_SIZE_CAPTION,
                         padx=22).pack(fill=tk.X)
             self._bullets(box, plan.missing_optional)
+        elif plan.llama_server_blocked:
+            # Not an alternative to the block above so much as its absence
+            # explained: the optional level is empty because no download would
+            # give this machine a working server, and staying silent would
+            # leave the user with an LLM backend that fails at every start for
+            # no stated reason.
+            pad = (14, 0) if plan.missing_required else (0, 0)
+            self._label(parent, _BLOCKED_TEXT[plan.llama_server_blocked],
+                        fg="text_muted", size=FONT_SIZE_CAPTION,
+                        wraplength=_BAR_WIDTH).pack(fill=tk.X, pady=pad)
 
         self._total = self._label(parent, "", bold=True, fg="text_bright")
         self._total.pack(fill=tk.X, pady=(14, 0))
@@ -371,15 +408,24 @@ def ensure_ready() -> bool:
     stat calls and the window runs its own event loop.
     """
     plan = first_run.build_plan()
-    if not plan.missing_required and not plan.missing_optional:
-        return True
 
-    if not plan.llama_server_available and not plan.missing_required:
-        # Nothing to offer and nothing to stop us: no build for this platform
-        # and no binary installed, so the LLM backend simply cannot be
-        # completed by downloading. Work 8 turns this into advice in the UI.
-        log.info("Nothing can be offered for the llama-server backend on this "
-                 "platform; starting without it.")
+    if plan.llama_server_blocked:
+        # No download would give this machine a server it would launch, so
+        # there is nothing this window could offer for the LLM backend. Logged
+        # before the early return below rather than after it: a blocked backend
+        # is exactly what makes the optional level empty, so a check placed
+        # after "is anything missing?" could only ever run when something else
+        # was missing too - and would say nothing in the commonest case, a
+        # machine with every model already cached.
+        #
+        # Only logged. The advice a user can act on is given where it bites -
+        # in main.py._server_failure_message() - because this state repeats at
+        # every start, and a window that repeats with it would be a modal
+        # standing between the user and an app that does start.
+        log.info("Nothing can be offered for the llama-server backend (%s); "
+                 "starting without it.", plan.llama_server_blocked)
+
+    if not plan.missing_required and not plan.missing_optional:
         return True
 
     outcome = FirstRunWindow(plan).run()
@@ -391,9 +437,7 @@ def ensure_ready() -> bool:
         config.save_user_setting("llm_backend", "off")
         config.LLM_BACKEND = "off"
 
-    if first_run.KEY_LLAMA_SERVER in outcome.downloaded:
-        # The path was resolved while config was imported, i.e. before the
-        # binary existed.
-        config.refresh_llama_server_path()
-
+    # A binary downloaded just now needs no announcement: llm_server_ctl
+    # resolves the path when it builds the command line, so it sees whatever is
+    # on disk by then (config.resolve_llama_server_path).
     return not outcome.quit_requested

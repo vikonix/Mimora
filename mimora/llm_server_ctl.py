@@ -128,13 +128,19 @@ class LLMServerController:
         Every "cannot start" reason is logged here and reported to the caller
         as None, so start() has a single failure path and main.py keeps its
         one error message for the user.
+
+        The binary is located here rather than read from a constant frozen at
+        config's import: the first-run window may have downloaded it after that
+        import, and a stale empty string would then refuse to start a server
+        this machine now has. Everything else this method reads is already
+        taken at call time for the same reason.
         """
         model_path = config.EXTERNAL_MODEL_PATH
         if not model_path:
             logging.error("EXTERNAL_MODEL_PATH is empty - cannot start the LLM server.")
             return None
 
-        exe_path = config.LLAMA_SERVER_PATH
+        exe_path = config.resolve_llama_server_path()
         if not exe_path:
             logging.error(
                 "llama-server binary not found: settings.json "
