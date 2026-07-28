@@ -15,6 +15,7 @@ import contextlib
 import io
 import logging
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -113,6 +114,54 @@ class SupertonicCachedTests(unittest.TestCase):
         self.cache_dir.mkdir()
         (self.cache_dir / "model.onnx").write_bytes(b"x")
         self.assertTrue(model_fetch.supertonic_cached())
+
+
+class HfRepoCachedTests(unittest.TestCase):
+    """The predicate ensure_hf_models() skips a repo on.
+
+    An over-generous answer is the expensive direction: the repo is skipped and
+    no later run completes it, so a half-fetched cache stays half-fetched until
+    somebody thinks to pass --force.
+    """
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        patcher = patch.dict(os.environ, {"HF_HOME": self._tmp.name})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.repo_dir = (Path(self._tmp.name) / "hub" / "models--repo--one")
+
+    def _populate(self, *, incomplete: bool):
+        (self.repo_dir / "snapshots" / "abc123").mkdir(parents=True)
+        (self.repo_dir / "snapshots" / "abc123" / "config.json").write_bytes(b"{}")
+        blobs = self.repo_dir / "blobs"
+        blobs.mkdir()
+        if incomplete:
+            (blobs / "deadbeef.incomplete").write_bytes(b"half a file")
+
+    def test_absent_repo(self):
+        self.assertFalse(model_fetch.hf_repo_cached("repo/one"))
+
+    def test_complete_snapshot(self):
+        self._populate(incomplete=False)
+        self.assertTrue(model_fetch.hf_repo_cached("repo/one"))
+
+    def test_snapshot_with_an_interrupted_blob(self):
+        # The case the previous implementation missed: it asked
+        # snapshot_download(local_files_only=True), whose completeness check is
+        # skipped when trees/<commit>.json is absent - which it is for a cache
+        # transformers filled file by file, i.e. after a first run.
+        self._populate(incomplete=True)
+        self.assertFalse(model_fetch.hf_repo_cached("repo/one"))
+
+    def test_needs_no_huggingface_hub(self):
+        # install.py calls this before the requirements step, and the app calls
+        # it on the way to a download; neither should depend on the library
+        # being importable just to ask a filesystem question.
+        self._populate(incomplete=False)
+        with patch.dict(sys.modules, {"huggingface_hub": None}):
+            self.assertTrue(model_fetch.hf_repo_cached("repo/one"))
 
 
 class MissingModelsTests(unittest.TestCase):

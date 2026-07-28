@@ -25,7 +25,9 @@ Design notes
 * No side effects at import time and no heavy imports at module level:
   huggingface_hub and supertonic are imported inside the functions that need
   them, so install.py can import this module before the requirements step has
-  run and still get the "is it downloaded?" predicates.
+  run and still get the "is it downloaded?" predicates. The two project modules
+  imported at the top, models_info and loader, are pure and stdlib-only, so
+  they cost nothing and break no rule.
 * This module must NEVER import mimora.config. config sets HF_HUB_OFFLINE=1 as
   soon as the models are cached, which would switch the network off exactly
   when a download is wanted. The dependency runs the other way: config takes
@@ -57,7 +59,7 @@ if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
     __package__ = "mimora"
 
-from . import models_info
+from . import loader, models_info
 
 log = logging.getLogger(__name__)
 
@@ -203,29 +205,30 @@ def _configure_symlink_fallback() -> None:
 # ---------------------------------------------------------------------------
 
 def hf_repo_cached(repo_id: str) -> bool:
-    """True only if a COMPLETE snapshot of the repo is in the local HF cache.
+    """Is the repo present in the local HF cache and free of partial files?
 
-    A folder existing under model_cache/hub/ is not enough: an interrupted run
-    can leave a partial snapshot (missing files). snapshot_download in offline
-    mode returns the path only when every file of the recorded revision is
-    present, and raises otherwise - so partial downloads are correctly reported
-    as not-downloaded and will be re-offered.
+    Delegates to loader.models_cached so that the installer, config's
+    offline gate and the app's startup check all answer this question the same
+    way. A snapshot directory has to exist and no *.incomplete blob may be left
+    behind by an interrupted download - the latter matters because
+    ensure_hf_models() SKIPS a repo this returns True for, so an over-generous
+    answer here means a half-fetched repo that no later run ever completes.
 
-    Needs huggingface_hub, which is why config.py keeps using the cheaper
-    filesystem check in loader.models_cached for its offline gating: that one
-    runs at import time, before any HF import is wanted.
+    This used to ask snapshot_download(local_files_only=True) instead, on the
+    understanding that it verifies every file of the recorded revision. It only
+    does so when trees/<commit>.json is cached, and that listing is written as a
+    side effect of snapshot_download itself (huggingface_hub 1.24.0,
+    _snapshot_download._raise_if_incomplete_snapshot returns early without it) -
+    so for a cache filled file by file by transformers, which is how a first run
+    fills it, the check silently did nothing. The filesystem check is both
+    stricter and free of the huggingface_hub import.
+
+    Neither check can see a download interrupted exactly BETWEEN two files: no
+    *.incomplete is left then. With files of this size an interrupt lands
+    mid-file in nearly every case, and --force remains the way out.
     """
     prepare_hf_env()
-    try:
-        from huggingface_hub import snapshot_download
-    except ImportError:
-        # huggingface_hub not installed yet -> nothing can be cached.
-        return False
-    try:
-        snapshot_download(repo_id=repo_id, local_files_only=True)
-        return True
-    except Exception:  # noqa: BLE001 - any miss/partial means "not downloaded"
-        return False
+    return loader.models_cached(hf_home() / "hub", (repo_id,))
 
 
 def supertonic_cached() -> bool:
