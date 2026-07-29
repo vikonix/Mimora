@@ -108,6 +108,7 @@ python tests/test_speech.py user.wav [ref.wav]       # optional end-to-end (load
 ## Code Style (Python)
 
 - No linting/formatting config - follow PEP 8.
+- **Imports inside `mimora/` are absolute** (`from mimora import config`), never relative. PEP 8 prefers them and every module in the package now uses them; the mix that existed before meant a new module's author had to guess. `pronunciation/` is the deliberate exception and stays relative (`from .config import get_config`): those subpackages are reusable GUI-agnostic libraries that must keep working if the tree is vendored or renamed, which is exactly what relative imports buy. Note the consequence for `mimora/model_fetch.py` and `mimora/gguf_fetch.py`: both can be run as plain files, and that form puts `mimora/` on `sys.path` rather than the project root, so each carries a shim that prepends the root - without it `import mimora` does not resolve.
 - Type hints used throughout (`from typing import Optional, List`).
 - Logging via `logging`: `%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s`.
 - Use explicit `RuntimeError` with a descriptive message for runtime validation, not `assert`.

@@ -54,12 +54,12 @@ from typing import Optional, Sequence
 
 if __package__ in (None, ""):
     # Executed as a plain script (python mimora/model_fetch.py) rather than
-    # with -m: that form gives the module no package context and the relative
-    # import below fails. Same shim, and the same reason, as in gguf_fetch.
+    # with -m: that form puts THIS directory on sys.path instead of the project
+    # root, so the "import mimora" below would not resolve. Same shim, and the
+    # same reason, as in gguf_fetch.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    __package__ = "mimora"
 
-from . import loader, models_info
+from mimora import loader, models_info
 
 log = logging.getLogger(__name__)
 

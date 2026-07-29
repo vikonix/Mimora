@@ -39,14 +39,13 @@ from typing import Optional
 
 if __package__ in (None, ""):
     # Executed as a plain script (python mimora/gguf_fetch.py) rather than with
-    # -m: that form gives the module no package context, and the relative
-    # import below then fails. Naming the package and putting the project root
-    # on sys.path makes both invocations work (PEP 366), which matters because
-    # running a file directly is what an IDE's "run" button does.
+    # -m: that form puts THIS directory on sys.path instead of the project
+    # root, so the "import mimora" below would not resolve. Putting the root
+    # there makes both invocations work, which matters because running a file
+    # directly is what an IDE's "run" button does.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    __package__ = "mimora"
 
-from . import model_fetch, models_info
+from mimora import model_fetch, models_info
 
 log = logging.getLogger(__name__)
 

@@ -8,8 +8,8 @@ import threading
 from functools import partial
 from pathlib import Path
 
-from . import llama_server_fetch, loader, model_fetch, models_info
-from .languages import english, spanish
+from mimora import llama_server_fetch, loader, model_fetch, models_info
+from mimora.languages import english, spanish
 
 # Project root - always absolute, regardless of working directory at launch.
 # This file lives in mimora/, so the root is one level up.

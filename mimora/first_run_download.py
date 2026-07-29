@@ -48,8 +48,8 @@ import os
 import threading
 from typing import NamedTuple, Optional, Sequence
 
-from . import (config, first_run, gguf_fetch, llama_server_fetch, model_fetch,
-               models_info)
+from mimora import (config, first_run, gguf_fetch, llama_server_fetch,
+                    model_fetch, models_info)
 
 log = logging.getLogger(__name__)
 

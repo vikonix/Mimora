@@ -71,7 +71,8 @@ import logging
 from pathlib import Path
 from typing import NamedTuple, Optional, Sequence, Union
 
-from . import config, gguf_fetch, llama_server_fetch, loader, model_fetch, models_info
+from mimora import (config, gguf_fetch, llama_server_fetch, loader,
+                    model_fetch, models_info)
 
 log = logging.getLogger(__name__)
 
