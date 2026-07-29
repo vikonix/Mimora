@@ -3,12 +3,17 @@
 
 """Download and install the official llama-server binary into bin/llama/.
 
-Standalone helper for the upcoming "llama-server" LLM backend: it fetches a
+Standalone helper for the default "llama-server" LLM backend: it fetches a
 PINNED llama.cpp release from GitHub, checks the sha256 of every asset,
 unpacks them into bin/llama/, and confirms that the installed binary really
 runs with the backend it advertises.
 
-Run it directly (nothing else in the project calls it yet):
+Callers: install.py (its LLM-stack step), the app's first-run window
+(mimora/first_run_download.py) when the binary is missing, and - for the read-
+only parts - mimora/config.py, mimora/llm_server_ctl.py and
+tools/detect_hardware.py.
+
+Run it directly:
 
     python -m mimora.llama_server_fetch              # auto-detect the variant
     python -m mimora.llama_server_fetch --list       # show known variants
@@ -28,7 +33,7 @@ Design notes
   whose cudart/cublas DLLs are missing or of the wrong major version falls
   back to CPU *silently*: it still logs "offloaded N/N layers to GPU" and the
   app keeps working, just about three times slower. `--list-devices` is the
-  cheap explicit check that catches it (see tasks/llama-cpp.md, phase 0).
+  cheap explicit check that catches it.
 * The install is staged: assets are unpacked into bin/llama.new/ and only
   swapped onto bin/llama/ once every archive is verified, so an interrupted
   run cannot leave a half-written installation behind. The stamp file that
@@ -62,8 +67,10 @@ log = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 # llama.cpp build this module installs. Verified manually on Windows + RTX 3090
-# (tasks/llama-cpp.md, "Результаты фазы 0"). Bumping it means updating every
-# sha256 below from the release page as well.
+# (2026-07): chat template, readiness behaviour, sampling defaults, generation
+# speed and VRAM use were all compared against the previous backend before the
+# pin was chosen. Bumping it means updating every sha256 below from the release
+# page as well.
 RELEASE_TAG = "b10099"
 
 DOWNLOAD_URL = "https://github.com/ggml-org/llama.cpp/releases/download/{tag}/{asset}"
@@ -80,12 +87,11 @@ class Asset(NamedTuple):
     before the download starts: the first-run dialog has to name the volume
     before the user agrees to it, and the progress bar needs a denominator that
     is known in advance so its percentage cannot jump backwards when it moves on
-    to the next file (tasks/first-run-fetch.md, works 2 and 3). It sits here,
-    next to the name and the checksum, because all three describe the same file
-    of the same pinned release: bumping RELEASE_TAG rewrites them together, and
-    a size kept in another module would not fail loudly when forgotten, it would
-    quietly mis-scale the bar. Snap the values with
-    ``python tools/measure_model_sizes.py``.
+    to the next file. It sits here, next to the name and the checksum, because
+    all three describe the same file of the same pinned release: bumping
+    RELEASE_TAG rewrites them together, and a size kept in another module would
+    not fail loudly when forgotten, it would quietly mis-scale the bar. Snap
+    the values with ``python tools/measure_model_sizes.py``.
 
     At download time Content-Length is the truth and this is only the plan; the
     two are not reconciled on the fly, because re-scaling a running bar makes
@@ -127,7 +133,8 @@ VARIANTS: dict[str, Variant] = {
             # The CUDA runtime that ships with the release. Its major version
             # MUST match the build (cuda-12.4 loads cudart64_12.dll,
             # cublas64_12.dll, cublasLt64_12.dll) - a cudart from another major
-            # version is exactly what caused the silent CPU fallback in phase 0.
+            # version is exactly what caused the silent CPU fallback that this
+            # module's device check exists to catch.
             # Note that it is the LARGER of the two archives: most of what a CUDA
             # install downloads is NVIDIA's runtime, not llama.cpp.
             Asset("cudart-llama-bin-win-cuda-12.4-x64.zip",

@@ -91,11 +91,16 @@ _BLOCKED_TEXT = {
 
 
 class Outcome(NamedTuple):
-    """What the window ended up doing, for ensure_ready() to act on."""
+    """What the window ended up doing, for ensure_ready() to act on.
+
+    Deliberately only the two facts a caller acts on. The list of components
+    actually fetched is not among them: nothing downstream needs it, because
+    where the binary ended up is answered by config.resolve_llama_server_path()
+    at the moment the command line is built, not by remembering the download.
+    """
 
     quit_requested: bool
     optional_declined: bool
-    downloaded: tuple[str, ...]      # component keys actually fetched
 
 
 def _format_size(size_mb: Optional[int]) -> str:
@@ -114,13 +119,11 @@ class FirstRunWindow:
         self.plan = plan
         self._state: Optional[first_run_download.ProgressState] = None
         self._thread: Optional[threading.Thread] = None
-        self._selection: tuple[first_run.Component, ...] = ()
         # Default outcome: quit. Every way of dismissing this window that is
         # not an explicit answer - the close button, Escape, a killed window
         # manager - has to end in "do not start", never in a silent start with
         # half the models missing.
-        self._outcome = Outcome(quit_requested=True, optional_declined=False,
-                                downloaded=())
+        self._outcome = Outcome(quit_requested=True, optional_declined=False)
         # Set before destroy() so the pending 100 ms poll does not fire into a
         # dead interpreter and print a TclError traceback on the way out.
         self._closed = False
@@ -306,7 +309,6 @@ class FirstRunWindow:
             # Everything unchecked: the same thing as pressing Skip.
             self._on_secondary()
             return
-        self._selection = selection
         self._question.pack_forget()
         self._progress_frame.pack(fill=tk.X, pady=(14, 0))
         self._primary.config(state=tk.DISABLED, text="Download")
@@ -329,9 +331,9 @@ class FirstRunWindow:
         if self.plan.missing_required:
             # No working outcome without it, so the only other action is
             # leaving; nothing is recorded, and the question returns next time.
-            self._outcome = Outcome(True, False, ())
+            self._outcome = Outcome(True, False)
         else:
-            self._outcome = Outcome(False, True, ())
+            self._outcome = Outcome(False, True)
         self._close()
 
     def run(self) -> Outcome:
@@ -344,8 +346,7 @@ class FirstRunWindow:
         if self._downloading() and not messagebox.askyesno(
                 "Mimora", _INTERRUPT_TEXT, parent=self.root):
             return
-        self._outcome = Outcome(quit_requested=True, optional_declined=False,
-                                downloaded=self._outcome.downloaded)
+        self._outcome = Outcome(quit_requested=True, optional_declined=False)
         self._close()
 
     def _close(self) -> None:
@@ -388,8 +389,7 @@ class FirstRunWindow:
             # Unchecked optional level: the refusal is recorded even though the
             # required part was downloaded successfully.
             optional_declined=(bool(self.plan.missing_optional)
-                               and not self._wants_optional.get()),
-            downloaded=tuple(c.key for c in self._selection))
+                               and not self._wants_optional.get()))
         self._close()
 
     def _show_error(self, message: str) -> None:

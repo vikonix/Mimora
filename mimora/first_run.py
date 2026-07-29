@@ -22,9 +22,9 @@ its 2483 MB, so asking for it would nearly double the required level.
 config._CACHED_REPOS does require it unconditionally, but that constant answers
 a different question - what must be cached before the run can go offline - and
 that is why the required set is built here the same WAY rather than taken from
-it. model_fetch.missing_models() is wrong here for the same kind of reason: it
-checks all four repos plus Supertonic, 5776 MB, most of which a given run never
-loads.
+it. The same argument rules out an aggregate on the model_fetch side: that
+module owns all four repos plus Supertonic, 5776 MB, most of which a given run
+never loads, and it may not read config to narrow the set down.
 
 This module reads config, so the fetchers must never import it: they are
 forbidden config (which flips HF_HUB_OFFLINE=1 once the models are cached,
@@ -63,8 +63,6 @@ merely reads (mimora/config.py, the MODEL_CACHE_DIR section). Merely asking what
 is on disk must not change how the process would download, so the plan is built
 without side effects and the fetchers arm their own environment when the
 downloading starts.
-
-See tasks/first-run-fetch.md (work 1) for the reasoning in full.
 """
 
 from __future__ import annotations
@@ -169,11 +167,6 @@ class Plan(NamedTuple):
     llama_server_blocked: Optional[str]
 
     @property
-    def llama_server_available(self) -> bool:
-        """Could downloading give this machine a llama-server it would use?"""
-        return self.llama_server_blocked is None
-
-    @property
     def missing_required(self) -> tuple[Component, ...]:
         return tuple(c for c in self.required if not c.present)
 
@@ -225,9 +218,8 @@ def required_models(engine: str, tts_backend: str) -> tuple[Model, ...]:
     point, because the risky decision in this module is WHICH models the level
     contains (the NLLB question above), not the plumbing around it.
 
-    TTS comes first because that is the order the levels table in
-    tasks/first-run-fetch.md lists them in; nothing depends on it beyond the
-    order the dialog and the progress bar walk the components in.
+    The TTS model comes first only so that the dialog and the progress bar walk
+    the components in a stable order; nothing else depends on it.
     """
     models: list[Model] = []
     # .get rather than [] for both: "none" legitimately has no recognizer, and

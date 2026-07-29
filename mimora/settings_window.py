@@ -268,10 +268,12 @@ def build_sections() -> tuple:
                   help="llama-server starts the official llama.cpp binary for "
                        "you and uses the GGUF model below; the binary is named "
                        "by 'llama_server_path' in settings.json (empty = look "
-                       "in bin/llama and on PATH, install it with 'python -m "
-                       "mimora.llama_server_fetch'). lm-studio requires LM "
-                       "Studio running separately. off = no LLM: phrases are "
-                       "the practice text's own sentences, taken as-is."),
+                       "in bin/llama and on PATH). install.py installs it, so "
+                       "does the app on its first start, and 'python -m "
+                       "mimora.llama_server_fetch' does it at any time. "
+                       "lm-studio requires LM Studio running separately. "
+                       "off = no LLM: phrases are the practice text's own "
+                       "sentences, taken as-is."),
             Field("lm_studio_host", "LM Studio address", "text",
                   lambda: config.user_setting("lm_studio_host",
                                               config.LM_STUDIO_HOST),
@@ -956,10 +958,9 @@ class SettingsWindow:
         GGUF model path and context size configure only "llama-server", the
         backend that starts a server itself, so they are additionally inert for
         "lm-studio" (LM Studio loads its own model); the LM Studio address is
-        the mirror case, used only by "lm-studio". The
-        selected (combobox) value drives this, so
-        the fields grey the moment the backend is switched, before the
-        pending restart applies.
+        the mirror case, used only by "lm-studio". The selected (combobox)
+        value drives this, so the fields grey the moment the backend is
+        switched, before the pending restart applies.
         """
         backend = self._vars["llm_backend"].get() \
             if "llm_backend" in self._vars else config.LLM_BACKEND

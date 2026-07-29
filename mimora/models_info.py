@@ -17,7 +17,7 @@ Two reasons it exists:
   repo ids out, three of them as bare literals - so the copies could drift;
 * the first-run download dialog has to name volumes as numbers before the user
   agrees to them, and the sizes were prose inside a display label (or, for
-  Kokoro, absent). See tasks/first-run-fetch.md, work 5.
+  Kokoro, absent).
 
 Deliberately NOT here
 ---------------------

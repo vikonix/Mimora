@@ -8,7 +8,7 @@ tools/measure_model_sizes.py is where it happens. What CAN be checked without a
 network is that nobody added a model or a release asset and left its size out,
 which is the failure this module exists to prevent: a missing number does not
 crash anything, it just makes the first-run dialog and the progress bar quietly
-wrong (see tasks/first-run-fetch.md, work 5).
+wrong.
 
 Run from the project root with:
 

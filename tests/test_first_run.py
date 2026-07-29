@@ -11,7 +11,7 @@ wrong does not crash anything - it makes the first-run dialog ask for the wrong
 number of gigabytes, which is the one thing the dialog exists to state
 honestly. The specific trap is NLLB: config._CACHED_REPOS requires it
 unconditionally, and reusing that constant would have the dialog ask for 4110 MB
-where a default run needs 1627 (see tasks/first-run-fetch.md, work 1).
+where a default run needs 1627.
 
 Run from the project root with:
 
@@ -83,11 +83,10 @@ class RequiredLevelTests(unittest.TestCase):
                     for model in first_run.required_models(engine, tts_backend):
                         self.assertIn(model, catalogue)
 
-    def test_totals_match_the_measurement_quoted_in_the_task(self):
-        # These three numbers are quoted as prose in tasks/first-run-fetch.md
-        # and will be read out to the user by the dialog, so re-snapping the
-        # sizes has to turn the doc red too rather than silently disagree with
-        # it.
+    def test_totals_match_the_measured_sizes(self):
+        # These three numbers are what the dialog reads out to the user, so a
+        # re-snap of models_info has to fail here rather than quietly change
+        # what the app asks for.
         cases = {("phoneme", "kokoro"): 1627,     # default configuration
                  ("acoustic", "kokoro"): 1625,    # the other engine
                  ("phoneme", "supertonic"): 1668}  # Spanish
@@ -207,7 +206,7 @@ class OptionalLevelTests(unittest.TestCase):
 
     def test_a_platform_without_a_build_is_offered_nothing(self):
         # Not "the GGUF only": one model without a server does not start the
-        # backend. The dialog points at PATH or lm-studio instead (work 8).
+        # backend. The dialog points at PATH or lm-studio instead.
         unsupported = llama_server_fetch.UnsupportedPlatformError("no build")
         with mock.patch.object(llama_server_fetch, "select_variant",
                                side_effect=unsupported):
@@ -297,7 +296,7 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual(plan.missing_required_mb, 1627)
         self.assertEqual([c.key for c in plan.optional],
                          [first_run.KEY_LLAMA_SERVER, first_run.KEY_GGUF])
-        self.assertTrue(plan.llama_server_available)
+        self.assertIsNone(plan.llama_server_blocked)
 
     def test_a_fully_installed_machine_needs_nothing(self):
         with mock.patch.object(config, "LLM_BACKEND", "llama-server"), \

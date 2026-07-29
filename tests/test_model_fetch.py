@@ -164,33 +164,6 @@ class HfRepoCachedTests(unittest.TestCase):
             self.assertTrue(model_fetch.hf_repo_cached("repo/one"))
 
 
-class MissingModelsTests(unittest.TestCase):
-    """missing_models() is the app's first-run question, so it must name
-    everything that is absent - and stay empty when nothing is."""
-
-    def test_lists_repos_and_supertonic_when_nothing_is_present(self):
-        with patch.object(model_fetch, "hf_repo_cached", return_value=False), \
-                patch.object(model_fetch, "supertonic_cached",
-                             return_value=False):
-            missing = model_fetch.missing_models()
-        expected = [repo.repo_id for repo in model_fetch.HF_MODEL_REPOS]
-        expected.append(model_fetch.SUPERTONIC_MODEL_NAME)
-        self.assertEqual(missing, expected)
-
-    def test_empty_when_everything_is_present(self):
-        with patch.object(model_fetch, "hf_repo_cached", return_value=True), \
-                patch.object(model_fetch, "supertonic_cached",
-                             return_value=True):
-            self.assertEqual(model_fetch.missing_models(), [])
-
-    def test_supertonic_alone_is_reported(self):
-        with patch.object(model_fetch, "hf_repo_cached", return_value=True), \
-                patch.object(model_fetch, "supertonic_cached",
-                             return_value=False):
-            self.assertEqual(model_fetch.missing_models(),
-                             [model_fetch.SUPERTONIC_MODEL_NAME])
-
-
 class EnsureHfModelsTests(unittest.TestCase):
     """Every repo is attempted even when one fails, and the failures are
     reported together rather than aborting on the first one."""

@@ -26,7 +26,7 @@ Design notes
   so would mean reading the user config, which is exactly the dependency the
   point above forbids. The default target matches config.EXTERNAL_MODEL_PATH's
   own default, and a caller that wants to honour an overridden path passes it
-  as *target* (see tasks/llama-cpp.md, step 3).
+  as *target* - which is what mimora/first_run_download.py does.
 """
 
 from __future__ import annotations

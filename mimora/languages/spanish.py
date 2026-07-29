@@ -74,7 +74,7 @@ PROFILE = {
             "más muy pues así aquí allí bien sí no"
         ),
         # Proficiency levels 0..5 - same schema and rationale as the english
-        # profile (see the comment there and tasks/phrase_level_task.md).
+        # profile (see the comment there).
         # Zipf floors mirror the English starting values; wordfreq frequency
         # distributions differ per language, so tune them independently from
         # logs/phrase_level_samples.jsonl.
@@ -143,8 +143,7 @@ PROFILE = {
         # Spanish runs the Supertonic 3 backend (mimora/tts.py): Kokoro's
         # Spanish is trained on little data (audible artifacts, 3 voices),
         # while Supertonic is multilingual by design - 10 clean voices at
-        # 44.1 kHz (decision of 2026-07-14, see
-        # tasks/supertonic_tts_backend_task.md). The swap is safe for scoring:
+        # 44.1 kHz (decision of 2026-07-14). The swap is safe for scoring:
         # Spanish uses the phoneme engine, whose reference is espeak text -
         # the synthesized audio is only played to the user.
         "castilian": {

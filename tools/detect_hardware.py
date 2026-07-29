@@ -205,8 +205,8 @@ def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
     installed as. That comparison is the point: a CUDA build whose cudart DLLs
     are missing or of the wrong major version starts fine, still logs
     "offloaded N/N layers to GPU", and simply runs about three times slower on
-    the CPU - see tasks/llama-cpp.md, phase 0. The same probe guards every app
-    start in mimora/llm_server_ctl.py (log_compute_devices).
+    the CPU. The same probe guards every app start in mimora/llm_server_ctl.py
+    (log_compute_devices).
 
     Only the project's own install in bin/llama/ is probed. A llama-server the
     user manages themselves carries no record of which backend it was built
@@ -251,8 +251,9 @@ def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
 
     pattern = llama_server_fetch.VARIANTS[variant_name].device_pattern
     if pattern is None:
-        # A CPU build cannot offload, full stop - the same verdict the old
-        # llama-cpp-python probe returned for a CPU-only wheel.
+        # A CPU build cannot offload, full stop. This is the one branch that
+        # answers a definite False rather than None, which is what lets
+        # build_config zero the LLM's VRAM budget.
         if gpu_present:
             warnings.append(
                 f"the installed llama-server is the '{variant_name}' build - "

@@ -247,17 +247,14 @@ def supertonic_cached() -> bool:
         return False
 
 
-def missing_models() -> list[str]:
-    """Human-readable names of everything this module would still download.
-
-    Empty means a run needs no network for these models. Intended for the app's
-    first-run check as much as for the installer.
-    """
-    missing = [repo.repo_id for repo in HF_MODEL_REPOS
-               if not hf_repo_cached(repo.repo_id)]
-    if not supertonic_cached():
-        missing.append(SUPERTONIC_MODEL_NAME)
-    return missing
+# There is deliberately no "everything that is missing" aggregate here. The one
+# caller that would want it, the app's first-run check, must not have it: this
+# module owns all four hub repos plus Supertonic, 5776 MB, while a given run
+# loads one recognizer and one TTS model. The set that matters depends on the
+# active engine and TTS backend, i.e. on config, which this module may not read
+# - so the aggregate lives in mimora/first_run.py, on the other side of that
+# line. install.py wants the opposite (everything, so a machine is prepared for
+# any settings change) and gets it by looping over HF_MODEL_REPOS itself.
 
 
 # ---------------------------------------------------------------------------

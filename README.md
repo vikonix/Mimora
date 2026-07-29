@@ -112,10 +112,16 @@ your version (e.g. `brew install python-tk@3.12` for Homebrew Python 3.12).
 ### Models
 
 `install.py` pre-downloads all of these (see [Quick install](#quick-install-script-recommended)).
-Otherwise the Hugging Face models are fetched automatically on first run, while
-the GGUF chat model and the llama-server binary must be obtained by hand
-(`python -m mimora.gguf_fetch` and `python -m mimora.llama_server_fetch`) -
-the app does not download those two on its own yet.
+You do not have to run it: on the first start Mimora checks what is missing and
+offers to fetch it, naming the exact volume before anything is downloaded. Each
+model also has its own command, listed per row below.
+
+The first-run window asks about two levels separately. The models a session
+cannot run without (the active engine's recognizer plus the active language's
+TTS) are a notice with **Download** and **Quit**; the local chat model
+(llama-server plus the GGUF) is a real choice, and declining it writes
+`"llm_backend": "off"` into `config/settings.json`, where you can turn it back
+on later. The translator is fetched lazily and is never part of that question.
 
 Download sizes below are measured, not estimated, and are kept as data in
 [`mimora/models_info.py`](mimora/models_info.py); re-snap them with
@@ -123,13 +129,13 @@ Download sizes below are measured, not estimated, and are kept as data in
 
 | Model | Used by | Download | Notes |
 |---|---|---|---|
-| `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | pronunciation analysis (**phoneme** engine, default) | 1264 MB | espeak IPA phoneme recognizer; via `install.py` or on first run |
-| `facebook/wav2vec2-large-960h` | pronunciation analysis (**acoustic** engine) | 1262 MB | via `install.py` or on first run |
-| Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech (English) | 363 MB | via `install.py` or on first run |
-| Supertonic 3 (`Supertone/supertonic-3`) | text-to-speech (Spanish) | 404 MB | into `model_cache/supertonic3/`; via `install.py` or on first run. Weights are **OpenRAIL-M** licensed (code MIT), so they are downloaded, never bundled |
-| `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | 2483 MB | NLLB-200 200-language translator; via `install.py` or on first run |
-| A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | 2019 MB | via `install.py`, or **download manually** into `models/`. Not needed with `"llm_backend": "off"` (phrases come verbatim from the practice text) |
-| llama-server binary (pinned llama.cpp release) | phrase generation | 641 MB CUDA, 18 MB CPU | most of the CUDA figure is NVIDIA's runtime (391 MB), not llama.cpp; via `install.py` or `python -m mimora.llama_server_fetch` |
+| `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | pronunciation analysis (**phoneme** engine, default) | 1264 MB | espeak IPA phoneme recognizer; `python -m mimora.model_fetch --hf` |
+| `facebook/wav2vec2-large-960h` | pronunciation analysis (**acoustic** engine) | 1262 MB | `python -m mimora.model_fetch --hf` |
+| Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech (English) | 363 MB | `python -m mimora.model_fetch --hf` |
+| Supertonic 3 (`Supertone/supertonic-3`) | text-to-speech (Spanish) | 404 MB | into `model_cache/supertonic3/`; `python -m mimora.model_fetch --supertonic`. Weights are **OpenRAIL-M** licensed (code MIT), so they are downloaded, never bundled |
+| `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | 2483 MB | NLLB-200 200-language translator; fetched on demand when translation is switched on |
+| A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | 2019 MB | `python -m mimora.gguf_fetch`. Not needed with `"llm_backend": "off"` (phrases come verbatim from the practice text) |
+| llama-server binary (pinned llama.cpp release) | phrase generation | 641 MB CUDA, 18 MB CPU | most of the CUDA figure is NVIDIA's runtime (391 MB), not llama.cpp; `python -m mimora.llama_server_fetch` |
 
 ---
 
@@ -250,7 +256,8 @@ The default `torch` wheel is CPU-only. For NVIDIA GPUs:
 ### Get the llama-server binary
 
 The default LLM backend runs the official **llama.cpp** server as a subprocess.
-`install.py` installs it; to do it separately, or to change the build:
+`install.py` installs it, and the app offers to fetch it on the first start; to
+do it separately, or to change the build:
 
 ```bash
 python -m mimora.llama_server_fetch
@@ -268,8 +275,8 @@ falls back to the CPU **silently** and just runs about three times slower.
 ### Get a GGUF model
 
 `install.py` already downloads `llama-3.2-3b-instruct-q4_k_m.gguf` into `models/`,
-and `python -m mimora.gguf_fetch` does the same on its own (`--list` shows the
-target path and whether the file is there).
+the first-run window offers the same download, and `python -m mimora.gguf_fetch`
+does it on its own (`--list` shows the target path and whether the file is there).
 To use a different model instead, download a small instruct model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M.gguf`) and place it at the path set by `EXTERNAL_MODEL_PATH` in `mimora/config.py` (default: `models/llama-3.2-3b-instruct-q4_k_m.gguf`).
 
 ---

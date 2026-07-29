@@ -24,10 +24,9 @@ Six states, and only the first three ever offer a download:
 The two blocked states pair their note with a missing required level on
 purpose. That is the only way the window is ever reached in that condition: with
 nothing else missing, ensure_ready() logs the reason and starts the app without
-showing anything (see tasks/first-run-fetch.md, work 8). On a fully installed
-machine --state real hits the same asymmetry from the other side: the plan is
-empty, the app would show nothing at all, and this shows the window regardless
-and says so.
+showing anything. On a fully installed machine --state real hits the same
+asymmetry from the other side: the plan is empty, the app would show nothing at
+all, and this shows the window regardless and says so.
 
 **Nothing here calls ensure_ready(), and that is the point.** ensure_ready
 writes llm_backend "off" into config/settings.json when the optional level is

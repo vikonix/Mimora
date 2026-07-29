@@ -246,7 +246,8 @@ if not isinstance(USER_NAME, str):
 # the paths are shared: model_fetch.prepare_hf_env() is NOT called here on
 # purpose, because it also disables hf-xet on Windows, which is a download-time
 # workaround and not something the app should decide for a cache it merely
-# reads (see tasks/llama-cpp.md, step 3, where the app gains its own download).
+# reads. The app does download on its own now (mimora/first_run_window.py), and
+# that path arms the environment itself, right before it starts fetching.
 MODEL_CACHE_DIR = model_fetch.MODEL_CACHE_DIR
 loader.ensure_dir(MODEL_CACHE_DIR)
 os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
@@ -668,8 +669,8 @@ ESPEAK_LANGUAGE = _VARIANT["espeak_language"]
 # tts.TTS_BACKENDS ("kokoro" = Kokoro-82M/torch/24 kHz, "supertonic" =
 # Supertonic 3/ONNX/44.1 kHz). A variant that names no backend runs Kokoro,
 # so the English profile needs no new field. This is data, not a language
-# branch: the Spanish variant switched to Supertonic purely by profile edit
-# (see tasks/supertonic_tts_backend_task.md).
+# branch: the Spanish variant switched to Supertonic purely by profile edit,
+# without a single conditional outside the registry.
 TTS_BACKEND_CHOICES = ("kokoro", "supertonic")
 TTS_BACKEND = _VARIANT.get("tts_backend", "kokoro")
 if TTS_BACKEND not in TTS_BACKEND_CHOICES:
@@ -948,9 +949,9 @@ TRANSLATOR_WARMUP = _LANG_PROFILE["translator_warmup"]
 # This is NOT the same set as "what has to be downloaded before the app can
 # run": NLLB is in here unconditionally because offline mode cannot be entered
 # without it, while translation is off by default and the app works fine with
-# the 2483 MB missing. The first-run download check therefore builds its own
-# required set the same WAY this one is built, not from this constant - see
-# tasks/first-run-fetch.md.
+# the 2483 MB missing. The first-run download check (mimora/first_run.py,
+# required_models) therefore builds its own required set the same WAY this one
+# is built, not from this constant.
 _ENGINE_MODEL_REPO = {
     "phoneme": WAV2VEC2_PHONEME_MODEL_NAME,   # default engine
     "acoustic": WAV2VEC2_MODEL_NAME,

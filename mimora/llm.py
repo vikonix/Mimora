@@ -74,8 +74,7 @@ _PREAMBLE_RE = re.compile(
 # The level's hints are folded into the SYSTEM prompt (which therefore only
 # changes when the user changes the level, keeping the llama.cpp prompt-prefix
 # cache effective), and the generated phrase is validated afterwards against
-# the level's word range and wordfreq Zipf floor. See
-# tasks/phrase_level_task.md for the design.
+# the level's word range and wordfreq Zipf floor.
 # =====================================================================
 
 # Unicode-aware word tokenizer (Spanish accents, English contractions).
@@ -309,9 +308,9 @@ class LLMManager:
                     model=self.model,
                     messages=messages,
                     temperature=config.PHRASE_GEN_TEMPERATURE,
-                    # Sent explicitly because the servers disagree on the
-                    # default (llm_server 0.9, llama-server and LM Studio
-                    # 0.95): sampling must not depend on which one answers.
+                    # Sent explicitly rather than left to the server: a default
+                    # is not a promise, and sampling must not change just
+                    # because another backend answered (see PHRASE_GEN_TOP_P).
                     top_p=config.PHRASE_GEN_TOP_P,
                     max_tokens=max_tokens,
                     stream=False,

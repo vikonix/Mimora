@@ -28,8 +28,9 @@ from mimora.llm import LLMManager
 # How long to wait for a graceful exit before killing the subprocess.
 SERVER_TERMINATE_TIMEOUT_SEC = 5
 
-# llama-server tuning that must never be left to the binary's own defaults
-# (measured in tasks/llama-cpp.md, phase 0):
+# llama-server tuning that must never be left to the binary's own defaults.
+# All three were measured against the previous backend before this one became
+# the default; the numbers below are what brought the two to parity:
 #   --parallel 1     : the default (-1) opens several slots, splits the context
 #                      between them and routes a request to whichever slot is
 #                      most similar, which fragments the prefix cache.

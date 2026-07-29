@@ -34,8 +34,9 @@ Design notes
   three fetchers live in the package (mimora/model_fetch.py,
   mimora/gguf_fetch.py, mimora/llama_server_fetch.py) and the steps below are
   thin wrappers around them. The app needs the same code for its own first-run
-  check, and a PyPI install has no install.py at all - see tasks/llama-cpp.md,
-  step 2a. Their log output is bridged into logs/install.log (see _LogBridge).
+  check (mimora/first_run_download.py), and a packaged install has no
+  install.py at all. Their log output is bridged into logs/install.log (see
+  _LogBridge).
 * GPU detection deliberately relies only on `nvidia-smi`, because
   detect_hardware.py imports torch (which may not be installed yet) - a classic
   bootstrap chicken-and-egg. detect_hardware.py is run at the very end, once
@@ -992,7 +993,7 @@ def step_llama_server(
     First half of the LLM stack (the GGUF model below is the second). The
     fetcher verifies the install by running --version and --list-devices, which
     is what catches llama.cpp's silent fallback to CPU when the cudart DLLs are
-    missing or of the wrong major version - see tasks/llama-cpp.md, phase 0.
+    missing or of the wrong major version.
 
     A platform with no pinned build (currently everything except Windows x64)
     is recorded as a manual action rather than a hard failure: the rest of the

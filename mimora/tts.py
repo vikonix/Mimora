@@ -3,7 +3,7 @@
 
 """Text-to-speech: synthesis backends plus the shared playback path.
 
-Two roles live here, split on purpose (tasks/supertonic_tts_backend_task.md):
+Two roles live here, split on purpose:
 
 * **Synthesis backends** - one class per TTS engine, selected by the active
   language variant's data (``config.TTS_BACKEND``, never an ``if language``

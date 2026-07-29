@@ -466,8 +466,8 @@ class PronunciationTrainerGUI:
         at all is a question about the setup, and it has two concrete answers
         worth naming - which matters because that is the state every start ends
         in on a platform no llama.cpp build is pinned for, where the first-run
-        window has nothing it could offer to download (see
-        tasks/first-run-fetch.md, work 8).
+        window has nothing it could offer to download and so says nothing
+        (mimora/first_run_window.ensure_ready).
 
         isfile() rather than a truthiness test: the settings branch of the
         resolver returns "llama_server_path" as given, without checking that

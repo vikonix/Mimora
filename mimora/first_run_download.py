@@ -31,10 +31,10 @@ How the byte counts are obtained
   names is needed - :func:`make_tqdm_class` builds a stand-in that records the
   bytes and discards the drawing.
 
-  Older advice in tasks/first-run-fetch.md was to patch file_download.hf_tqdm.
-  That name no longer exists (huggingface_hub 1.24.0 imports tqdm.auto directly
-  and builds bars through _get_progress_bar_context), and patching it would have
-  failed the way the task warned about: silently, with no updates.
+  Monkeypatching file_download.hf_tqdm, the obvious alternative, would not work
+  at all: that name no longer exists (huggingface_hub 1.24.0 imports tqdm.auto
+  directly and builds bars through _get_progress_bar_context), and a patch by
+  name would have failed in the worst way - silently, with no updates.
 * **Supertonic**: its package downloads through its own loader with no hook at
   all, so that component contributes nothing until it finishes and then jumps by
   its whole size. It is 404 MB and only reached with the Spanish TTS backend.

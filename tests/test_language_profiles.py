@@ -343,8 +343,7 @@ class SpanishSelectionTests(_ConfigTestBase):
         self.assertEqual(self.config.PRACTICE_LANGUAGE, "spanish")
         self.assertEqual(self.config.TARGET_LANGUAGE, "Spanish")
         self.assertEqual(self.config.ACCENT, "castilian")
-        # Spanish runs the Supertonic 3 backend (10 voices, ISO lang code) -
-        # see tasks/supertonic_tts_backend_task.md.
+        # Spanish runs the Supertonic 3 backend (10 voices, ISO lang code).
         self.assertEqual(self.config.TTS_BACKEND, "supertonic")
         self.assertEqual(self.config.TTS_LANG_CODE, "es")
         self.assertEqual(self.config.ESPEAK_LANGUAGE, "es")
@@ -421,7 +420,7 @@ class EngineExperimentalTests(_ConfigTestBase):
 
     # A language that can never have a committed calibration file, so the
     # "missing calibration" branch is tested independently of when the real
-    # Spanish calibration (tasks/spanish_language_task.md) lands.
+    # Spanish calibration lands.
     _FAKE_PROFILE = {
         "display_name": "Klingon",
         "flores_code": "tlh_Latn",
@@ -615,7 +614,7 @@ class MigrationWriteTests(_ConfigTestBase):
 
 
 class PhraseLevelTests(_ConfigTestBase):
-    """Proficiency levels (tasks/phrase_level_task.md): schema and constants."""
+    """Proficiency levels (config.PHRASE_GEN_LEVEL): schema and constants."""
 
     def setUp(self):
         self.config = _build_config({})
