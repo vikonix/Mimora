@@ -47,7 +47,7 @@ import logging
 import threading
 import tkinter as tk
 from tkinter import messagebox
-from typing import NamedTuple, Optional, Sequence
+from typing import Container, NamedTuple, Optional, Sequence
 
 from mimora import config, first_run, first_run_download
 from mimora.ui_theme import (FONT_FAMILY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
@@ -112,6 +112,26 @@ def _format_size(size_mb: Optional[int]) -> str:
     return f"{size_mb} MB"
 
 
+def still_missing(
+        components: Sequence[first_run.Component],
+        fetched: Container[str],
+) -> tuple[first_run.Component, ...]:
+    """*components* minus the ones whose key is in *fetched*.
+
+    A first_run.Plan describes the machine as it was when it was built and is
+    never rebuilt, so Plan.missing_required does NOT shrink as components
+    arrive. Every question the window asks after a download has started is
+    about what is missing *now*: which label the second button carries, what a
+    Retry should fetch, and whether leaving is a refusal or a quit.
+
+    Free function rather than a method because that difference is the whole of
+    the logic and it is worth being able to test without a Tk root - a download
+    that half succeeded and then failed is otherwise reachable only by pulling
+    the network out at the right second.
+    """
+    return tuple(c for c in components if c.key not in fetched)
+
+
 class FirstRunWindow:
     """The dialog. Owns its root and returns an :class:`Outcome` from run()."""
 
@@ -124,6 +144,11 @@ class FirstRunWindow:
         # manager - has to end in "do not start", never in a silent start with
         # half the models missing.
         self._outcome = Outcome(quit_requested=True, optional_declined=False)
+        # Keys of the components fetched since this window opened. Accumulated
+        # across attempts rather than read from the current ProgressState,
+        # because Retry starts a fresh one: without this, a component that
+        # arrived on the first attempt would look missing again on the second.
+        self._fetched: set[str] = set()
         # Set before destroy() so the pending 100 ms poll does not fire into a
         # dead interpreter and print a TclError traceback on the way out.
         self._closed = False
@@ -282,16 +307,26 @@ class FirstRunWindow:
     # Question state
     # ------------------------------------------------------------------
 
+    def _missing_required(self) -> tuple[first_run.Component, ...]:
+        """Required components this window has not managed to fetch yet."""
+        return still_missing(self.plan.missing_required, self._fetched)
+
     def _secondary_text(self) -> str:
         # Refusing the required level leaves nothing to run, so there the only
         # other action is leaving. With only the optional level missing,
         # refusing is a working configuration and must not read like an exit.
-        return "Quit" if self.plan.missing_required else "Skip"
+        #
+        # Read through _missing_required, not off the plan: a run that fetched
+        # the required level and then failed on the optional one has a working
+        # configuration to offer, and offering "Quit" there would throw the
+        # finished download away.
+        return "Quit" if self._missing_required() else "Skip"
 
     def _selected(self) -> tuple[first_run.Component, ...]:
-        components = tuple(self.plan.missing_required)
+        components = self._missing_required()
         if self._wants_optional.get():
-            components += tuple(self.plan.missing_optional)
+            components += still_missing(self.plan.missing_optional,
+                                        self._fetched)
         return components
 
     def _update_total(self) -> None:
@@ -328,11 +363,15 @@ class FirstRunWindow:
         if self._downloading():
             self._on_close()
             return
-        if self.plan.missing_required:
+        if self._missing_required():
             # No working outcome without it, so the only other action is
             # leaving; nothing is recorded, and the question returns next time.
             self._outcome = Outcome(True, False)
         else:
+            # Everything the run needs is on disk, whether it was there when
+            # this window opened or arrived just now. Leaving without the
+            # optional level is a working configuration, so it is recorded as
+            # the refusal it is instead of quitting.
             self._outcome = Outcome(False, True)
         self._close()
 
@@ -366,6 +405,10 @@ class FirstRunWindow:
         if self._closed or self._state is None:
             return
         snapshot = self._state.snapshot()
+        # Banked before anything else looks at the snapshot: a failure below
+        # ends this poll, and by then the components that did arrive have to be
+        # known, or the error branch would still believe the original plan.
+        self._fetched.update(snapshot.completed_keys)
         # winfo_width() rather than the requested width: the canvas is packed
         # with fill=X, so its real width is whatever the window settled on.
         width = self._bar.winfo_width() or _BAR_WIDTH
@@ -403,6 +446,10 @@ class FirstRunWindow:
         self._status.config(text="Download failed", fg=THEME["bad"])
         self._amount.config(text=message[:300])
         self._primary.config(state=tk.NORMAL, text="Retry")
+        # Recomputed rather than restored: components run in order, so a
+        # failure on the optional level can leave the required one complete,
+        # and then the way out is "Skip" (start anyway, llm_backend "off")
+        # rather than "Quit".
         self._secondary.config(text=self._secondary_text())
         # Retrying builds a fresh ProgressState, and the fetchers skip what is
         # already on disk, so a retry only pays for what actually failed.

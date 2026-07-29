@@ -69,7 +69,7 @@ class ProgressStateTests(unittest.TestCase):
     def test_absolute_reports_do_not_accumulate(self):
         # advance() takes the byte count reached, not a delta; two reports of
         # the same number must not add up.
-        self.state.begin("first")
+        self.state.begin(_component("first"))
         self.state.advance(5 * MB)
         self.state.advance(5 * MB)
         self.assertEqual(self.state.snapshot().done_bytes, 5 * MB)
@@ -77,38 +77,58 @@ class ProgressStateTests(unittest.TestCase):
     def test_a_second_reporter_does_not_double_count(self):
         # On the xet path huggingface_hub keeps a transfer bar and a
         # reconstruction bar, both of which become instances of our stand-in.
-        self.state.begin("first")
+        self.state.begin(_component("first"))
         self.state.advance(8 * MB)   # reconstruction
         self.state.advance(6 * MB)   # transfer, behind
         self.assertEqual(self.state.snapshot().done_bytes, 8 * MB)
 
     def test_progress_never_moves_backwards(self):
         # huggingface_hub subtracts the resumed size when it retries a file.
-        self.state.begin("first")
+        self.state.begin(_component("first"))
         self.state.advance(9 * MB)
         self.state.advance(2 * MB)
         self.assertEqual(self.state.snapshot().done_bytes, 9 * MB)
 
     def test_a_finished_component_is_banked_at_its_planned_size(self):
-        self.state.begin("first")
+        self.state.begin(_component("first", size_mb=40))
         self.state.advance(3 * MB)
-        self.state.complete(40)
+        self.state.complete()
         self.assertEqual(self.state.snapshot().done_bytes, 40 * MB)
         # The next component starts its own count from zero on top of that.
-        self.state.begin("second")
+        self.state.begin(_component("second"))
         self.state.advance(5 * MB)
         self.assertEqual(self.state.snapshot().done_bytes, 45 * MB)
+
+    def test_finished_components_are_named_in_order(self):
+        # What the dialog reads after a failure to tell what is now on disk
+        # from what its (never-updated) plan still calls missing.
+        self.assertEqual(self.state.snapshot().completed_keys, ())
+        self.state.begin(_component("first"))
+        self.state.complete()
+        self.state.begin(_component("second"))
+        self.assertEqual(self.state.snapshot().completed_keys, ("first",))
+        self.state.complete()
+        self.assertEqual(self.state.snapshot().completed_keys,
+                         ("first", "second"))
+
+    def test_an_unfinished_component_is_not_named(self):
+        # complete() is what banks a component; a begin() that never got there
+        # must leave no trace, or a failed download would report itself done.
+        self.state.begin(_component("first"))
+        self.state.advance(9 * MB)
+        self.state.fail("no network")
+        self.assertEqual(self.state.snapshot().completed_keys, ())
 
     def test_the_denominator_never_changes(self):
         # The plan fixes it before the first byte; recomputing mid-flight is
         # what would make the percentage jump.
-        self.state.begin("first")
+        self.state.begin(_component("first"))
         self.state.advance(50 * MB)
         self.assertEqual(self.state.snapshot().total_bytes, 100 * MB)
 
     def test_overshooting_the_plan_is_clamped(self):
         # Sizes are a pin, not a live lookup, so reality can exceed them.
-        self.state.begin("first")
+        self.state.begin(_component("first"))
         self.state.advance(500 * MB)
         snapshot = self.state.snapshot()
         self.assertEqual(snapshot.done_bytes, 100 * MB)
@@ -127,7 +147,7 @@ class TqdmStandInTests(unittest.TestCase):
 
     def setUp(self):
         self.state = first_run_download.ProgressState(100 * MB)
-        self.state.begin("component")
+        self.state.begin(_component("component"))
         self.cls = first_run_download.make_tqdm_class(self.state)
 
     def test_byte_bar_updates_reach_the_state(self):
@@ -190,7 +210,7 @@ class BinaryProgressTests(unittest.TestCase):
 
     def test_the_second_archive_continues_where_the_first_stopped(self):
         state = first_run_download.ProgressState(1000 * MB)
-        state.begin("llama.cpp server")
+        state.begin(_component(first_run.KEY_LLAMA_SERVER, size_mb=641))
         report = first_run_download._binary_progress(state)
 
         report("llama.zip", 100 * MB, 250 * MB)
@@ -344,6 +364,32 @@ class DownloadLoopTests(unittest.TestCase):
         self.assertEqual(fetch.call_count, 1)   # did not carry on
         self.assertTrue(snapshot.finished)
         self.assertIn("disk full", snapshot.error)
+
+    def test_a_failure_still_reports_what_had_already_finished(self):
+        """The half-success the dialog has to know about.
+
+        Components run in order, required ones first, so a network drop on the
+        optional level leaves the app perfectly startable. Without this the
+        dialog would go on believing its opening plan, offer "Quit" instead of
+        "Skip", and throw the finished download away.
+        """
+        components = (_component("a", size_mb=10), _component("b", size_mb=20))
+        state = first_run_download.ProgressState(30 * MB)
+        calls = []
+
+        def fetch(component, _state):
+            calls.append(component.key)
+            if component.key == "b":
+                raise OSError("no route to host")
+
+        with mock.patch.object(first_run_download, "_fetch",
+                               side_effect=fetch):
+            first_run_download.download(components, state)
+
+        snapshot = state.snapshot()
+        self.assertEqual(calls, ["a", "b"])
+        self.assertEqual(snapshot.completed_keys, ("a",))
+        self.assertIn("no route to host", snapshot.error)
 
 
 if __name__ == "__main__":

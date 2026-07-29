@@ -63,13 +63,22 @@ _HF_REPOS_BY_ID = {repo.repo_id: repo for repo in models_info.HF_REPOS}
 
 
 class Snapshot(NamedTuple):
-    """What the Tk side reads. A plain value, safe to hold and compare."""
+    """What the Tk side reads. A plain value, safe to hold and compare.
+
+    completed_keys names the components that finished, in order. The bar does
+    not need it - the byte counts already cover that - but the dialog does:
+    after a failure it has to know which parts of its plan are now on disk,
+    because the plan itself was measured before any of this started and never
+    changes. It lives here rather than in the window because this is the only
+    side that watches components finish.
+    """
 
     label: str
     done_bytes: int
     total_bytes: int
     error: Optional[str]
     finished: bool
+    completed_keys: tuple[str, ...]
 
     @property
     def fraction(self) -> float:
@@ -95,11 +104,17 @@ class ProgressState:
         self._error: Optional[str] = None
         self._finished = False
         self._overflow_logged = False
+        # The component being fetched right now, and the keys of the ones that
+        # finished. complete() reads the first to bank the second, which is why
+        # it needs no argument of its own.
+        self._component: Optional[first_run.Component] = None
+        self._completed_keys: list[str] = []
 
-    def begin(self, label: str) -> None:
+    def begin(self, component: first_run.Component) -> None:
         """Start a new component; its own byte count restarts at zero."""
         with self._lock:
-            self._label = label
+            self._component = component
+            self._label = component.label
             self._current = 0
 
     def advance(self, done_in_component: int) -> None:
@@ -118,16 +133,25 @@ class ProgressState:
             if done_in_component > self._current:
                 self._current = done_in_component
 
-    def complete(self, size_mb: Optional[int]) -> None:
-        """Bank a finished component at its PLANNED size.
+    def complete(self) -> None:
+        """Bank the component begin() named, at its PLANNED size.
 
         The plan, not the bytes actually observed: the denominator was fixed
         from the same planned numbers, so banking anything else would let the
         bar drift away from 100%. A real disagreement is logged by snapshot().
+
+        Its key is recorded as well, which is what lets the dialog tell "this
+        was downloaded just now" from "this was already here" after a later
+        component fails.
         """
         with self._lock:
-            self._completed += (size_mb or 0) * BYTES_PER_MB
+            component = self._component
+            if component is None:
+                return
+            self._completed += (component.size_mb or 0) * BYTES_PER_MB
             self._current = 0
+            self._completed_keys.append(component.key)
+            self._component = None
 
     def fail(self, message: str) -> None:
         with self._lock:
@@ -156,7 +180,8 @@ class ProgressState:
                             done_bytes=min(done, self._total),
                             total_bytes=self._total,
                             error=self._error,
-                            finished=self._finished)
+                            finished=self._finished,
+                            completed_keys=tuple(self._completed_keys))
 
 
 def make_tqdm_class(state: ProgressState) -> type:
@@ -374,7 +399,7 @@ def download(components: Sequence[first_run.Component],
     """
     with _hub_online():
         for component in components:
-            state.begin(component.label)
+            state.begin(component)
             log.info("Fetching %s (%s MB) ...", component.label,
                      component.size_mb)
             try:
@@ -383,7 +408,7 @@ def download(components: Sequence[first_run.Component],
                 log.exception("Fetching %s failed.", component.label)
                 state.fail(str(exc))
                 return
-            state.complete(component.size_mb)
+            state.complete()
             log.info("-> done: %s", component.label)
     state.finish()
 

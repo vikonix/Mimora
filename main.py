@@ -55,7 +55,7 @@ from tkinter import ttk
 from pathlib import Path
 import numpy as np
 
-from mimora import config, first_run_window, lifecycle, prosody
+from mimora import config, first_run, first_run_window, lifecycle, prosody
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.phrase_source import SourceTextPhraseProvider
@@ -461,26 +461,36 @@ class PronunciationTrainerGUI:
     def _server_failure_message(self) -> str:
         """What to tell the user when the llama-server did not come up.
 
-        Two unrelated problems reach this point. A binary that exists but would
-        not run is a question about this machine (model path, VRAM). No binary
-        at all is a question about the setup, and it has two concrete answers
-        worth naming - which matters because that is the state every start ends
-        in on a platform no llama.cpp build is pinned for, where the first-run
-        window has nothing it could offer to download and so says nothing
-        (mimora/first_run_window.ensure_ready).
+        Three unrelated problems reach this point and they want three different
+        answers, so the same three-way predicate the first-run plan uses
+        decides which one is given. Collapsing the last two into "point
+        llama_server_path at one" told somebody who had already pointed it
+        somewhere to do what they had just done.
 
-        isfile() rather than a truthiness test: the settings branch of the
-        resolver returns "llama_server_path" as given, without checking that
-        anything is there, so a path pointing at nothing is the second way to
-        end up with no binary - and the same advice answers it.
+        This matters more than the first-run window's own version of it: the
+        window only appears when something is missing, so on a machine where
+        everything is downloaded and no llama.cpp build is pinned for the
+        platform, this message is the only thing the user ever sees - at every
+        single start.
         """
-        if os.path.isfile(config.resolve_llama_server_path()):
+        status = first_run.llama_server_status()
+        if status == first_run.SERVER_PRESENT:
+            # The binary is there and was still not usable, which is a question
+            # about this machine rather than about the setup.
             return ("Error: LLM server failed to start. Check model path and "
                     "GPU memory.")
-        return ('Error: no llama-server binary was found. Point '
-                '"llama_server_path" in config/settings.json at one, or set '
-                '"llm_backend" to "lm-studio" and generate phrases with LM '
-                'Studio instead.')
+        if status == first_run.SERVER_MISCONFIGURED:
+            # Downloading would not help: it lands in bin/llama/ while the
+            # setting keeps winning in the resolver, so the way out is the
+            # setting itself.
+            return ('Error: "llama_server_path" in config/settings.json '
+                    'points at a file that is not there. Fix the path, or '
+                    'clear it to use the build Mimora installs itself.')
+        return ('Error: no llama-server binary was found. Install one with '
+                "'python -m mimora.llama_server_fetch', or point "
+                '"llama_server_path" in config/settings.json at a build you '
+                'make yourself, or set "llm_backend" to "lm-studio" and '
+                'generate phrases with LM Studio instead.')
 
     def load_practice_text(self):
         """Pre-fill the source panel from the practice text file (main thread)."""

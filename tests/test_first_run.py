@@ -362,5 +362,47 @@ class BlockedReasonCoverageTests(unittest.TestCase):
         self.assertEqual(set(first_run_window._BLOCKED_TEXT), reasons)
 
 
+class StillMissingTests(unittest.TestCase):
+    """A Plan is a snapshot, so the window has to subtract what it fetched.
+
+    The bug this covers: the window read plan.missing_required for the whole of
+    its life, so after a download that finished the required level and then
+    failed on the optional one, it still believed nothing had arrived. Its
+    second button stayed "Quit" instead of becoming "Skip", and pressing it
+    exited the app - throwing away a download that had just succeeded, on a
+    machine that was by then perfectly startable.
+    """
+
+    def setUp(self):
+        from mimora import first_run_window
+        self.still_missing = first_run_window.still_missing
+        self.components = (_component("a"), _component("b"))
+
+    def test_nothing_fetched_leaves_the_list_alone(self):
+        self.assertEqual(self.still_missing(self.components, set()),
+                         self.components)
+
+    def test_a_fetched_component_drops_out(self):
+        self.assertEqual(self.still_missing(self.components, {"a"}),
+                         (_component("b"),))
+
+    def test_everything_fetched_leaves_nothing(self):
+        # This is the state that decides "Skip" over "Quit".
+        self.assertEqual(self.still_missing(self.components, {"a", "b"}), ())
+
+    def test_keys_from_another_level_are_ignored(self):
+        # The window keeps one set of fetched keys for both levels, so the
+        # required list must not shrink because an optional component landed.
+        self.assertEqual(self.still_missing(self.components, {"gguf-chat"}),
+                         self.components)
+
+    def test_order_is_preserved(self):
+        # It is also the retry's fetch order, and the required level has to
+        # keep coming before the optional one.
+        three = (_component("a"), _component("b"), _component("c"))
+        self.assertEqual([c.key for c in self.still_missing(three, {"b"})],
+                         ["a", "c"])
+
+
 if __name__ == "__main__":
     unittest.main()
