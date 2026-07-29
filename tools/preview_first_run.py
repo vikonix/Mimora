@@ -12,14 +12,15 @@ defect found in it so far was found by looking at it, and getting it to appear
 meant deleting a model or editing settings.json first. This builds the plan by
 hand instead, so each state is one command.
 
-Six states, and only the first three ever offer a download:
+Seven states:
 
-    required     the level that has no working refusal: notice plus Quit
-    optional     the one real choice: checkbox plus Skip
-    both         what a bare machine sees
-    no-build     no llama.cpp build for this platform (BLOCKED_NO_BUILD)
-    bad-setting  llama_server_path names nothing (BLOCKED_BAD_SETTING)
-    real         this machine's actual plan, via first_run.build_plan()
+    required      the level that has no working refusal: notice plus Quit
+    optional      the one real choice: checkbox plus Skip
+    both          what a bare machine sees
+    half-failure  the required level completes, then the optional one fails
+    no-build      no llama.cpp build for this platform (BLOCKED_NO_BUILD)
+    bad-setting   llama_server_path names nothing (BLOCKED_BAD_SETTING)
+    real          this machine's actual plan, via first_run.build_plan()
 
 The two blocked states pair their note with a missing required level on
 purpose. That is the only way the window is ever reached in that condition: with
@@ -28,17 +29,29 @@ showing anything. On a fully installed machine --state real hits the same
 asymmetry from the other side: the plan is empty, the app would show nothing at
 all, and this shows the window regardless and says so.
 
+half-failure is the one state that exists for the *download* rather than for
+the layout, and the only cheap way to see a case a Plan cannot describe:
+components run in order, so a failure on the optional level can leave a machine
+that is already startable. The window has to notice - its second button becomes
+"Skip" instead of "Quit", and pressing it is a refusal rather than an exit
+(first_run_window.still_missing). Every other state fails on its FIRST
+component, where nothing has been fetched and the new behaviour is
+indistinguishable from the old.
+
 **Nothing here calls ensure_ready(), and that is the point.** ensure_ready
 writes llm_backend "off" into config/settings.json when the optional level is
 declined - a real decision, taken by a real user, which a preview must never
 fake. This drives FirstRunWindow directly, so pressing Skip changes nothing on
 disk; the Outcome it would have acted on is printed instead.
 
-Pressing Download is safe in the fabricated states and only there. Their
-component keys are deliberately not real ones, so first_run_download._fetch
+Pressing Download is safe everywhere except --state real. The fabricated
+states' component keys are deliberately not real, so first_run_download._fetch
 refuses them, download() turns that into a failure, and the window shows its
 "Download failed" branch - which is otherwise reachable only by unplugging the
-network mid-run. In --state real the keys are real and Download downloads.
+network mid-run. half-failure is the one mixed case: its first component is a
+real repo, chosen because this machine already has it, so fetching it returns
+without touching the network; only the second is fabricated. In --state real
+the keys are real and Download downloads.
 """
 
 from __future__ import annotations
@@ -81,13 +94,51 @@ def _required() -> tuple[first_run.Component, ...]:
     return (_model(models_info.KOKORO), _model(models_info.WAV2VEC2_PHONEME))
 
 
+def _fake_binary() -> first_run.Component:
+    return first_run.Component(f"{_FAKE}{first_run.KEY_LLAMA_SERVER}",
+                               first_run.LLAMA_SERVER_LABEL, _BINARY_MB, False)
+
+
 def _optional() -> tuple[first_run.Component, ...]:
-    return (first_run.Component(f"{_FAKE}{first_run.KEY_LLAMA_SERVER}",
-                                first_run.LLAMA_SERVER_LABEL, _BINARY_MB, False),
-            _model(models_info.GGUF_CHAT))
+    return (_fake_binary(), _model(models_info.GGUF_CHAT))
 
 
-def _plan(state: str) -> first_run.Plan:
+def _cached_model():
+    """The smallest catalogue repo this machine already has, or None.
+
+    Asked through first_run.model_present rather than model_fetch, for the same
+    reason the plan does: the latter runs prepare_hf_env(), and a preview must
+    not change how the process would download just by deciding what to show.
+    """
+    for model in sorted(models_info.HF_REPOS, key=lambda m: m.size_mb):
+        if first_run.model_present(model):
+            return model
+    return None
+
+
+def _half_failure() -> first_run.Plan | None:
+    """Required level that succeeds, optional level that fails.
+
+    The first component carries a REAL repo id, so first_run_download._fetch
+    routes it to model_fetch.ensure_hf_models - which finds the repo cached and
+    returns without a single request. That is the whole trick: the fetch has to
+    genuinely succeed for ProgressState.complete() to bank its key, and banking
+    that key is what the window then reacts to.
+
+    present=False although the repo IS present: the flag decides whether the
+    component enters the selection at all, and here it has to. None when no
+    catalogue repo is cached, because then the "cheap success" is not available
+    and the state would start a real multi-hundred-megabyte download.
+    """
+    model = _cached_model()
+    if model is None:
+        return None
+    required = (first_run.Component(model.repo_id, model.label,
+                                    model.size_mb, False),)
+    return first_run.Plan(required, (_fake_binary(),), None)
+
+
+def _plan(state: str) -> first_run.Plan | None:
     if state == "real":
         return first_run.build_plan()
     if state == "required":
@@ -96,6 +147,8 @@ def _plan(state: str) -> first_run.Plan:
         return first_run.Plan((), _optional(), None)
     if state == "both":
         return first_run.Plan(_required(), _optional(), None)
+    if state == "half-failure":
+        return _half_failure()
     # The blocked states: an empty optional level plus the reason, alongside a
     # required level that gives the window a reason to be on screen at all.
     blocked = (first_run.BLOCKED_NO_BUILD if state == "no-build"
@@ -103,7 +156,14 @@ def _plan(state: str) -> first_run.Plan:
     return first_run.Plan(_required(), (), blocked)
 
 
-STATES = ("required", "optional", "both", "no-build", "bad-setting", "real")
+STATES = ("required", "optional", "both", "half-failure", "no-build",
+          "bad-setting", "real")
+
+_NO_CACHED_REPO = (
+    "half-failure needs one catalogue repo already downloaded, so that "
+    "fetching it can succeed without touching the network. This machine has "
+    "none cached - run 'python -m mimora.model_fetch --hf' first, or use "
+    "another state.")
 
 
 def _describe(plan: first_run.Plan) -> str:
@@ -130,14 +190,26 @@ def main() -> int:
 
     if args.list:
         for state in STATES:
-            print(f"  {state:<12} {_describe(_plan(state))}")
+            plan = _plan(state)
+            summary = _describe(plan) if plan else "unavailable here"
+            print(f"  {state:<13} {summary}")
         return 0
 
     plan = _plan(args.state)
+    if plan is None:
+        print(_NO_CACHED_REPO, file=sys.stderr)
+        return 1
+
     print(f"State '{args.state}': {_describe(plan)}")
     if args.state == "real":
         print("This is the real plan with real component keys: pressing "
               "Download really downloads.")
+    elif args.state == "half-failure":
+        print(f"Press Download. '{plan.required[0].label}' is real and "
+              f"already on disk, so it completes without a request; the "
+              f"second component is fabricated and fails. Watch the second "
+              f"button: it must read 'Skip', not 'Quit', and pressing it must "
+              f"report a decline rather than a quit.")
     else:
         print("Fabricated keys: pressing Download shows the failure branch and "
               "fetches nothing.")

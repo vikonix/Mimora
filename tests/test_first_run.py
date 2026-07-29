@@ -189,6 +189,19 @@ class OptionalLevelTests(unittest.TestCase):
         self.assertFalse(binary.present)
         self.assertEqual(binary.size_mb,
                          llama_server_fetch.variant_size_mb("win-cpu-x64"))
+        # Carried, not re-derived at download time: the size above is the size
+        # OF THIS BUILD, and a later select_variant() could answer otherwise.
+        self.assertEqual(binary.variant, "win-cpu-x64")
+
+    def test_only_the_binary_names_a_variant(self):
+        # Every other component has exactly one form, so a variant on one would
+        # be a value nothing could act on.
+        with mock.patch.object(llama_server_fetch, "select_variant",
+                               return_value="win-cpu-x64"):
+            components, _ = first_run._optional_components()
+        gguf = components[1]
+        self.assertEqual(gguf.key, first_run.KEY_GGUF)
+        self.assertIsNone(gguf.variant)
 
     def test_an_installed_binary_costs_no_variant_resolution(self):
         # select_variant() shells out to nvidia-smi. Nothing needs the size of

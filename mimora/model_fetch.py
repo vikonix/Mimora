@@ -110,6 +110,17 @@ def hf_home() -> Path:
     return Path(os.environ.get("HF_HOME") or MODEL_CACHE_DIR)
 
 
+def hf_hub_dir() -> Path:
+    """Directory the hub keeps its repo caches in, under hf_home().
+
+    The "hub" segment is huggingface_hub's own layout, not ours, and two
+    predicates need it: hf_repo_cached() here and first_run.model_present(),
+    which asks the same filesystem question without the side effects of
+    prepare_hf_env(). One function so a change in that layout is one edit.
+    """
+    return hf_home() / "hub"
+
+
 def supertonic_cache_dir() -> Path:
     """Effective Supertonic cache directory (env var wins, as for HF_HOME)."""
     return Path(os.environ.get("SUPERTONIC_CACHE_DIR")
@@ -228,7 +239,7 @@ def hf_repo_cached(repo_id: str) -> bool:
     mid-file in nearly every case, and --force remains the way out.
     """
     prepare_hf_env()
-    return loader.models_cached(hf_home() / "hub", (repo_id,))
+    return loader.models_cached(hf_hub_dir(), (repo_id,))
 
 
 def supertonic_cached() -> bool:

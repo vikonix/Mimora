@@ -1514,7 +1514,15 @@ if __name__ == "__main__":
     # nothing is missing, which is every run after the first.
     if not first_run_window.ensure_ready():
         logging.info("First-run download declined; exiting before startup.")
-        raise SystemExit(0)
+        # hard_exit rather than SystemExit, for the same reason quit_app uses
+        # it: the download runs on a daemon thread that may be mid-transfer,
+        # and normal interpreter finalization kills such a thread at whatever
+        # line it happens to be on, which surfaces as an "Exception ignored in"
+        # traceback after the user has already chosen to leave. Nothing is lost
+        # by skipping cleanup - the fetchers are built to survive being killed
+        # (staged install, .incomplete files), and no model or CUDA context has
+        # been loaded yet at this point.
+        lifecycle.hard_exit()
 
     app = PronunciationTrainerGUI()
     app.run()

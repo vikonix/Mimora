@@ -137,12 +137,20 @@ class Component(NamedTuple):
     Naming its size would mean resolving the build variant, which shells out to
     nvidia-smi, and no caller would read the result (both the dialog and the
     progress bar only ever sum what is missing).
+
+    variant names the build to fetch, and only the llama-server binary has more
+    than one, so it is None everywhere else. It is recorded here rather than
+    resolved again at download time for the same reason Asset.size_mb sits next
+    to the asset's name: the size quoted to the user is the size OF THIS BUILD,
+    and re-resolving would both pay for a second nvidia-smi and let the
+    download disagree with the figure the user agreed to.
     """
 
     key: str
     label: str
     size_mb: Optional[int]
     present: bool
+    variant: Optional[str] = None
 
 
 class Plan(NamedTuple):
@@ -242,7 +250,11 @@ def model_present(model: Model) -> bool:
         # renamed onto the cache dir on success), so a non-empty directory is a
         # finished download.
         return model_fetch.supertonic_cached()
-    return loader.models_cached(model_fetch.hf_home() / "hub", (model.repo_id,))
+    # model_fetch.hf_hub_dir() rather than the join spelled out again: the
+    # "hub" segment is huggingface_hub's layout and belongs in one place. The
+    # predicate itself is loader.models_cached and not hf_repo_cached, which
+    # would additionally run prepare_hf_env() - see the module docstring.
+    return loader.models_cached(model_fetch.hf_hub_dir(), (model.repo_id,))
 
 
 def _model_component(model: Model) -> Component:
@@ -330,9 +342,14 @@ def _optional_components() -> tuple[tuple[Component, ...], Optional[str]]:
                  "the optional download is not offered.", exc)
         return (), BLOCKED_NO_BUILD
 
+    # The variant is carried on the component, not re-resolved when the
+    # download starts: that would be a second nvidia-smi, and on a machine
+    # whose answer changed in between it would fetch a build other than the one
+    # whose size was quoted.
     log.info("llama-server would be fetched as the %s build.", variant)
     return (Component(KEY_LLAMA_SERVER, LLAMA_SERVER_LABEL,
-                      llama_server_fetch.variant_size_mb(variant), False),
+                      llama_server_fetch.variant_size_mb(variant), False,
+                      variant),
             gguf_component), None
 
 

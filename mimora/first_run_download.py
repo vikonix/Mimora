@@ -366,7 +366,11 @@ def _fetch(component: first_run.Component, state: ProgressState) -> None:
     """Run the one downloader that owns *component*."""
     key = component.key
     if key == first_run.KEY_LLAMA_SERVER:
-        llama_server_fetch.ensure_llama_server(progress=_binary_progress(state))
+        # The variant the plan resolved and quoted a size for, rather than None
+        # (which would make ensure_llama_server run select_variant, and with it
+        # nvidia-smi, a second time).
+        llama_server_fetch.ensure_llama_server(
+            variant=component.variant, progress=_binary_progress(state))
     elif key == first_run.KEY_GGUF:
         # config.EXTERNAL_MODEL_PATH, not the fetcher's default, for the same
         # reason the plan looked there: gguf_fetch cannot read settings.json.

@@ -50,8 +50,8 @@ def tearDownModule():
     logging.getLogger(first_run_download.__name__).setLevel(_saved_level)
 
 
-def _component(key="k", label="L", size_mb=10, present=False):
-    return first_run.Component(key, label, size_mb, present)
+def _component(key="k", label="L", size_mb=10, present=False, variant=None):
+    return first_run.Component(key, label, size_mb, present, variant)
 
 
 class ProgressStateTests(unittest.TestCase):
@@ -236,6 +236,17 @@ class DispatchTests(unittest.TestCase):
             first_run_download._fetch(
                 _component(key=first_run.KEY_LLAMA_SERVER), self.state)
         self.assertIn("progress", ensure.call_args.kwargs)
+
+    def test_the_binary_is_fetched_as_the_variant_the_plan_priced(self):
+        # Passing it on is what stops ensure_llama_server from running
+        # select_variant (and nvidia-smi) again, and what guarantees the build
+        # downloaded is the one whose size the user agreed to.
+        with mock.patch.object(llama_server_fetch,
+                               "ensure_llama_server") as ensure:
+            first_run_download._fetch(
+                _component(key=first_run.KEY_LLAMA_SERVER,
+                           variant="win-cpu-x64"), self.state)
+        self.assertEqual(ensure.call_args.kwargs["variant"], "win-cpu-x64")
 
     def test_the_gguf_goes_to_the_configured_path(self):
         with mock.patch.object(gguf_fetch, "ensure_gguf") as ensure:
