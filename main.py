@@ -1513,7 +1513,13 @@ if __name__ == "__main__":
     # ensure_ready has to have rewritten that first. Returns immediately when
     # nothing is missing, which is every run after the first.
     if not first_run_window.ensure_ready():
-        logging.info("First-run download declined; exiting before startup.")
+        # "cancelled", not "declined": this branch is the user leaving - the
+        # window's Quit button, its close box, or Escape, including mid-
+        # download. Declining the optional level is the opposite outcome, it
+        # starts the app with llm_backend "off", and ensure_ready logs that
+        # itself. The two used to share this line, which made a log read as a
+        # refusal when the download had merely been interrupted.
+        logging.info("First-run setup cancelled; exiting before startup.")
         # hard_exit rather than SystemExit, for the same reason quit_app uses
         # it: the download runs on a daemon thread that may be mid-transfer,
         # and normal interpreter finalization kills such a thread at whatever
