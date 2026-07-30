@@ -3,7 +3,7 @@
 
 """Text-to-speech: synthesis backends plus the shared playback path.
 
-Two roles live here, split on purpose (tasks/supertonic_tts_backend_task.md):
+Two roles live here, split on purpose:
 
 * **Synthesis backends** - one class per TTS engine, selected by the active
   language variant's data (``config.TTS_BACKEND``, never an ``if language``
@@ -33,7 +33,7 @@ from threading import Event, Thread
 from typing import Optional
 import numpy as np
 import sounddevice as sd
-from mimora import config
+from mimora import config, models_info
 from mimora.audio_io import (
     WINSOUND_AVAILABLE,
     WINSOUND_LEAD_IN_SECONDS,
@@ -108,7 +108,11 @@ class KokoroBackend:
         # Imported here, not at module top: only the backend the active
         # variant selects should pull its ML stack into the process.
         from kokoro import KModel, KPipeline
-        self.model = KModel(repo_id="hexgrad/Kokoro-82M").to(config.DEVICE)
+        # The repo id is bound from the catalogue, not spelled out again: the
+        # first-run check decides whether Kokoro is missing from that same
+        # record, so a second copy here could send the download after one repo
+        # while synthesis loaded another.
+        self.model = KModel(repo_id=models_info.KOKORO.repo_id).to(config.DEVICE)
         self.pipeline = KPipeline(lang_code=config.TTS_LANG_CODE)
         self._prefetch_voices()
 
@@ -192,7 +196,11 @@ class SupertonicBackend:
         # auto_download only downloads when the ONNX files are missing; once
         # install.py (or a first online run) has fetched them, startup is
         # fully offline.
-        self._tts = TTS(model="supertonic-3", auto_download=True)
+        # The model name is bound from the catalogue for the same reason the
+        # Kokoro repo id above is: model_fetch.ensure_supertonic() passes that
+        # same record to the package's own loader, and the first-run plan keys
+        # the component on it.
+        self._tts = TTS(model=models_info.SUPERTONIC.name, auto_download=True)
 
     def _style(self, voice: str):
         """The cached voice-style object for *voice* (loads it on first use)."""

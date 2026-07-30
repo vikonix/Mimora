@@ -2,13 +2,14 @@
 # Copyright (c) 2026 Valery Kovalev
 
 import os
+import shutil
 import sys
 import threading
 from functools import partial
 from pathlib import Path
 
-from . import loader
-from .languages import english, spanish
+from mimora import llama_server_fetch, loader, model_fetch, models_info
+from mimora.languages import english, spanish
 
 # Project root - always absolute, regardless of working directory at launch.
 # This file lives in mimora/, so the root is one level up.
@@ -54,6 +55,7 @@ _KNOWN_USER_KEYS = {
     "max_record_seconds",
     "llm_backend",
     "lm_studio_host",
+    "llama_server_path",
     "external_model_path",
     "external_n_ctx",
     "practice_text_file",
@@ -98,8 +100,11 @@ USER_SETTING_DEFAULTS = {
     "pronunciation_score_threshold": 70.0,
     "phoneme_good_mode": "global",
     "max_record_seconds": 20,
-    "llm_backend": "local_server",
+    "llm_backend": "llama-server",
     "lm_studio_host": "localhost:1234",
+    # Empty means "find the binary yourself" - see
+    # resolve_llama_server_path() below.
+    "llama_server_path": "",
     "external_model_path": "models/llama-3.2-3b-instruct-q4_k_m.gguf",
     "external_n_ctx": None,
     "practice_text_file": "texts/practice_text.txt",
@@ -235,7 +240,15 @@ if not isinstance(USER_NAME, str):
 # "Offline-mode gating" section below (after the active engine and its model name
 # are known) all land early enough. We use setdefault() so an externally set
 # HF_HOME is respected.
-MODEL_CACHE_DIR = BASE_DIR / "model_cache"
+#
+# The two cache locations are defined in mimora/model_fetch.py, the module that
+# downloads into them, so the app and the downloader cannot drift apart. Only
+# the paths are shared: model_fetch.prepare_hf_env() is NOT called here on
+# purpose, because it also disables hf-xet on Windows, which is a download-time
+# workaround and not something the app should decide for a cache it merely
+# reads. The app does download on its own now (mimora/first_run_window.py), and
+# that path arms the environment itself, right before it starts fetching.
+MODEL_CACHE_DIR = model_fetch.MODEL_CACHE_DIR
 loader.ensure_dir(MODEL_CACHE_DIR)
 os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 
@@ -247,9 +260,10 @@ os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 # to the code, matching the HF_HOME policy above. The package resolves the env
 # var on every call (not at import), but setting it here - before any
 # supertonic import - keeps the timing rules identical to HF_HOME's.
-# install.py sets the same variable so the installer pre-download lands in the
-# exact directory the app reads.
-os.environ.setdefault("SUPERTONIC_CACHE_DIR", str(MODEL_CACHE_DIR / "supertonic3"))
+# model_fetch sets the same variable, so the installer pre-download lands in
+# the exact directory the app reads.
+os.environ.setdefault("SUPERTONIC_CACHE_DIR",
+                      str(model_fetch.DEFAULT_SUPERTONIC_CACHE_DIR))
 # Read back from the environment (like HF_HOME below in the offline gating) so
 # an externally set cache location is honored by the offline check too.
 SUPERTONIC_CACHE_DIR = Path(os.environ["SUPERTONIC_CACHE_DIR"])
@@ -324,20 +338,26 @@ DEVICE = loader.detect_device(_HW.get("DEVICE"))
 # LLM Backend Settings
 # =====================================================================
 # Backend selection, read from settings.json ("llm_backend"):
+#   "llama-server" - the official llama.cpp binary started automatically as a
+#                    subprocess (see resolve_llama_server_path() below)
 #   "lm-studio"    - external LM Studio app (must be running separately)
-#   "local_server" - llm_server.py started automatically as a subprocess
 #   "off"          - no LLM at all: nothing is loaded or started; practice
 #                    phrases are taken verbatim from the source text, one
 #                    sentence at a time (mimora/phrase_source.py). The
 #                    phrase-length selector is disabled in this mode (a
 #                    sentence is never shortened into a fragment).
-LLM_BACKEND_CHOICES = ("local_server", "lm-studio", "off")
-LLM_BACKEND = _USER.get("llm_backend", "local_server")
+LLM_BACKEND_CHOICES = ("llama-server", "lm-studio", "off")
+LLM_BACKEND = _USER.get("llm_backend", "llama-server")
 if LLM_BACKEND not in LLM_BACKEND_CHOICES:
     print(f"[config] settings.json: unknown llm_backend {LLM_BACKEND!r} "
-          f"(expected 'local_server', 'lm-studio' or 'off'); "
-          f"using 'local_server'", file=sys.stderr)
-    LLM_BACKEND = "local_server"
+          f"(expected one of {', '.join(LLM_BACKEND_CHOICES)}); "
+          f"using 'llama-server'", file=sys.stderr)
+    LLM_BACKEND = "llama-server"
+    # The correction has to land in the in-memory view as well, not just in
+    # the constant: user_setting() reads _USER directly, so the settings
+    # window would otherwise be handed a combobox value that is not among its
+    # choices.
+    _USER["llm_backend"] = LLM_BACKEND
 
 # =====================================================================
 # LM Studio backend (for "lm-studio" backend)
@@ -354,24 +374,85 @@ if not isinstance(LM_STUDIO_HOST, str) or not LM_STUDIO_HOST.strip():
           file=sys.stderr)
     LM_STUDIO_HOST = "localhost:1234"
 LM_STUDIO_URL = loader.server_url(LM_STUDIO_HOST, LM_STUDIO_DEFAULT_PORT)
+# LM Studio checks no key, but the OpenAI client refuses to send an empty one.
 LM_STUDIO_API_KEY = "lm-studio"
-LM_STUDIO_MODEL = "local-model"
+# The model name is not here: LM Studio serves whatever is loaded and ignores
+# the field, so it configures nothing - see llm.PLACEHOLDER_MODEL.
 
 # =====================================================================
-# Local LLM Server (for "local_server" backend)
+# Local LLM Server (the "llama-server" backend)
 # =====================================================================
-LOCAL_SERVER_HOST = "127.0.0.1"
-LOCAL_SERVER_PORT = 8765
-LOCAL_SERVER_URL = f"http://{LOCAL_SERVER_HOST}:{LOCAL_SERVER_PORT}/v1"
-LOCAL_SERVER_API_KEY = "local"
-LOCAL_SERVER_MODEL = "local-model"
+# Address and credentials of the server Mimora starts itself. It is
+# OpenAI-compatible and ignores the model name, so the client path is the same
+# one the "lm-studio" backend uses - only the address and the key differ.
+LLM_SERVER_HOST = "127.0.0.1"
+LLM_SERVER_PORT = 8765
+LLM_SERVER_URL = f"http://{LLM_SERVER_HOST}:{LLM_SERVER_PORT}/v1"
+# Shared secret between the two halves of this backend, NOT a placeholder:
+# llm_server_ctl passes it to the binary as --api-key and llm.py sends it back
+# as the bearer token. Without a key llama-server accepts every CORS origin, so
+# any page open in a browser could call 127.0.0.1:8765 and read the answer.
+LLM_SERVER_API_KEY = "local"
 
 # How long (seconds) to wait for the server to become ready after launching
-LOCAL_SERVER_STARTUP_TIMEOUT = 60
+LLM_SERVER_STARTUP_TIMEOUT = 60
 
 # =====================================================================
-# GGUF Model Settings (used by the "local_server" backend)
+# llama-server binary (for the "llama-server" backend)
 # =====================================================================
+# The official llama.cpp server is launched as a subprocess and uses the
+# LLM_SERVER_* constants above plus the GGUF settings below
+# (mimora/llm_server_ctl.py builds its command line).
+#
+# settings.json ("llama_server_path") names the binary. An empty value - the
+# default - resolves in this order:
+#   1. bin/llama/llama-server[.exe], i.e. whatever mimora/llama_server_fetch.py
+#      installed from the pinned llama.cpp release;
+#   2. "llama-server" on PATH, for a build the user manages themselves.
+# An empty result is NOT reported here: the binary only matters when this
+# backend is actually selected, and LLMServerController says so at start time.
+#
+# Deliberately a function and NOT a module constant, unlike every other path in
+# this file. The first-run window (mimora/first_run_window.py) may download the
+# binary after this module has been imported, and a value frozen at import time
+# would then still be the empty string for the rest of the process -
+# LLMServerController would refuse to start on a machine that has just acquired
+# a perfectly good server. Resolving at the point of use costs a stat and an
+# occasional PATH lookup, once per app start, and makes "where is the binary" a
+# question about now rather than about import time.
+def _resolve_llama_server(setting) -> str:
+    """Absolute path of the llama-server binary to launch, or "" if none."""
+    if setting is None:
+        setting = ""
+    if not isinstance(setting, str):
+        print(f"[config] settings.json: llama_server_path must be a string, "
+              f"got {setting!r}; searching for the binary instead",
+              file=sys.stderr)
+        setting = ""
+    if setting.strip():
+        # A relative path resolves against the project root, like every other
+        # path setting (pathlib keeps an absolute value unchanged).
+        return str(BASE_DIR / setting.strip())
+    bundled = llama_server_fetch.installed_exe()
+    if bundled is not None:
+        return str(bundled)
+    return shutil.which("llama-server") or ""
+
+
+def resolve_llama_server_path() -> str:
+    """Where the llama-server binary is right now, or "" if there is none.
+
+    The single answer to that question in the app: llm_server_ctl builds its
+    command line from it and first_run asks it whether the binary still has to
+    be downloaded.
+    """
+    return _resolve_llama_server(_USER.get("llama_server_path", ""))
+
+# =====================================================================
+# GGUF Model Settings (used by the "llama-server" backend)
+# =====================================================================
+# The model llama-server loads and the parameters it loads it with. Unused by
+# "lm-studio" (LM Studio manages its own model) and by "off".
 # GGUF file, read from settings.json ("external_model_path"); a relative path
 # resolves against the project root.
 EXTERNAL_MODEL_PATH = _path(
@@ -588,8 +669,8 @@ ESPEAK_LANGUAGE = _VARIANT["espeak_language"]
 # tts.TTS_BACKENDS ("kokoro" = Kokoro-82M/torch/24 kHz, "supertonic" =
 # Supertonic 3/ONNX/44.1 kHz). A variant that names no backend runs Kokoro,
 # so the English profile needs no new field. This is data, not a language
-# branch: the Spanish variant switched to Supertonic purely by profile edit
-# (see tasks/supertonic_tts_backend_task.md).
+# branch: the Spanish variant switched to Supertonic purely by profile edit,
+# without a single conditional outside the registry.
 TTS_BACKEND_CHOICES = ("kokoro", "supertonic")
 TTS_BACKEND = _VARIANT.get("tts_backend", "kokoro")
 if TTS_BACKEND not in TTS_BACKEND_CHOICES:
@@ -709,12 +790,17 @@ if PHONEME_GOOD_MODE not in PHONEME_GOOD_MODE_CHOICES:
 
 # =====================================================================
 # Acoustic + transcription model used by the pronunciation/acoustic/ module.
-WAV2VEC2_MODEL_NAME = "facebook/wav2vec2-large-960h"
+# The repo ids come from mimora/models_info.py, which is also what the
+# downloaders fetch: the two used to be separate literals, so the app could ask
+# for a repo the installer had never pre-fetched. models_info imports nothing,
+# which is what lets config and the fetchers share it even though the fetchers
+# may not import config.
+WAV2VEC2_MODEL_NAME = models_info.WAV2VEC2_ACOUSTIC.repo_id
 # Phoneme-ASR model used by the pronunciation/phoneme/ module: a wav2vec2 CTC model that
 # emits espeak-style IPA, so its phone inventory matches the espeak reference.
-WAV2VEC2_PHONEME_MODEL_NAME = "facebook/wav2vec2-xlsr-53-espeak-cv-ft"
+WAV2VEC2_PHONEME_MODEL_NAME = models_info.WAV2VEC2_PHONEME.repo_id
 # Device for Wav2Vec2. Defaults to the shared DEVICE; hardware detection may pin
-# it to "cpu" to avoid VRAM contention with llama_cpp / Kokoro on a single GPU.
+# it to "cpu" to avoid VRAM contention with llama-server / Kokoro on a single GPU.
 WAV2VEC2_DEVICE = _HW.get("WAV2VEC2_DEVICE") or DEVICE
 # Target score (0-100): feeds each engine's result.passed. NOT used by the app
 # yet - computed and logged only, reserved for a future pass/repeat gate (see
@@ -748,6 +834,12 @@ PRACTICE_TEXT_FALLBACK = _LANG_PROFILE["practice_text_fallback"]
 # token budgets are language-independent tuning; the prompts and asks are
 # language text, so they come from the active profile (see LANGUAGE_PROFILES).
 PHRASE_GEN_TEMPERATURE = 0.7
+# Nucleus sampling, sent explicitly so every backend samples identically:
+# llama-server and LM Studio both default to 0.95, but a default is not a
+# promise, and leaving the parameter unset makes the same prompt sample
+# differently the moment a backend changes its mind. 0.9 is the value the
+# phrases in the logs were generated with.
+PHRASE_GEN_TOP_P = 0.9
 PHRASE_GEN_MAX_TOKENS = 40
 _PHRASE_GEN = _LANG_PROFILE["phrase_gen"]
 # str.format template: {min_words}/{max_words} are filled by mimora/llm.py
@@ -826,11 +918,11 @@ if PHRASE_LENGTH not in PHRASE_LENGTH_CHOICES:
 # The repo is also part of _CACHED_REPOS (see the offline-mode gating below) so
 # offline-mode gating waits for it; the installer pre-fetches it into model_cache/
 # (see install.py).
-NLLB_TRANSLATOR_MODEL_NAME = "facebook/nllb-200-distilled-600M"
+NLLB_TRANSLATOR_MODEL_NAME = models_info.NLLB.repo_id
 # Device for the translator. Defaults to CPU on purpose: translation is
 # latency-tolerant (it runs in the background after the phrase is shown and the
 # reference has played), and keeping NLLB off the GPU avoids VRAM contention
-# with Kokoro / Wav2Vec2 / llama_cpp - matching the translator's RAM (not VRAM) budget.
+# with Kokoro / Wav2Vec2 / llama-server - matching the translator's RAM (not VRAM) budget.
 # hardware detection may pin it to "cuda" on a machine with VRAM to spare.
 TRANSLATOR_DEVICE = _HW.get("TRANSLATOR_DEVICE") or "cpu"
 # The translator's source language is the language being practiced: NLLB
@@ -851,8 +943,15 @@ TRANSLATOR_WARMUP = _LANG_PROFILE["translator_warmup"]
 # The set of required repos is engine-aware: the always-used shared models (Kokoro
 # TTS, the NLLB translator) plus the ACTIVE engine's Wav2Vec2 model only. The
 # dispatcher never loads the inactive engine's weights, so requiring them would
-# needlessly keep the Hub online (and waste ~1.2 GB the run never touches). The
+# needlessly keep the Hub online (and waste 1262 MB the run never touches). The
 # "none" engine has no recognizer model at all, so nothing extra is required then.
+#
+# This is NOT the same set as "what has to be downloaded before the app can
+# run": NLLB is in here unconditionally because offline mode cannot be entered
+# without it, while translation is off by default and the app works fine with
+# the 2483 MB missing. The first-run download check (mimora/first_run.py,
+# required_models) therefore builds its own required set the same WAY this one
+# is built, not from this constant.
 _ENGINE_MODEL_REPO = {
     "phoneme": WAV2VEC2_PHONEME_MODEL_NAME,   # default engine
     "acoustic": WAV2VEC2_MODEL_NAME,
@@ -864,28 +963,18 @@ _engine_repo = _ENGINE_MODEL_REPO.get(ENGINE)
 # keep the Hub online for weights the run never touches (and vice versa).
 _CACHED_REPOS = (
     (NLLB_TRANSLATOR_MODEL_NAME,)             # NLLB-200 offline translator
-    + (("hexgrad/Kokoro-82M",) if TTS_BACKEND == "kokoro" else ())
+    + ((models_info.KOKORO.repo_id,) if TTS_BACKEND == "kokoro" else ())
     + ((_engine_repo,) if _engine_repo else ())  # active engine's recognizer
 )
 
 
-def _supertonic_model_cached() -> bool:
-    """True when the Supertonic 3 model is fully present in its cache.
-
-    The package downloads atomically (into a temp directory that is renamed
-    onto SUPERTONIC_CACHE_DIR only on success), so a present, non-empty cache
-    directory is a *complete* one - no per-file manifest check is needed.
-    Relevant because the Supertonic download itself goes through
-    huggingface_hub: flipping HF_HUB_OFFLINE=1 before the model exists would
-    block that first download.
-    """
-    try:
-        return SUPERTONIC_CACHE_DIR.is_dir() and any(SUPERTONIC_CACHE_DIR.iterdir())
-    except OSError:
-        return False
-
-
-_TTS_MODEL_CACHED = (_supertonic_model_cached() if TTS_BACKEND == "supertonic"
+# model_fetch.supertonic_cached() owns this check: it reads the same env var
+# set above and is pure filesystem work, so calling it here pulls in no
+# huggingface_hub import. It matters at all because the Supertonic download
+# itself goes through huggingface_hub - flipping HF_HUB_OFFLINE=1 before the
+# model exists would block that first download.
+_TTS_MODEL_CACHED = (model_fetch.supertonic_cached()
+                     if TTS_BACKEND == "supertonic"
                      else True)  # Kokoro is covered by _CACHED_REPOS above
 # HF_HOME is read from os.environ (not MODEL_CACHE_DIR) so an externally set cache
 # location is honored.

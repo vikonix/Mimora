@@ -15,6 +15,14 @@ from mimora.phrase_source import split_sentences
 # Technical configuration parameters
 LLM_TIMEOUT = 30.0
 
+# Model name sent in every request. Both supported servers ignore it -
+# llama-server serves whatever GGUF it was launched with, and LM Studio serves
+# whatever is loaded - but the OpenAI client requires the field, so some string
+# has to go there. It lives here rather than in config.py because nothing
+# configures it: no setting selects it and no code overrides it. A caller that
+# ever talks to a server which does route by model name passes LLMManager(model=...).
+PLACEHOLDER_MODEL = "local-model"
+
 # Opening-style hints for "full" sentences. One is picked at random per
 # request: a stateless prompt with a fixed text otherwise makes a small model
 # converge on a single most-likely opening (e.g. every phrase starting with
@@ -66,8 +74,7 @@ _PREAMBLE_RE = re.compile(
 # The level's hints are folded into the SYSTEM prompt (which therefore only
 # changes when the user changes the level, keeping the llama.cpp prompt-prefix
 # cache effective), and the generated phrase is validated afterwards against
-# the level's word range and wordfreq Zipf floor. See
-# tasks/phrase_level_task.md for the design.
+# the level's word range and wordfreq Zipf floor.
 # =====================================================================
 
 # Unicode-aware word tokenizer (Spanish accents, English contractions).
@@ -172,8 +179,8 @@ def _log_level_sample(record: dict) -> None:
 class LLMManager:
     def __init__(self, model: Optional[str] = None):
         self.client = None
-        # Model name sent in API requests; defaults to LM Studio value from config
-        self.model = model or config.LM_STUDIO_MODEL
+        # Model name sent in API requests (see PLACEHOLDER_MODEL above).
+        self.model = model or PLACEHOLDER_MODEL
         # Sliding-window state over the source text (see _current_window):
         # start index, how many phrases were generated at this position, and a
         # hash of the text the state belongs to (text edits reset the window).
@@ -301,6 +308,10 @@ class LLMManager:
                     model=self.model,
                     messages=messages,
                     temperature=config.PHRASE_GEN_TEMPERATURE,
+                    # Sent explicitly rather than left to the server: a default
+                    # is not a promise, and sampling must not change just
+                    # because another backend answered (see PHRASE_GEN_TOP_P).
+                    top_p=config.PHRASE_GEN_TOP_P,
                     max_tokens=max_tokens,
                     stream=False,
                     timeout=LLM_TIMEOUT,

@@ -31,8 +31,8 @@ except ImportError:
 
 # NOTE: KOKORO_SAMPLE_RATE moved to mimora/tts.py (next to KokoroBackend).
 # The synthesis rate is a property of the active TTS backend now - callers
-# read TTSManager.sample_rate instead of a module constant (see
-# tasks/supertonic_tts_backend_task.md).
+# read TTSManager.sample_rate instead of a module constant, because the two
+# backends do not agree on it (Kokoro 24 kHz, Supertonic 44.1 kHz).
 
 # Silence padding prepended to every winsound playback block.
 # Windows Audio Session needs ~50-200ms to initialize on the first call,

@@ -55,7 +55,7 @@ from tkinter import ttk
 from pathlib import Path
 import numpy as np
 
-from mimora import config, lifecycle, prosody
+from mimora import config, first_run, first_run_window, lifecycle, prosody
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.phrase_source import SourceTextPhraseProvider
@@ -215,7 +215,8 @@ class PronunciationTrainerGUI:
 
         # LLM backend (used only to generate practice phrases)
         self.llm_backend = config.LLM_BACKEND
-        self.llm_server = LLMServerController()  # no-op unless local_server backend
+        # No-op unless the "llama-server" backend is active.
+        self.llm_server = LLMServerController()
 
         if self.llm_backend == "off":
             # No LLM at all: nothing is loaded or started; practice phrases
@@ -228,14 +229,13 @@ class PronunciationTrainerGUI:
             logging.info("Using LM Studio LLM backend (LLMManager).")
             self.llm_mgr = LLMManager()
         else:
-            # Defense in depth only: config already sanitizes an unknown
-            # "llm_backend" to "local_server", so this branch normally sees
-            # exactly that value; an unknown one falls back the same way.
-            if self.llm_backend != "local_server":
-                logging.warning(f"Unknown LLM_BACKEND '{self.llm_backend}', falling back to local_server.")
-                self.llm_backend = "local_server"
-            logging.info("Using local_server LLM backend (llm_server/server.py subprocess).")
-            self.llm_mgr = LLMManager(model=config.LOCAL_SERVER_MODEL)
+            # "llama-server": the llama.cpp binary is started by
+            # LLMServerController and then talked to like any other
+            # OpenAI-compatible server. Config sanitizes an unknown
+            # "llm_backend" to this backend, so it is also the catch-all.
+            self.llm_backend = "llama-server"
+            logging.info("Using llama-server LLM backend (server subprocess).")
+            self.llm_mgr = LLMManager()
 
         # Compose the view: it builds and owns the widgets, and forwards widget
         # callbacks back to this controller through an explicit ViewCallbacks
@@ -412,20 +412,22 @@ class PronunciationTrainerGUI:
             if config.TRANSLATION_LANGUAGE:
                 self.root.after(0, self.view.append_system_msg,
                                 "Loading translator (NLLB, ~2.4 GB)...")
+                # load_model() logs the success itself - do not repeat it here.
                 self.translator_mgr.load_model()
-                logging.info("Translator model loaded.")
 
             if self.llm_backend == "off":
                 # Nothing to start or connect to; generation is served by
                 # SourceTextPhraseProvider (see __init__).
                 self.root.after(0, self.view.append_system_msg,
                                 "LLM is off - phrases are taken from the practice text.")
-            elif self.llm_backend == "local_server":
+            elif self.llm_backend == "llama-server":
                 model_name = os.path.basename(config.EXTERNAL_MODEL_PATH)
-                self.root.after(0, self.view.append_system_msg, f"Starting LLM server with {model_name}...")
+                self.root.after(0, self.view.append_system_msg,
+                                f"Starting llama-server with {model_name}...")
                 self.root.after(0, self.view.enter_server_starting)
                 if not self.llm_server.start(self.llm_mgr):
-                    self.root.after(0, self.view.append_error_msg, "Error: LLM server failed to start. Check model path and GPU memory.")
+                    self.root.after(0, self.view.append_error_msg,
+                                    self._server_failure_message())
                     self.root.after(0, self.view.server_failed)
                     return
                 self.root.after(0, self.view.append_system_msg, "LLM server is ready.")
@@ -455,6 +457,40 @@ class PronunciationTrainerGUI:
             logging.exception("Error during initialization thread:")
             self.root.after(0, self.view.append_error_msg, f"Initialization Error: {e}")
             self.root.after(0, self.view.init_failed)
+
+    def _server_failure_message(self) -> str:
+        """What to tell the user when the llama-server did not come up.
+
+        Three unrelated problems reach this point and they want three different
+        answers, so the same three-way predicate the first-run plan uses
+        decides which one is given. Collapsing the last two into "point
+        llama_server_path at one" told somebody who had already pointed it
+        somewhere to do what they had just done.
+
+        This matters more than the first-run window's own version of it: the
+        window only appears when something is missing, so on a machine where
+        everything is downloaded and no llama.cpp build is pinned for the
+        platform, this message is the only thing the user ever sees - at every
+        single start.
+        """
+        status = first_run.llama_server_status()
+        if status == first_run.SERVER_PRESENT:
+            # The binary is there and was still not usable, which is a question
+            # about this machine rather than about the setup.
+            return ("Error: LLM server failed to start. Check model path and "
+                    "GPU memory.")
+        if status == first_run.SERVER_MISCONFIGURED:
+            # Downloading would not help: it lands in bin/llama/ while the
+            # setting keeps winning in the resolver, so the way out is the
+            # setting itself.
+            return ('Error: "llama_server_path" in config/settings.json '
+                    'points at a file that is not there. Fix the path, or '
+                    'clear it to use the build Mimora installs itself.')
+        return ('Error: no llama-server binary was found. Install one with '
+                "'python -m mimora.llama_server_fetch', or point "
+                '"llama_server_path" in config/settings.json at a build you '
+                'make yourself, or set "llm_backend" to "lm-studio" and '
+                'generate phrases with LM Studio instead.')
 
     def load_practice_text(self):
         """Pre-fill the source panel from the practice text file (main thread)."""
@@ -1420,7 +1456,7 @@ class PronunciationTrainerGUI:
         in progress (so the capture thread exits its loop and closes the input
         stream), and kills the local LLM server subprocess - the hard exit
         (lifecycle.hard_exit) does NOT terminate children, so without this
-        the llama_cpp server would leak, keep holding VRAM, and (on restart)
+        the llama-server process would leak, keep holding VRAM, and (on restart)
         still occupy the server port the new process needs.
         """
         self.shutdown_event.set()
@@ -1469,5 +1505,30 @@ class PronunciationTrainerGUI:
 if __name__ == "__main__":
     # CLI arguments (--version) were already parsed at the top of the module,
     # before the heavy imports, so reaching this point means "run the app".
+
+    # First run on a machine where nothing has been downloaded: ask, fetch, and
+    # only then build the app. It happens BEFORE the constructor because a
+    # refusal of the optional level changes what the constructor builds - it
+    # picks LLMManager or SourceTextPhraseProvider from config.LLM_BACKEND, and
+    # ensure_ready has to have rewritten that first. Returns immediately when
+    # nothing is missing, which is every run after the first.
+    if not first_run_window.ensure_ready():
+        # "cancelled", not "declined": this branch is the user leaving - the
+        # window's Quit button, its close box, or Escape, including mid-
+        # download. Declining the optional level is the opposite outcome, it
+        # starts the app with llm_backend "off", and ensure_ready logs that
+        # itself. The two used to share this line, which made a log read as a
+        # refusal when the download had merely been interrupted.
+        logging.info("First-run setup cancelled; exiting before startup.")
+        # hard_exit rather than SystemExit, for the same reason quit_app uses
+        # it: the download runs on a daemon thread that may be mid-transfer,
+        # and normal interpreter finalization kills such a thread at whatever
+        # line it happens to be on, which surfaces as an "Exception ignored in"
+        # traceback after the user has already chosen to leave. Nothing is lost
+        # by skipping cleanup - the fetchers are built to survive being killed
+        # (staged install, .incomplete files), and no model or CUDA context has
+        # been loaded yet at this point.
+        lifecycle.hard_exit()
+
     app = PronunciationTrainerGUI()
     app.run()

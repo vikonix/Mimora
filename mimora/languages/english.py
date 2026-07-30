@@ -79,8 +79,7 @@ PROFILE = {
         #                  focus-word filter (None = no vocabulary floor).
         # Concrete wording on purpose: a small model follows explicit
         # constraints far better than abstract labels like "CEFR B1".
-        # Starting values - tune from logs/phrase_level_samples.jsonl
-        # (see tasks/phrase_level_task.md).
+        # Starting values - tune from logs/phrase_level_samples.jsonl.
         "levels": (
             {
                 "vocab_hint": ("Use only the simplest everyday English words "

@@ -103,9 +103,10 @@ _ENGLISH_EXAMPLES: dict[str, str] = {
 # and each clearly carries its sound. The intervocalic spirants (β, ð, ɣ) and
 # the two rhotics (tap ɾ vs trill r) are the sounds an English speaker most
 # often misses, so each has its own entry. NOTE: the engine may fold or refine
-# this inventory once the Spanish calibration (tasks/spanish_language_task.md)
-# lands; this table is built from the symbols espeak emits today and should be
-# reconciled with the final fold when that task completes.
+# this inventory once the Spanish calibration
+# (pronunciation/phoneme/es_model_calibration.json) lands; this table is built
+# from the symbols espeak emits today and should be reconciled with the final
+# fold then.
 _SPANISH_EXAMPLES: dict[str, str] = {
     # --- Vowels (five pure vowels) ---
     "a": "casa",

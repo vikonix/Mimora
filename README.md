@@ -112,17 +112,30 @@ your version (e.g. `brew install python-tk@3.12` for Homebrew Python 3.12).
 ### Models
 
 `install.py` pre-downloads all of these (see [Quick install](#quick-install-script-recommended)).
-Otherwise the Hugging Face models are fetched automatically on first run,
-and only the GGUF chat model must be obtained manually.
+You do not have to run it: on the first start Mimora checks what is missing and
+offers to fetch it, naming the exact volume before anything is downloaded. Each
+model also has its own command, listed per row below.
 
-| Model | Used by | Notes |
-|---|---|---|
-| `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | pronunciation analysis (**phoneme** engine, default) | espeak IPA phoneme recognizer, ~1.2 GB; via `install.py` or on first run |
-| `facebook/wav2vec2-large-960h` | pronunciation analysis (**acoustic** engine) | ~1.2 GB; via `install.py` or on first run |
-| Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech (English) | via `install.py` or on first run |
-| Supertonic 3 (`Supertone/supertonic-3`) | text-to-speech (Spanish) | ~400 MB into `model_cache/supertonic3/`; via `install.py` or on first run. Weights are **OpenRAIL-M** licensed (code MIT), so they are downloaded, never bundled |
-| `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | NLLB-200 200-language translator, ~2.4 GB; via `install.py` or on first run |
-| A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | via `install.py`, or **download manually** into `models/`. Not needed with `"llm_backend": "off"` (phrases come verbatim from the practice text) |
+The first-run window asks about two levels separately. The models a session
+cannot run without (the active engine's recognizer plus the active language's
+TTS) are a notice with **Download** and **Quit**; the local chat model
+(llama-server plus the GGUF) is a real choice, and declining it writes
+`"llm_backend": "off"` into `config/settings.json`, where you can turn it back
+on later. The translator is fetched lazily and is never part of that question.
+
+Download sizes below are measured, not estimated, and are kept as data in
+[`mimora/models_info.py`](mimora/models_info.py); re-snap them with
+`python tools/measure_model_sizes.py`.
+
+| Model | Used by | Download | Notes |
+|---|---|---|---|
+| `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | pronunciation analysis (**phoneme** engine, default) | 1264 MB | espeak IPA phoneme recognizer; `python -m mimora.model_fetch --hf` |
+| `facebook/wav2vec2-large-960h` | pronunciation analysis (**acoustic** engine) | 1262 MB | `python -m mimora.model_fetch --hf` |
+| Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech (English) | 363 MB | `python -m mimora.model_fetch --hf` |
+| Supertonic 3 (`Supertone/supertonic-3`) | text-to-speech (Spanish) | 404 MB | into `model_cache/supertonic3/`; `python -m mimora.model_fetch --supertonic`. Weights are **OpenRAIL-M** licensed (code MIT), so they are downloaded, never bundled |
+| `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | 2483 MB | NLLB-200 200-language translator; fetched on demand when translation is switched on |
+| A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | 2019 MB | `python -m mimora.gguf_fetch`. Not needed with `"llm_backend": "off"` (phrases come verbatim from the practice text) |
+| llama-server binary (pinned llama.cpp release) | phrase generation | 641 MB CUDA, 18 MB CPU | most of the CUDA figure is NVIDIA's runtime (391 MB), not llama.cpp; `python -m mimora.llama_server_fetch` |
 
 ---
 
@@ -140,9 +153,10 @@ or CUDA toolkit for the standard setup.
 ### Quick install (script, recommended)
 
 `install.py` automates the whole setup: it installs the Python dependencies,
-auto-detects an NVIDIA GPU and installs the matching CUDA builds of `torch` and
-`llama-cpp-python`, checks for `espeak-ng`, pre-downloads the Hugging Face models
-into `model_cache/`, and downloads the GGUF chat model into `models/`.
+auto-detects an NVIDIA GPU and installs the matching CUDA build of `torch`,
+checks for `espeak-ng`, pre-downloads the Hugging Face models into
+`model_cache/`, installs the pinned llama-server binary into `bin/llama/` and
+downloads the GGUF chat model into `models/`.
 
 ```bash
 git clone https://github.com/vikonix/Mimora.git Mimora
@@ -187,8 +201,8 @@ cd Mimora
 
 # 2. All dependencies in one step
 #    The root requirements.txt already pulls in the subproject files via -r:
-#    llm_server/, pronunciation/acoustic/ and pronunciation/phoneme/ (panphon for
-#    the default phoneme engine). No separate per-engine install is needed.
+#    pronunciation/acoustic/ and pronunciation/phoneme/ (panphon for the
+#    default phoneme engine). No separate per-engine install is needed.
 pip install -r requirements.txt
 ```
 
@@ -226,7 +240,7 @@ Then restart Mimora.
 
 ### GPU support (recommended)
 
-The default `torch` and `llama-cpp-python` wheels are CPU-only. For NVIDIA GPUs:
+The default `torch` wheel is CPU-only. For NVIDIA GPUs:
 
 - **PyTorch** - install a CUDA build (other CUDA versions: see [pytorch.org](https://pytorch.org/get-started/locally/)):
   ```powershell
@@ -235,16 +249,35 @@ The default `torch` and `llama-cpp-python` wheels are CPU-only. For NVIDIA GPUs:
   Reinstall `torch` and `torchaudio` **together**: force-reinstalling `torch` alone
   leaves a `torchaudio` built against the previous torch, which then fails to
   import (`OSError: [WinError 127]`) and breaks pronunciation analysis.
-- **llama-cpp-python** - build with CUDA (see [`llm_server/README.md`](llm_server/README.md) for details):
-  ```powershell
-  $env:CMAKE_ARGS="-DGGML_CUDA=on"
-  pip install llama-cpp-python --force-reinstall --upgrade --no-cache-dir
-  ```
+- **The LLM** needs no pip package at all: it runs in the official llama.cpp
+  binary, and the fetcher below picks the CUDA build automatically (see the
+  next section).
+
+### Get the llama-server binary
+
+The default LLM backend runs the official **llama.cpp** server as a subprocess.
+`install.py` installs it, and the app offers to fetch it on the first start; to
+do it separately, or to change the build:
+
+```bash
+python -m mimora.llama_server_fetch
+```
+
+This downloads a pinned llama.cpp release into `bin/llama/`, verifies the
+checksum of every asset, and then confirms that the binary really runs on the
+GPU backend it advertises - a CUDA build with missing runtime DLLs otherwise
+falls back to the CPU **silently** and just runs about three times slower.
+`--list` shows the available builds, `--variant` picks one explicitly, and
+`--dry-run` prints the plan without downloading. If you already manage your own
+`llama-server`, put it on `PATH` or name it in `settings.json`
+(`"llama_server_path"`) instead.
 
 ### Get a GGUF model
 
-`install.py` already downloads `llama-3.2-3b-instruct-q4_k_m.gguf` into `models/`.
-To do it manually instead, download a small instruct model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M.gguf`) and place it at the path set by `EXTERNAL_MODEL_PATH` in `mimora/config.py` (default: `models/llama-3.2-3b-instruct-q4_k_m.gguf`).
+`install.py` already downloads `llama-3.2-3b-instruct-q4_k_m.gguf` into `models/`,
+the first-run window offers the same download, and `python -m mimora.gguf_fetch`
+does it on its own (`--list` shows the target path and whether the file is there).
+To use a different model instead, download a small instruct model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M.gguf`) and place it at the path set by `EXTERNAL_MODEL_PATH` in `mimora/config.py` (default: `models/llama-3.2-3b-instruct-q4_k_m.gguf`).
 
 ---
 
@@ -277,9 +310,9 @@ Press `ESC` or close the window to quit (the LLM server subprocess is terminated
 
 ## GPU / CPU notes
 
-Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by default, Kokoro, and the NLLB translator) plus `llama_cpp` can compete for VRAM on a single GPU. Mimora mitigates this two ways:
+Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by default, Kokoro, and the NLLB translator) plus llama.cpp can compete for VRAM on a single GPU. Mimora mitigates this two ways:
 
-- The LLM runs in a **separate process** (`llm_server/`), and the practice loop runs its phases (LLM → Kokoro → Wav2Vec2) **sequentially**, so they don't synthesize/infer at the same time. The NLLB translator defaults to CPU (`TRANSLATOR_DEVICE`).
+- The LLM runs in a **separate process** (llama-server), and the practice loop runs its phases (LLM → Kokoro → Wav2Vec2) **sequentially**, so they don't synthesize/infer at the same time. The NLLB translator defaults to CPU (`TRANSLATOR_DEVICE`).
 - If VRAM is still tight, set `WAV2VEC2_DEVICE = "cpu"` in `mimora/config.py` - short phrases analyze acceptably on CPU.
 
 ---
@@ -302,7 +335,7 @@ Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by
 - **[NLLB-200](https://huggingface.co/facebook/nllb-200-distilled-600M)** (Hugging Face Transformers) - offline translation for the translation panel.
 - **[espeak-ng](https://github.com/espeak-ng/espeak-ng)** / **[phonemizer-fork](https://github.com/bootphon/phonemizer)** - reference phonemization (espeak IPA).
 - **[panphon](https://github.com/dmort27/panphon)** - articulatory feature distance used by the phoneme edit-distance scoring.
-- **[llama.cpp](https://github.com/ggerganov/llama.cpp)** / **[llama-cpp-python](https://github.com/abetlen/llama-cpp-python)** - local LLM inference.
+- **[llama.cpp](https://github.com/ggerganov/llama.cpp)** - local LLM inference; the official `llama-server` binary is run as a subprocess.
 
 ## License
 
