@@ -34,6 +34,12 @@ Design notes
   back to CPU *silently*: it still logs "offloaded N/N layers to GPU" and the
   app keeps working, just about three times slower. `--list-devices` is the
   cheap explicit check that catches it.
+* A GPU variant may name a `fallback` variant, and only a failed device check
+  triggers it. That is how Linux copes with a GPU backend whose availability
+  cannot be established before the download (Vulkan needs a loader, an ICD and
+  a device the driver publishes through them). The substitution is logged with
+  the reason and recorded in the stamp, so it stays the opposite of the silent
+  CPU fallback above: visible, and visible afterwards.
 * The install is staged: assets are unpacked into bin/llama.new/ and only
   swapped onto bin/llama/ once every archive is verified, so an interrupted
   run cannot leave a half-written installation behind. The stamp file that
@@ -52,6 +58,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.error
 import urllib.request
@@ -110,14 +117,27 @@ class Variant(NamedTuple):
         build to be usable (None for builds that need no CUDA at all).
     device_pattern: regex that must match `llama-server --list-devices` output
         after the install, or None when the build has no GPU backend to check.
+    backend: the compute backend this build was compiled with ("CUDA",
+        "Vulkan", "CPU"), stated rather than inferred. Every message that has
+        to name it used to derive it some other way - from the platform, from
+        the variant's name prefix - and each of those derivations was a guess
+        that a new row in this table could silently invalidate. "CPU" holds
+        exactly when device_pattern is None.
+    fallback: variant to install instead when this one passes its download and
+        --version checks but fails the device check, or None to make that
+        failure final. It is a property of the build rather than of whoever
+        picked it: the same missing GPU backend has the same remedy whether the
+        variant came from select_variant() or from an explicit --variant.
     """
 
     assets: tuple[Asset, ...]
     min_driver_cuda: Optional[tuple[int, int]]
     device_pattern: Optional[str]
+    backend: str
+    fallback: Optional[str] = None
 
 
-# Known builds. Windows x64 only for now; macOS/Linux entries are one line each
+# Known builds: Windows x64 and Linux x64. The macOS entries are one line each
 # and get added when there is a machine to verify them on.
 #
 # Bumping RELEASE_TAG means re-snapping every size_mb below with
@@ -143,6 +163,7 @@ VARIANTS: dict[str, Variant] = {
         ),
         min_driver_cuda=(12, 4),
         device_pattern=r"\bCUDA\d+\b",
+        backend="CUDA",
     ),
     "win-cpu-x64": Variant(
         assets=(
@@ -152,12 +173,55 @@ VARIANTS: dict[str, Variant] = {
         ),
         min_driver_cuda=None,
         device_pattern=None,
+        backend="CPU",
+    ),
+    # There is no CUDA build for Linux to mirror win-cuda-*: llama.cpp ships
+    # CUDA binaries for Windows only (checked against b10099, whose linux/x64
+    # assets are cpu, vulkan, rocm, sycl and openvino). So on an NVIDIA card
+    # under Linux the GPU path is the Vulkan build, and min_driver_cuda stays
+    # None because the CUDA version of the driver says nothing about it.
+    #
+    # Whether Vulkan will find the GPU cannot be settled before the download:
+    # it needs a loader AND an ICD manifest AND a device the driver exposes
+    # through them, and under WSL2 the NVIDIA driver publishes no Vulkan ICD at
+    # all (verified on driver 610.43.02: /usr/lib/wsl/lib has CUDA, NVML and
+    # NVENC, no ICD). Hence the fallback: try Vulkan, keep CPU as the answer
+    # when the device check comes back empty.
+    "linux-vulkan-x64": Variant(
+        assets=(
+            Asset("llama-{tag}-bin-ubuntu-vulkan-x64.tar.gz",
+                  "b4ac074f3b2309653b951ac1757e7b9520cee4765e2f295f65bf00c44ac71560",
+                  size_mb=32),  # measured 2026-07-30
+        ),
+        min_driver_cuda=None,
+        device_pattern=r"\bVulkan\d+\b",
+        backend="Vulkan",
+        fallback="linux-cpu-x64",
+    ),
+    # Reached automatically as the Vulkan variant's fallback, and directly with
+    # `--variant linux-cpu-x64`. Its own fallback is None: there is nothing
+    # below it, and a CPU build has no device check to fail.
+    "linux-cpu-x64": Variant(
+        assets=(
+            Asset("llama-{tag}-bin-ubuntu-x64.tar.gz",
+                  "1a0046e5ef3ca546402c10940f1f9d76e97a22e8cf31d9ecaa1ddccbb88be0a3",
+                  size_mb=16),  # measured 2026-07-30
+        ),
+        min_driver_cuda=None,
+        device_pattern=None,
+        backend="CPU",
     ),
 }
 
 # Auto-selection order for Windows x64: the first variant whose requirements
 # the machine satisfies wins, so GPU builds must come before the CPU fallback.
 WINDOWS_X64_PREFERENCE = ("win-cuda-12.4-x64", "win-cpu-x64")
+
+# Linux x64 needs no such order: the Vulkan build requires no CUDA, so a
+# preference list would return it on the first iteration and never reach a CPU
+# entry anyway. The choice is a single name and the descent to CPU happens
+# after the device check, through Variant.fallback.
+LINUX_X64_DEFAULT = "linux-vulkan-x64"
 
 
 def variant_size_mb(variant_name: str) -> int:
@@ -199,6 +263,17 @@ class LlamaServerFetchError(RuntimeError):
 
 class UnsupportedPlatformError(LlamaServerFetchError):
     """No build is pinned for this OS/architecture yet."""
+
+
+class DeviceCheckError(LlamaServerFetchError):
+    """The installed build runs, but its GPU backend brought up no device.
+
+    Separate from the base class so the fallback in ensure_llama_server can
+    catch exactly this and nothing else. A download that fails, a checksum that
+    does not match or an archive with an unexpected layout says nothing about
+    which build suits the machine, so retrying those with another variant would
+    only turn one clear error into two.
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -259,14 +334,24 @@ def select_variant() -> str:
     """Pick the best variant for this machine.
 
     Raises UnsupportedPlatformError when no build is pinned for the platform,
-    which is the honest answer until the macOS/Linux entries are verified.
+    which is the honest answer until the macOS entries are verified.
     """
     machine = platform.machine().lower()
-    if sys.platform != "win32" or machine not in ("amd64", "x86_64"):
+    is_x64 = machine in ("amd64", "x86_64")
+
+    if sys.platform.startswith("linux") and is_x64:
+        # Nothing to weigh here (see LINUX_X64_DEFAULT), and nothing cheap to
+        # probe either: whether the Vulkan build finds a device depends on the
+        # loader and the ICD, neither of which is visible from this process
+        # without loading them. So the answer is "the GPU build", and the
+        # post-install device check plus its fallback settle the rest.
+        return LINUX_X64_DEFAULT
+
+    if sys.platform != "win32" or not is_x64:
         raise UnsupportedPlatformError(
             f"No pinned llama.cpp build for {sys.platform}/{platform.machine()} "
-            f"yet (Windows x64 only so far). Download a build from "
-            f"{RELEASE_PAGE_URL.format(tag=RELEASE_TAG)} and point "
+            f"yet (Windows x64 and Linux x64 only so far). Download a build "
+            f"from {RELEASE_PAGE_URL.format(tag=RELEASE_TAG)} and point "
             f"llama_server_path at it, or add the variant to VARIANTS.")
 
     driver_cuda = detect_driver_cuda()
@@ -428,43 +513,64 @@ def _download(url: str, target: Path, expected_sha256: str,
 def _extract(archive: Path, into: Path) -> None:
     """Unpack one asset archive into a directory.
 
-    Only .zip is handled: the pinned variants are Windows-only. macOS and Linux
-    releases ship .tar.gz, so this grows a branch when those variants land.
+    Two formats, because the release ships two: the Windows assets are .zip and
+    the Linux ones are .tar.gz.
 
-    That same branch has to restore the executable bit. zipfile.extractall does
-    NOT apply a member's unix permissions (they live in the high half of
-    external_attr and it ignores them), so even a POSIX build delivered as .zip
-    would unpack a llama-server nobody can run, and the failure would surface as
-    a bare PermissionError from _probe rather than as anything about unpacking.
-    tarfile does preserve the mode, so a .tar.gz branch would not need the
-    chmod - which is exactly why the point is worth writing down here instead of
-    being rediscovered when the first non-Windows variant is added.
+    The executable bit is why the branches are not interchangeable.
+    zipfile.extractall does NOT apply a member's unix permissions (they live in
+    the high half of external_attr and it ignores them), so a POSIX build
+    delivered as .zip would unpack a llama-server nobody can run, and the
+    failure would surface as a bare PermissionError from _probe rather than as
+    anything about unpacking. tarfile does preserve the mode, so the .tar.gz
+    branch needs no chmod - and a future POSIX variant published as .zip would.
     """
-    if archive.suffix.lower() != ".zip":
-        raise LlamaServerFetchError(
-            f"Don't know how to unpack {archive.name} (only .zip is supported "
-            f"while the variant table is Windows-only).")
     root = into.resolve()
-    with zipfile.ZipFile(archive) as zf:
-        for member in zf.infolist():
-            # Guard against archive members that escape the target directory.
-            # ZipFile.extract already strips absolute paths and '..', but an
-            # explicit check keeps that guarantee visible and local.
-            if not (root / member.filename).resolve().is_relative_to(root):
-                raise LlamaServerFetchError(
-                    f"Refusing to unpack {archive.name}: member "
-                    f"{member.filename!r} points outside the target directory.")
-        zf.extractall(into)
+    name = archive.name.lower()
+
+    if name.endswith(".zip"):
+        with zipfile.ZipFile(archive) as zf:
+            for member in zf.infolist():
+                # Guard against archive members that escape the target
+                # directory. ZipFile.extract already strips absolute paths and
+                # '..', but an explicit check keeps that guarantee visible and
+                # local.
+                if not (root / member.filename).resolve().is_relative_to(root):
+                    raise LlamaServerFetchError(
+                        f"Refusing to unpack {archive.name}: member "
+                        f"{member.filename!r} points outside the target "
+                        f"directory.")
+            zf.extractall(into)
+        return
+
+    if name.endswith(".tar.gz"):
+        with tarfile.open(archive, "r:gz") as tf:
+            for member in tf.getmembers():
+                if not (root / member.name).resolve().is_relative_to(root):
+                    raise LlamaServerFetchError(
+                        f"Refusing to unpack {archive.name}: member "
+                        f"{member.name!r} points outside the target directory.")
+            # filter="data" drops device nodes, setuid/setgid bits and links
+            # that escape the destination, while keeping the executable bit -
+            # the one mode this unpacking actually depends on. It becomes the
+            # default in 3.14 and is passed explicitly so the behaviour does
+            # not change with the interpreter.
+            tf.extractall(into, filter="data")
+        return
+
+    raise LlamaServerFetchError(
+        f"Don't know how to unpack {archive.name} (only .zip and .tar.gz are "
+        f"supported).")
 
 
 def _payload_root(extracted: Path) -> Path:
     """Directory inside an unpacked archive whose contents we actually want.
 
-    llama.cpp Windows archives keep llama-server.exe and every DLL it needs
-    side by side, but the layout has moved between releases (flat root in some,
-    a single nested folder in others). Anchoring on the binary makes the
-    unpacking survive that; the cudart archive has no binary and falls through
-    to the single-directory / flat-root cases.
+    llama.cpp archives keep the server binary and every library it needs side
+    by side, but where that directory sits varies: flat at the root in some
+    Windows releases, one folder down in others, and under build/bin/ in the
+    Linux tarballs. Anchoring on the binary makes the unpacking survive all
+    three; the cudart archive has no binary and falls through to the
+    single-directory / flat-root cases.
     """
     binaries = sorted(extracted.rglob(EXE_NAME))
     if binaries:
@@ -490,10 +596,18 @@ def _probe(exe: Path, args: list[str]) -> str:
             [str(exe), *args], capture_output=True, text=True,
             timeout=_PROBE_TIMEOUT_SEC, **_no_window())
     except (OSError, subprocess.TimeoutExpired) as exc:
+        # A binary that unpacked fine but will not start almost always misses a
+        # system library, and which one differs per platform, so the hint has
+        # to as well.
+        if sys.platform == "win32":
+            hint = ("On Windows this usually means a missing Visual C++ "
+                    "runtime (https://aka.ms/vs/17/release/vc_redist.x64.exe).")
+        else:
+            hint = ("On Linux this usually means a system library the release "
+                    "links against is missing: libcurl.so.4 (package "
+                    "libcurl4t64) or libgomp.so.1 (package libgomp1).")
         raise LlamaServerFetchError(
-            f"Could not run {exe.name} {' '.join(args)}: {exc}. On Windows this "
-            f"usually means a missing Visual C++ runtime "
-            f"(https://aka.ms/vs/17/release/vc_redist.x64.exe).") from exc
+            f"Could not run {exe.name} {' '.join(args)}: {exc}. {hint}") from exc
     return (result.stdout or "") + (result.stderr or "")
 
 
@@ -565,12 +679,24 @@ def verify_devices(exe: Path, variant_name: str) -> None:
         log.info("Device check: CPU build, nothing to verify.")
         return
     if not re.search(variant.device_pattern, output):
-        raise LlamaServerFetchError(
+        # The remedy differs per backend, and this message is the only place
+        # the user is told what to look at, so it names the backend's own
+        # failure mode rather than a generic "no device".
+        if variant.backend == "Vulkan":
+            remedy = ("To get the GPU build instead, install the Vulkan loader "
+                      "(package libvulkan1) and check that the driver "
+                      "publishes an ICD in /usr/share/vulkan/icd.d.")
+        elif variant.backend == "CUDA":
+            remedy = (f"Check that the cudart DLLs sit next to {exe.name} and "
+                      f"that their major version matches the build.")
+        else:
+            remedy = (f"Check that the {variant.backend} runtime this build "
+                      f"needs is installed and reachable from {exe.name}.")
+        raise DeviceCheckError(
             f"{variant_name} was installed but no matching device appeared in "
             f"--list-devices, so llama-server would silently run on the CPU "
             f"(about three times slower). Output was:\n{output.strip()}\n"
-            f"Check that the cudart DLLs sit next to {exe.name} and that their "
-            f"major version matches the build.")
+            f"{remedy}")
     log.info("Device check: GPU backend is up.\n%s", output.strip())
 
 
@@ -591,11 +717,51 @@ def ensure_llama_server(*, variant: Optional[str] = None,
     cheap. Raises LlamaServerFetchError on any failure; on success the returned
     path is a binary that has been run at least once and reported the expected
     build and backend.
+
+    A variant whose GPU backend brings up no device is retried with its
+    ``fallback`` (see Variant), which is how a machine with no usable Vulkan
+    still ends up with a working CPU build instead of a failed install. Only
+    the device check is retried, and only downwards: every other failure is
+    raised as it happens, and the chain is finite because a variant is never
+    tried twice.
     """
     variant_name = variant or select_variant()
-    if variant_name not in VARIANTS:
-        raise LlamaServerFetchError(
-            f"Unknown variant {variant_name!r}. Known: {', '.join(sorted(VARIANTS))}.")
+    tried: list[str] = []
+    while True:
+        if variant_name not in VARIANTS:
+            raise LlamaServerFetchError(
+                f"Unknown variant {variant_name!r}. "
+                f"Known: {', '.join(sorted(VARIANTS))}.")
+        try:
+            return _install_variant(variant_name, dest=dest, tag=tag,
+                                    force=force, verify=verify,
+                                    progress=progress)
+        except DeviceCheckError as exc:
+            fallback = VARIANTS[variant_name].fallback
+            if fallback is None or fallback in tried:
+                raise
+            # Logged, not swallowed: the whole point of the device check is
+            # that a CPU run must never be a surprise, so the reason and the
+            # substitution both have to reach the user. The install that just
+            # failed left dest unstamped, so the next attempt reinstalls over
+            # it without needing force.
+            log.info("%s\nFalling back to %s.", exc, fallback)
+            tried.append(variant_name)
+            variant_name = fallback
+
+
+def _install_variant(variant_name: str, *,
+                     dest: Path,
+                     tag: str,
+                     force: bool,
+                     verify: bool,
+                     progress: Optional[ProgressFn]) -> Path:
+    """Download, unpack and verify exactly one variant. No fallback here.
+
+    Split out of ensure_llama_server so that the retry loop above stays a loop
+    over variants and this stays a single install: mixing the two made it hard
+    to see which failures are final.
+    """
     spec = VARIANTS[variant_name]
     exe = dest / EXE_NAME
 
@@ -731,6 +897,10 @@ def _print_plan(variant_name: str, dest: Path, tag: str) -> None:
         print(f"    {asset.name.format(tag=tag)}  ({asset.size_mb} MB)")
         print(f"        {DOWNLOAD_URL.format(tag=tag, asset=asset.name.format(tag=tag))}")
         print(f"        sha256 {asset.sha256}")
+    if spec.fallback:
+        print(f"Fallback: {spec.fallback} "
+              f"({variant_size_mb(spec.fallback)} MB), installed instead if "
+              f"the device check finds no GPU")
     stamp = read_stamp(dest)
     if stamp:
         print(f"Installed: {stamp.get('tag')} ({stamp.get('variant')}), "
@@ -776,10 +946,21 @@ def main(argv: Optional[list[str]] = None) -> int:
     if args.list:
         print(f"Pinned release: {RELEASE_TAG}")
         for name, spec in sorted(VARIANTS.items()):
-            need = (f"driver CUDA >= {spec.min_driver_cuda[0]}.{spec.min_driver_cuda[1]}"
-                    if spec.min_driver_cuda else "no GPU requirement")
-            print(f"  {name}  ({need}, {len(spec.assets)} asset(s), "
-                  f"{variant_size_mb(name)} MB)")
+            # The backend is stated first because it is the thing being
+            # chosen; the driver requirement is a condition on it, and only
+            # the CUDA builds have one. Deriving the whole label from
+            # min_driver_cuda alone used to describe the Vulkan build as
+            # having "no GPU requirement", which is true of the driver
+            # version and false of everything the user meant by it.
+            facts = [f"{spec.backend} backend"]
+            if spec.min_driver_cuda:
+                facts.append("driver CUDA >= "
+                             f"{spec.min_driver_cuda[0]}.{spec.min_driver_cuda[1]}")
+            if spec.fallback:
+                facts.append(f"falls back to {spec.fallback}")
+            facts.append(f"{len(spec.assets)} asset(s)")
+            facts.append(f"{variant_size_mb(name)} MB")
+            print(f"  {name}  ({', '.join(facts)})")
         return 0
 
     try:

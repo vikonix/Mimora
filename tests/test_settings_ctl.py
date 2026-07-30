@@ -11,6 +11,7 @@ from the project root with:
     python -m unittest tests.test_settings_ctl
 """
 
+import os
 import unittest
 from unittest import mock
 
@@ -76,13 +77,28 @@ class TestDefaultDiffing(unittest.TestCase):
                 glue._default_differs_from_live("show_face", False))
 
     def test_practice_text_path_compares_normalized(self):
+        # Portable half: a redundant './' segment is the only spelling
+        # difference os.path.normpath irons out on every platform.
         glue, _ = make_glue()
         with mock.patch.object(config, "PRACTICE_TEXT_FILE",
-                               "texts\\practice_text.txt"):
+                               "texts/./practice_text.txt"):
             self.assertFalse(glue._default_differs_from_live(
                 "practice_text_file", "texts/practice_text.txt"))
             self.assertTrue(glue._default_differs_from_live(
                 "practice_text_file", "texts/other.txt"))
+
+    @unittest.skipUnless(os.name == "nt", "Windows path semantics")
+    def test_practice_text_path_ignores_separator_and_case_on_windows(self):
+        # normpath and normcase are deliberately platform-dependent, and the
+        # comparison inherits that. Only on Windows is a backslash a separator
+        # and the case irrelevant; on POSIX a backslash is an ordinary
+        # character in a filename, so 'texts\practice_text.txt' there IS a
+        # different file and answering "no change" would be wrong.
+        glue, _ = make_glue()
+        with mock.patch.object(config, "PRACTICE_TEXT_FILE",
+                               "Texts\\Practice_Text.txt"):
+            self.assertFalse(glue._default_differs_from_live(
+                "practice_text_file", "texts/practice_text.txt"))
 
     def test_plain_string_setting_diffs_by_equality(self):
         glue, _ = make_glue()

@@ -10,6 +10,11 @@ which is the failure this module exists to prevent: a missing number does not
 crash anything, it just makes the first-run dialog and the progress bar quietly
 wrong.
 
+The same applies to the other fields of llama_server_fetch.VARIANTS, whose
+rows are checked here for internal consistency (backend against device check,
+fallback against the table) for the same reason: an inconsistent row does not
+fail loudly, it makes the module describe a build as something it is not.
+
 Run from the project root with:
 
     python -m unittest tests.test_models_info
@@ -52,6 +57,45 @@ class SizeCompletenessTests(unittest.TestCase):
                 self.assertEqual(
                     llama_server_fetch.variant_size_mb(name),
                     sum(asset.size_mb for asset in variant.assets))
+
+
+class VariantTableShapeTests(unittest.TestCase):
+    """Internal consistency of llama_server_fetch.VARIANTS.
+
+    Same reason as the sizes above: none of these mistakes crashes anything,
+    they just make the module describe a build as something it is not.
+    """
+
+    def test_cpu_backend_matches_the_absence_of_a_device_check(self):
+        # The two fields answer the same question from different sides, and
+        # several messages read one to speak about the other: --list prints
+        # the backend, verify_devices branches on it while the device check
+        # itself is driven by the pattern. A row where they disagree would
+        # promise a GPU build and then verify nothing, or the reverse.
+        for name, variant in llama_server_fetch.VARIANTS.items():
+            with self.subTest(variant=name):
+                self.assertEqual(variant.backend == "CPU",
+                                 variant.device_pattern is None)
+
+    def test_every_variant_names_a_backend(self):
+        for name, variant in llama_server_fetch.VARIANTS.items():
+            with self.subTest(variant=name):
+                self.assertIsInstance(variant.backend, str)
+                self.assertTrue(variant.backend.strip())
+
+    def test_fallbacks_point_at_a_known_variant_and_terminate(self):
+        # ensure_llama_server walks this chain after a failed device check.
+        # A typo would surface there as "Unknown variant", mid-install and
+        # after a download; a cycle would only be caught by its own guard.
+        for name, variant in llama_server_fetch.VARIANTS.items():
+            with self.subTest(variant=name):
+                seen = [name]
+                current = variant.fallback
+                while current is not None:
+                    self.assertIn(current, llama_server_fetch.VARIANTS)
+                    self.assertNotIn(current, seen)
+                    seen.append(current)
+                    current = llama_server_fetch.VARIANTS[current].fallback
 
 
 class CatalogueShapeTests(unittest.TestCase):

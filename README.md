@@ -89,6 +89,7 @@ Work on:    colder
 - A microphone and speakers.
 - For GPU acceleration: an NVIDIA GPU with a CUDA-enabled PyTorch build.
 - **espeak-ng** (native binary, required by the phonemizer) - installed separately, see below.
+- **PortAudio** (Linux only) - the native library `sounddevice` binds to for recording and playback (`libportaudio2` on Debian/Ubuntu). The Windows and macOS `sounddevice` wheels bundle it; the Linux ones do not. See below.
 
 ### macOS notes
 
@@ -152,11 +153,12 @@ or CUDA toolkit for the standard setup.
 
 ### Quick install (script, recommended)
 
-`install.py` automates the whole setup: it installs the Python dependencies,
-auto-detects an NVIDIA GPU and installs the matching CUDA build of `torch`,
-checks for `espeak-ng`, pre-downloads the Hugging Face models into
-`model_cache/`, installs the pinned llama-server binary into `bin/llama/` and
-downloads the GGUF chat model into `models/`.
+`install.py` automates the whole setup: it checks the native pieces pip cannot
+supply (`espeak-ng`, plus `tkinter` and PortAudio on Linux and the MSVC runtime
+on Windows), installs the Python dependencies, auto-detects an NVIDIA GPU and
+installs the matching CUDA build of `torch`, pre-downloads the Hugging Face
+models into `model_cache/`, installs the pinned llama-server binary into
+`bin/llama/` and downloads the GGUF chat model into `models/`.
 
 ```bash
 git clone https://github.com/vikonix/Mimora.git Mimora
@@ -217,6 +219,33 @@ The offline translator (NLLB-200) needs no extra step - its dependencies
 - **macOS** - `brew install espeak-ng`
 - **Linux** - `sudo apt-get install espeak-ng`
 
+### Audio on Linux (PortAudio)
+
+`sounddevice` is a wrapper around the native **PortAudio** library. Its Windows
+and macOS wheels ship that library inside; its Linux wheels do not, so without
+the system package every import fails with
+`OSError: PortAudio library not found` - including the one in
+`tools/detect_hardware.py`, which is why `install.py` checks for it up front:
+
+```bash
+sudo apt-get install libportaudio2     # Debian / Ubuntu
+sudo dnf install portaudio             # Fedora
+```
+
+If the library is installed but the app finds **no audio devices** (the
+installer prints `0 input / 0 output`), the usual cause is the backend rather
+than the library: Debian and Ubuntu build PortAudio with the ALSA backend only,
+while WSL and most desktop setups route audio through PulseAudio. Check it with
+
+```bash
+ldd "$(ldconfig -p | grep -m1 portaudio | awk '{print $NF}')" | grep pulse
+```
+
+An empty answer means no PulseAudio backend. Two known ways out: install
+`libasound2-plugins` and point ALSA's default device at pulse
+(`pcm.!default pulse` in `~/.asoundrc`), or rebuild PortAudio from source with
+`./configure --with-pulseaudio`.
+
 ### Emoji icons on Linux (mic button shows a blank box)
 
 The mic/record button (`mimora/ui.py` `draw_mic_button`) draws its state icons
@@ -250,8 +279,9 @@ The default `torch` wheel is CPU-only. For NVIDIA GPUs:
   leaves a `torchaudio` built against the previous torch, which then fails to
   import (`OSError: [WinError 127]`) and breaks pronunciation analysis.
 - **The LLM** needs no pip package at all: it runs in the official llama.cpp
-  binary, and the fetcher below picks the CUDA build automatically (see the
-  next section).
+  binary, and the fetcher below picks the GPU build for your platform
+  automatically - CUDA on Windows, Vulkan on Linux, where llama.cpp publishes
+  no CUDA binaries at all (see the next section).
 
 ### Get the llama-server binary
 
@@ -271,6 +301,21 @@ falls back to the CPU **silently** and just runs about three times slower.
 `--dry-run` prints the plan without downloading. If you already manage your own
 `llama-server`, put it on `PATH` or name it in `settings.json`
 (`"llama_server_path"`) instead.
+
+Builds are pinned for **Windows x64** (CUDA, falling back to CPU when the
+driver is too old) and **Linux x64** (Vulkan, falling back to CPU). macOS has
+no pinned build yet: fetch one from the release page the command prints and
+name it in `"llama_server_path"`.
+
+The Linux fallback is worth a word. llama.cpp ships no CUDA binary for Linux,
+so the GPU build there is the Vulkan one, and whether it can see the GPU cannot
+be known before downloading it - it needs a Vulkan loader (`libvulkan1`), an
+ICD manifest published by the driver, and a device reachable through both.
+Under WSL2 the NVIDIA driver publishes no Vulkan ICD at all, so the check comes
+back empty. The fetcher therefore tries Vulkan, verifies it with
+`--list-devices`, and installs the CPU build instead when no device appears,
+saying so in the log. If you fix the Vulkan side later, `--force` re-runs the
+whole selection.
 
 ### Get a GGUF model
 

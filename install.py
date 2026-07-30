@@ -767,6 +767,115 @@ def step_check_tkinter(
     report.add("tkinter", MANUAL, "install separately, see log")
 
 
+def _linux_portaudio_command() -> list[str] | None:
+    """Build the right install command for the detected Linux package manager.
+
+    Mirrors _linux_espeak_command(). Debian/Ubuntu ship the runtime library as
+    libportaudio2 (the -dev package only adds headers, which nothing here
+    compiles against); Fedora and Arch call it portaudio.
+    """
+    if shutil.which("apt-get"):
+        return ["sudo", "apt-get", "install", "-y", "libportaudio2"]
+    if shutil.which("dnf"):
+        return ["sudo", "dnf", "install", "-y", "portaudio"]
+    if shutil.which("pacman"):
+        return ["sudo", "pacman", "-S", "--noconfirm", "portaudio"]
+    return None
+
+
+def _log_audio_devices(log: Logger) -> None:
+    """Report how many devices PortAudio sees, and explain a count of zero.
+
+    The zero case is the WSL trap: Ubuntu builds libportaudio2 with the ALSA
+    backend only, while WSLg routes audio through PulseAudio, so the library
+    loads cleanly, enumerates nothing, and no error anywhere says why. The
+    installer used to leave the user with 'Audio: 0 input / 0 output' in
+    hardware_config.json and no next step.
+
+    Purely informational, and silent when it cannot answer: sounddevice only
+    exists after the requirements step, so on a first install this says nothing
+    and the same machine gets asked again at the hardware-detection step.
+    """
+    try:
+        import sounddevice
+    except (ImportError, OSError):
+        return
+    try:
+        devices = sounddevice.query_devices()
+    except (OSError, sounddevice.PortAudioError):
+        return
+
+    inputs = sum(1 for dev in devices if dev["max_input_channels"] > 0)
+    outputs = sum(1 for dev in devices if dev["max_output_channels"] > 0)
+    log.log(f"    Audio devices: {inputs} input / {outputs} output.")
+    if inputs or outputs:
+        return
+    log.log("    WARNING: PortAudio is installed but exposes no audio device.")
+    log.log("    On WSL and other PulseAudio-only setups this is usually the")
+    log.log("    distribution's PortAudio being built without the PulseAudio")
+    log.log("    backend (check with: ldd $(ldconfig -p | grep -m1 portaudio |")
+    log.log("    awk '{print $NF}') | grep pulse). Two known ways out:")
+    log.log("      - install libasound2-plugins and point ALSA's default")
+    log.log("        device at pulse ('pcm.!default pulse' in ~/.asoundrc);")
+    log.log("      - rebuild PortAudio with ./configure --with-pulseaudio.")
+
+
+def step_check_portaudio(
+    log: Logger, confirmer: Confirmer, report: StepReport
+) -> None:
+    """On Linux, verify the native PortAudio library; offer to install it.
+
+    sounddevice is a cffi wrapper around PortAudio. Its Windows and macOS
+    wheels bundle the library, its Linux wheels do not, and importing it
+    without the system library raises OSError('PortAudio library not found').
+    That import happens inside tools/detect_hardware.py, which is the last step
+    but one, so on a fresh Linux machine the installer used to abort after
+    several gigabytes of downloads over a 300 kB package. Hence the check runs
+    here, in the preflight block, next to the other things that only look.
+
+    ctypes.util.find_library needs no third-party package, which is what lets
+    this run before the requirements step installs anything.
+    """
+    log.banner("PortAudio (audio I/O library)")
+    if sys.platform in ("win32", "darwin"):
+        log.log("    The sounddevice wheel bundles PortAudio here; skipping.")
+        report.add("PortAudio", SKIPPED, "bundled in the wheel")
+        return
+
+    import ctypes.util
+    found = ctypes.util.find_library("portaudio")
+    if found:
+        log.log(f"    PortAudio found on the library path ({found}).")
+        report.add("PortAudio", DONE, "already present")
+        _log_audio_devices(log)
+        return
+
+    log.log("    PortAudio NOT found (sounddevice needs it to record and play;")
+    log.log("    without it the hardware-detection step below cannot run).")
+    pkg_cmd = _linux_portaudio_command()
+    if pkg_cmd is None:
+        log.log("    Could not detect a supported package manager. Install the")
+        log.log("    PortAudio runtime (libportaudio2 / portaudio) for your")
+        log.log("    distribution, then re-run install.py.")
+        report.add("PortAudio", MANUAL, "install separately, see log")
+        return
+
+    if not confirmer.confirm("Install PortAudio via the system package manager "
+                             "(needs sudo).", " ".join(pkg_cmd)):
+        report.add("PortAudio", SKIPPED)
+        return
+    # Soft failure, like espeak-ng: a package manager that cannot install it
+    # (no sudo rights, repo trouble) is reported and left to the user rather
+    # than killing a run whose remaining steps are all still doable.
+    if run_command(pkg_cmd, log):
+        report.add("PortAudio", DONE)
+        _log_audio_devices(log)
+        return
+    log.log("    Package install failed. Install the PortAudio runtime")
+    log.log("    manually, then re-run install.py.")
+    report.add("PortAudio", MANUAL, "package install failed, see log")
+
+
 def step_check_python(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
@@ -995,16 +1104,17 @@ def step_llama_server(
     is what catches llama.cpp's silent fallback to CPU when the cudart DLLs are
     missing or of the wrong major version.
 
-    A platform with no pinned build (currently everything except Windows x64)
-    is recorded as a manual action rather than a hard failure: the rest of the
-    install is perfectly usable, and such a machine can point
+    A platform with no pinned build (currently everything except Windows x64
+    and Linux x64) is recorded as a manual action rather than a hard failure:
+    the rest of the install is perfectly usable, and such a machine can point
     "llama_server_path" at its own binary or switch to the lm-studio backend.
     """
     log.banner("Step 8 - LLM stack: llama-server binary")
     fetch = _import_fetcher("mimora.llama_server_fetch", log, report,
                             "llama-server binary")
 
-    installed = fetch.installed_exe() is not None
+    installed_exe = fetch.installed_exe()
+    installed = installed_exe is not None
 
     # Resolve the variant BEFORE asking. Two reasons: the prompt can then name
     # the real download size (a single hardcoded number fits only the CUDA
@@ -1024,7 +1134,16 @@ def step_llama_server(
             f"{fetch.INSTALL_DIR.parent.name}/{fetch.INSTALL_DIR.name}/ and "
             f"verify that its GPU backend actually comes up.")
     if installed:
-        log.log(f"    llama-server already installed: {fetch.installed_exe()}")
+        # Name the installed build, not just its path. The confirmer prints
+        # *desc* right after this line, and desc describes what a reinstall
+        # would fetch - which after a device-check fallback is a different
+        # variant from the one on disk (linux-vulkan-x64 is selected,
+        # linux-cpu-x64 is what ends up installed). Two consecutive lines
+        # naming two variants read as a contradiction unless both say which
+        # is which.
+        stamped = fetch.installed_variant(installed_exe)
+        named = f" ({stamped})" if stamped else ""
+        log.log(f"    llama-server already installed: {installed_exe}{named}")
     if not confirmer.confirm(desc, installed=installed):
         report.add("llama-server binary", SKIPPED,
                    "already installed" if installed else "")
@@ -1244,13 +1363,16 @@ def main() -> int:
     # InstallError, so the run stops immediately instead of pressing on with a
     # half-built environment and printing a misleading "ready to launch" line.
     try:
-        # Preflight, deliberately unnumbered: these three change nothing, they
-        # only refuse to silently install into the global interpreter and (on
-        # Windows) verify the MSVC runtime torch and llama-server need at
-        # runtime. The numbered steps below are the ones that do something.
+        # Preflight, deliberately unnumbered: these refuse to silently install
+        # into the global interpreter, and check the native pieces that pip
+        # cannot supply - the MSVC runtime on Windows, tkinter and PortAudio on
+        # Linux. All three are needed by steps far below (or by main.py), and
+        # all three are cheap to check, so they are checked before the first
+        # download rather than after the last one.
         check_virtualenv(log, args)
         step_check_vcredist(log, confirmer, report)
         step_check_tkinter(log, confirmer, report)
+        step_check_portaudio(log, confirmer, report)
 
         # Step 1: Python version (hard min gate; warn above the tested max).
         step_check_python(log, confirmer, report)

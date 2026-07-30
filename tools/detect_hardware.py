@@ -255,11 +255,17 @@ def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
         # answers a definite False rather than None, which is what lets
         # build_config zero the LLM's VRAM budget.
         if gpu_present:
+            # Deliberately not naming the build a retry would land on: that
+            # depends on the platform (llama.cpp publishes CUDA binaries for
+            # Windows only, so the GPU build under Linux is the Vulkan one)
+            # and on whether its backend comes up at all, and guessing it here
+            # would be a second copy of a decision llama_server_fetch already
+            # owns. The command re-runs that decision and says what it chose.
             warnings.append(
                 f"the installed llama-server is the '{variant_name}' build - "
-                "the LLM cannot use the GPU; reinstall it with "
-                "'python -m mimora.llama_server_fetch --force' to pick up the "
-                "CUDA build")
+                f"the LLM cannot use the GPU; reinstall it with "
+                f"'python -m mimora.llama_server_fetch --force' to re-run the "
+                f"build selection for this machine")
         return False
 
     try:
@@ -273,8 +279,10 @@ def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
     warnings.append(
         f"the '{variant_name}' llama-server build lists no matching device, so "
         f"it would silently run on the CPU (about three times slower); check "
-        f"that the cudart DLLs sit next to {exe.name} and that their major "
-        f"version matches the build. --list-devices said:\n{devices.strip()}")
+        f"that the backend's runtime is reachable - the cudart DLLs next to "
+        f"{exe.name} with a major version matching the build on Windows, a "
+        f"Vulkan loader and ICD on Linux. --list-devices said:"
+        f"\n{devices.strip()}")
     return False
 
 
