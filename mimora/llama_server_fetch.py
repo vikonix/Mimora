@@ -430,6 +430,15 @@ def _extract(archive: Path, into: Path) -> None:
 
     Only .zip is handled: the pinned variants are Windows-only. macOS and Linux
     releases ship .tar.gz, so this grows a branch when those variants land.
+
+    That same branch has to restore the executable bit. zipfile.extractall does
+    NOT apply a member's unix permissions (they live in the high half of
+    external_attr and it ignores them), so even a POSIX build delivered as .zip
+    would unpack a llama-server nobody can run, and the failure would surface as
+    a bare PermissionError from _probe rather than as anything about unpacking.
+    tarfile does preserve the mode, so a .tar.gz branch would not need the
+    chmod - which is exactly why the point is worth writing down here instead of
+    being rediscovered when the first non-Windows variant is added.
     """
     if archive.suffix.lower() != ".zip":
         raise LlamaServerFetchError(

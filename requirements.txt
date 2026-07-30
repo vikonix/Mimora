@@ -34,6 +34,24 @@ torch==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'
 transformers>=5.3; platform_system != 'Darwin' or platform_machine != 'x86_64'
 transformers>=4.44,<5; platform_system == 'Darwin' and platform_machine == 'x86_64'
 
+# Arrives transitively (transformers, kokoro, supertonic) but pinned here
+# because the first-run download reads it directly: mimora/first_run_download.py
+# passes huggingface_hub's own tqdm_class hook to snapshot_download and
+# hf_hub_download to count bytes for the progress bar. The fetchers omit that
+# argument when nothing asks for it, so the CLI and install.py survive an older
+# hub - but the first-run window always passes it, and a version without the
+# parameter turns the required-level download into a TypeError. 1.24 is the
+# version the aggregation this relies on was read and verified against (inside
+# snapshot_download every per-file byte bar forwards its updates into the one
+# instance our stand-in is used for). A newer hub that stops aggregating that
+# way degrades the bar, not the download, so there is no upper bound; the guard
+# is tests/test_first_run_download.py test_the_upstream_hook_still_exists, which
+# checks the parameter still exists but cannot check the aggregation.
+# Intel macOS is left unconstrained on purpose: transformers 4.x caps the hub
+# below 1.0 there, so a pin would make that platform's resolve unsatisfiable
+# (same reasoning as the three pins above).
+huggingface_hub>=1.24; platform_system != 'Darwin' or platform_machine != 'x86_64'
+
 # Themed ttk widgets (mimora/ui.py imports it as a drop-in "ttk"); the base
 # theme is picked from the Mimora color theme, colors still come from
 # config/themes/. Capped below 2.0: ui.py disables the classic-widget
