@@ -128,6 +128,20 @@ class Variant(NamedTuple):
         failure final. It is a property of the build rather than of whoever
         picked it: the same missing GPU backend has the same remedy whether the
         variant came from select_variant() or from an explicit --variant.
+    min_macos: lowest macOS version that can load this build, or None when the
+        question does not arise (every non-Apple row). It is a property of the
+        published asset, not of macOS: it is the `minos` field of the binary's
+        LC_BUILD_VERSION load command, which llama.cpp's CI stamps from
+        CMAKE_OSX_DEPLOYMENT_TARGET when the workflow sets one and from the
+        runner's own macOS version when it does not. Hence its place here,
+        beside the sha256 and the size: all three describe the same file of the
+        same pinned release, and bumping RELEASE_TAG has to re-snap them
+        together. Read it with
+        `llvm-objdump --macho --private-headers llama-server`.
+
+        Only select_variant() consults it, exactly like min_driver_cuda: an
+        explicit --variant still installs what it was asked for and lets the
+        binary's own failure speak.
     """
 
     assets: tuple[Asset, ...]
@@ -135,6 +149,7 @@ class Variant(NamedTuple):
     device_pattern: Optional[str]
     backend: str
     fallback: Optional[str] = None
+    min_macos: Optional[tuple[int, int]] = None
 
 
 # Known builds: Windows x64, Linux x64 and macOS (Apple Silicon + Intel).
@@ -215,17 +230,20 @@ VARIANTS: dict[str, Variant] = {
     # _extract), and both are a single archive: there is no separate runtime to
     # merge in the way the Windows CUDA build needs cudart.
     #
-    # UNVERIFIED - no Apple Silicon machine has run this yet, and two facts
-    # about it were read off the release sources rather than off a real run:
-    # * The device name. ggml-metal.cpp defines GGML_METAL_NAME "MTL" and
-    #   ggml-metal-device.m formats each device as "MTL%d", so --list-devices
-    #   is expected to print "MTL0: Apple M...". If a real Mac prints something
-    #   else, device_pattern is what has to change.
-    # * The minimum macOS version. The release workflow builds this asset on a
-    #   current macOS runner and passes no CMAKE_OSX_DEPLOYMENT_TARGET, so
-    #   clang stamps the runner's own version as the minimum - an older macOS
-    #   may refuse to start the binary at all. That failure lands in _probe,
-    #   whose macOS hint names it.
+    # min_macos is high because llama.cpp's workflow passes no
+    # CMAKE_OSX_DEPLOYMENT_TARGET for this asset and builds it on whatever macOS
+    # runner is current, so clang stamps the runner's own version as the
+    # minimum. Verified 2026-07-31 by reading LC_BUILD_VERSION out of the
+    # downloaded binary: minos 26.0, sdk 26.5. Nothing here can lower it, so an
+    # Apple Silicon Mac on macOS 14 or 15 has no usable build in this release
+    # and select_variant() says so before the download.
+    #
+    # device_pattern is the one thing here still UNVERIFIED: no Apple Silicon
+    # machine has run this build yet, and the device name was read off the
+    # sources (ggml-metal.cpp defines GGML_METAL_NAME "MTL", ggml-metal-device.m
+    # formats each device as "MTL%d"), so --list-devices is *expected* to print
+    # "MTL0: Apple M...". If a real Mac prints something else, this is the field
+    # that has to change.
     "macos-metal-arm64": Variant(
         assets=(
             Asset("llama-{tag}-bin-macos-arm64.tar.gz",
@@ -238,20 +256,23 @@ VARIANTS: dict[str, Variant] = {
         # No fallback on purpose: there is no CPU-only arm64 asset to descend
         # to, and a Mac with a GPU quietly running on its CPU is precisely the
         # outcome the device check exists to refuse.
+        min_macos=(26, 0),
     ),
     # Intel Macs are CPU-only by construction, not by our choice: llama.cpp
     # builds this asset with -DGGML_METAL=OFF because its Intel CI runners have
     # no GPU to test against. So there is no GPU variant to prefer over this one
     # and nothing for a device check to look for.
     #
-    # Two limits of the build are the release's and worth knowing before the
-    # download, because both surface as a binary that will not run rather than
-    # as a bad download:
-    # * It is compiled with -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3, so a Mac that
-    #   cannot be updated to Ventura 13.3 cannot run it.
+    # Two limits of the build are the release's, and only the first can be
+    # checked before the download:
+    # * It is compiled with -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3, which
+    #   LC_BUILD_VERSION confirms (minos 13.3, verified 2026-07-31) - hence
+    #   min_macos below.
     # * ggml's GGML_NATIVE defaults to ON and the workflow does not turn it
     #   off, so the asset carries -march=native for the CI runner's CPU. An
-    #   older Intel CPU dies on the first instruction it lacks.
+    #   older Intel CPU dies on the first instruction it lacks, and nothing in
+    #   the Mach-O header says which instructions those are, so that one can
+    #   only be found by running the binary - see _probe's signal branch.
     "macos-cpu-x64": Variant(
         assets=(
             Asset("llama-{tag}-bin-macos-x64.tar.gz",
@@ -261,6 +282,7 @@ VARIANTS: dict[str, Variant] = {
         min_driver_cuda=None,
         device_pattern=None,
         backend="CPU",
+        min_macos=(13, 3),
     ),
 }
 
@@ -411,10 +433,54 @@ def is_rosetta() -> bool:
     return result.stdout.strip() == "1"
 
 
+def detect_macos_version() -> Optional[tuple[int, int]]:
+    """(major, minor) of the running macOS, or None when it cannot be read.
+
+    None is "do not know", not "old": it lets the choice through rather than
+    refusing a machine on a reading this module failed to take.
+
+    One quirk is worth knowing and does no harm here. macOS 11+ reports itself
+    as "10.16" to a process linked against a pre-11 SDK, so a very old Python
+    could under-report its host. The error is always downwards, which turns a
+    misread into a refusal to install rather than into an install that cannot
+    run - the safe direction, and the reason this is not worked around.
+    """
+    release = platform.mac_ver()[0]
+    match = re.match(r"(\d+)(?:\.(\d+))?", release)
+    if not match:
+        log.info("platform.mac_ver() returned %r - cannot tell which macOS "
+                 "this is.", release)
+        return None
+    return int(match.group(1)), int(match.group(2) or 0)
+
+
+def _macos_variant(name: str) -> str:
+    """Return *name*, unless this Mac is older than the build can load.
+
+    Refusing here rather than after the download is what makes the difference
+    visible to the caller: install.py records an UnsupportedPlatformError as a
+    manual step and carries on, while the same machine discovering the same fact
+    from dyld three seconds later fails the whole install step.
+    """
+    required = VARIANTS[name].min_macos
+    current = detect_macos_version()
+    if required is None or current is None or current >= required:
+        return name
+    raise UnsupportedPlatformError(
+        f"{name} needs macOS {required[0]}.{required[1]} or newer and this Mac "
+        f"runs {current[0]}.{current[1]}, so the pinned llama.cpp release "
+        f"{RELEASE_TAG} has no build it can load. The minimum is the release's, "
+        f"not Mimora's: llama.cpp stamps it into the binary at build time. "
+        f"Build llama.cpp on this machine and point llama_server_path at the "
+        f"result, or switch llm_backend to lm-studio. Passing --variant "
+        f"{name} installs it anyway if you want to see it fail.")
+
+
 def select_variant() -> str:
     """Pick the best variant for this machine.
 
-    Raises UnsupportedPlatformError when no build is pinned for the platform.
+    Raises UnsupportedPlatformError when no build is pinned for the platform, or
+    when the pinned one cannot run on it (macOS too old for the release).
     """
     machine = platform.machine().lower()
     is_x64 = machine in ("amd64", "x86_64")
@@ -424,14 +490,14 @@ def select_variant() -> str:
         # MACOS_ARM64_DEFAULT), but platform.machine() alone cannot name it -
         # Rosetta 2 makes an Apple Silicon Mac report x86_64.
         if machine == "arm64":
-            return MACOS_ARM64_DEFAULT
+            return _macos_variant(MACOS_ARM64_DEFAULT)
         if is_x64:
             if is_rosetta():
                 log.info("This Python runs under Rosetta 2, so the machine is "
                          "Apple Silicon - installing %s rather than the Intel "
                          "build.", MACOS_ARM64_DEFAULT)
-                return MACOS_ARM64_DEFAULT
-            return MACOS_X64_DEFAULT
+                return _macos_variant(MACOS_ARM64_DEFAULT)
+            return _macos_variant(MACOS_X64_DEFAULT)
         # Anything else on macOS (a 32-bit or PowerPC interpreter) falls
         # through to the error below: no such asset is published.
 
@@ -723,15 +789,18 @@ def _start_failure_hint() -> str:
         return ("On Windows this usually means a missing Visual C++ runtime "
                 "(https://aka.ms/vs/17/release/vc_redist.x64.exe).")
     if sys.platform == "darwin":
+        # select_variant() already refuses a Mac older than Variant.min_macos,
+        # so reaching this on a version grounds means an explicit --variant. The
+        # CPU one it cannot catch: no header states which instructions the build
+        # needs.
         return ("On macOS this usually means the release does not fit this "
-                "Mac. The Intel build needs macOS 13.3 or newer and is "
-                "compiled for the CPU of llama.cpp's own CI runner, so an "
-                "older Mac stops with an illegal instruction; the Apple "
-                "Silicon build carries the minimum macOS version of the runner "
-                "it was built on, so an older system refuses to load it at all "
+                "Mac. Either the system is older than the build's minimum "
                 "(dyld reports a binary 'built for macOS ... newer than "
-                "running OS'). Neither is fixable from here: build llama.cpp "
-                "on this machine and point llama_server_path at the result.")
+                "running OS'), or - on Intel - the CPU is older than the one "
+                "llama.cpp's CI compiled for, which stops the process with an "
+                "illegal instruction. Neither is fixable from here: build "
+                "llama.cpp on this machine and point llama_server_path at the "
+                "result.")
     return ("On Linux this usually means a system library the release links "
             "against is missing: libcurl.so.4 (package libcurl4t64) or "
             "libgomp.so.1 (package libgomp1).")
@@ -1026,6 +1095,11 @@ def _print_plan(variant_name: str, dest: Path, tag: str) -> None:
     print(f"Variant : {variant_name}")
     print(f"Release : {tag}  ({RELEASE_PAGE_URL.format(tag=tag)})")
     print(f"Target  : {dest}")
+    if spec.min_macos:
+        # Printed for the same reason the download size is: it is a condition
+        # on the plan the user is about to agree to, and it is the one that
+        # decides whether the binary will start at all.
+        print(f"Requires: macOS {spec.min_macos[0]}.{spec.min_macos[1]} or newer")
     print(f"Download: {variant_size_mb(variant_name)} MB")
     print("Assets  :")
     for asset in spec.assets:
@@ -1091,6 +1165,8 @@ def main(argv: Optional[list[str]] = None) -> int:
             if spec.min_driver_cuda:
                 facts.append("driver CUDA >= "
                              f"{spec.min_driver_cuda[0]}.{spec.min_driver_cuda[1]}")
+            if spec.min_macos:
+                facts.append(f"macOS >= {spec.min_macos[0]}.{spec.min_macos[1]}")
             if spec.fallback:
                 facts.append(f"falls back to {spec.fallback}")
             facts.append(f"{len(spec.assets)} asset(s)")

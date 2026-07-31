@@ -1139,11 +1139,13 @@ def step_llama_server(
     is what catches llama.cpp's silent fallback to CPU when the cudart DLLs are
     missing or of the wrong major version.
 
-    A platform with no pinned build (currently everything except Windows x64,
-    Linux x64 and macOS) is recorded as a manual action rather than a hard
-    failure:
-    the rest of the install is perfectly usable, and such a machine can point
-    "llama_server_path" at its own binary or switch to the lm-studio backend.
+    A machine the pinned release has nothing for is recorded as a manual action
+    rather than a hard failure: the rest of the install is perfectly usable, and
+    such a machine can point "llama_server_path" at its own binary or switch to
+    the lm-studio backend. Two situations reach that branch, both raised by
+    select_variant() before anything is downloaded: an OS/architecture with no
+    pinned build at all (everything except Windows x64, Linux x64 and macOS),
+    and a Mac older than the minimum macOS its build was compiled for.
     """
     log.banner("Step 8 - LLM stack: llama-server binary")
     fetch = _import_fetcher("mimora.llama_server_fetch", log, report,

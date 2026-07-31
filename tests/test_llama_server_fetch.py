@@ -37,7 +37,10 @@ EXE = Path("/opt/mimora/bin/llama/llama-server")
 # (formatted as "MTL%d"); the description is the Metal device's own name.
 METAL_LISTING = ("Available devices:\n"
                  "  MTL0: Apple M2 Pro (16384 MiB, 12000 MiB free)")
-EMPTY_LISTING = "Available devices:\n  (none)"
+# What a CPU build prints: the header and nothing under it. Copied from a real
+# linux-cpu-x64 install rather than invented, because the negative case is what
+# a wrong pattern would pass.
+EMPTY_LISTING = "Available devices:\n"
 
 
 class SelectVariantOnMacosTests(unittest.TestCase):
@@ -50,17 +53,21 @@ class SelectVariantOnMacosTests(unittest.TestCase):
     prevent.
     """
 
-    def _select(self, platform_name, machine, rosetta=False):
-        """Run select_variant() with the three machine facts stubbed.
+    def _select(self, platform_name, machine, rosetta=False, macos=None):
+        """Run select_variant() with the four machine facts stubbed.
 
         Each stub stands in for something this process cannot honestly answer
-        in a test: which OS it runs on, what the CPU is, and whether it is being
-        translated (a sysctl subprocess).
+        in a test: which OS it runs on, what the CPU is, whether it is being
+        translated (a sysctl subprocess), and which macOS this is. macos
+        defaults to None - "version unknown", which never blocks a choice - so
+        that the tests below are about the architecture and nothing else.
         """
         rosetta_probe = Mock(return_value=rosetta)
         with patch.object(fetch.sys, "platform", platform_name), \
              patch.object(fetch.platform, "machine", Mock(return_value=machine)), \
-             patch.object(fetch, "is_rosetta", rosetta_probe):
+             patch.object(fetch, "is_rosetta", rosetta_probe), \
+             patch.object(fetch, "detect_macos_version",
+                          Mock(return_value=macos)):
             return fetch.select_variant(), rosetta_probe
 
     def test_apple_silicon_gets_the_metal_build(self):
@@ -87,6 +94,34 @@ class SelectVariantOnMacosTests(unittest.TestCase):
         # better than downloading a build that cannot run.
         with self.assertRaises(fetch.UnsupportedPlatformError):
             self._select("darwin", "ppc")
+
+    def test_a_mac_older_than_the_build_is_refused_before_downloading(self):
+        # The distinction that makes this worth checking early:
+        # UnsupportedPlatformError is what install.py records as a manual step
+        # and carries on from, while the same fact discovered from dyld after
+        # the download arrives as a LlamaServerFetchError and fails the step.
+        required = fetch.VARIANTS[fetch.MACOS_ARM64_DEFAULT].min_macos
+        self.assertIsNotNone(required)
+        older = (required[0] - 1, 0)
+        with self.assertRaises(fetch.UnsupportedPlatformError) as caught:
+            self._select("darwin", "arm64", macos=older)
+        # The message has to name both numbers, or the reader cannot tell
+        # whether it is their machine or the release that is the problem.
+        self.assertIn(f"{required[0]}.{required[1]}", str(caught.exception))
+        self.assertIn(f"{older[0]}.{older[1]}", str(caught.exception))
+
+    def test_the_minimum_version_itself_is_accepted(self):
+        # A ">=" written as ">" would refuse exactly the machines the pin was
+        # chosen for, and nothing else would notice.
+        required = fetch.VARIANTS[fetch.MACOS_X64_DEFAULT].min_macos
+        variant, _ = self._select("darwin", "x86_64", macos=required)
+        self.assertEqual(variant, fetch.MACOS_X64_DEFAULT)
+
+    def test_an_unreadable_version_does_not_block_the_install(self):
+        # detect_macos_version() returning None means "could not read it", and
+        # a failed reading must not masquerade as an old Mac.
+        variant, _ = self._select("darwin", "arm64", macos=None)
+        self.assertEqual(variant, fetch.MACOS_ARM64_DEFAULT)
 
 
 class IsRosettaTests(unittest.TestCase):
@@ -128,6 +163,30 @@ class IsRosettaTests(unittest.TestCase):
         run.assert_not_called()
 
 
+class DetectMacosVersionTests(unittest.TestCase):
+    """platform.mac_ver() is a string, and not always the shape expected."""
+
+    def _version(self, release):
+        with patch.object(fetch.platform, "mac_ver",
+                          Mock(return_value=(release, ("", "", ""), ""))):
+            return fetch.detect_macos_version()
+
+    def test_major_and_minor_are_parsed(self):
+        self.assertEqual(self._version("15.5"), (15, 5))
+
+    def test_a_bare_major_counts_as_dot_zero(self):
+        self.assertEqual(self._version("26"), (26, 0))
+
+    def test_the_patch_level_is_ignored(self):
+        # Only major.minor is compared; a third component must not confuse it.
+        self.assertEqual(self._version("13.3.1"), (13, 3))
+
+    def test_an_empty_answer_is_not_a_version(self):
+        # This is what mac_ver() returns off macOS, and what a failed reading
+        # looks like there.
+        self.assertIsNone(self._version(""))
+
+
 class ProbeFailureTests(unittest.TestCase):
     """_probe reports a binary that starts and then dies on a signal.
 
@@ -149,8 +208,9 @@ class ProbeFailureTests(unittest.TestCase):
             self._probe(-4)
         message = str(caught.exception)
         self.assertIn("signal 4", message)
-        # The hint is the only place the user is told what to look at.
-        self.assertIn("13.3", message)
+        # The hint is the only place the user is told what to look at, and this
+        # is the failure it exists for.
+        self.assertIn("illegal instruction", message)
 
     def test_a_normal_run_returns_both_streams(self):
         output = self._probe(0, stdout="version: 10099 (1a064ab09)\n",
@@ -179,11 +239,11 @@ class StartFailureHintTests(unittest.TestCase):
 
     def test_the_macos_hint_names_both_failure_modes(self):
         hint = self._hint("darwin")
-        # The Intel limit (a deployment target and a -march=native build) and
-        # the Apple Silicon one (a minimum macOS version inherited from the CI
-        # runner) fail differently and need different reading.
-        self.assertIn("13.3", hint)
+        # A system older than the build (dyld refuses to load it) and a CPU
+        # older than the build (the process dies on an instruction it lacks)
+        # look nothing alike and send the reader to different places.
         self.assertIn("dyld", hint)
+        self.assertIn("illegal instruction", hint)
 
 
 class MacosVariantShapeTests(unittest.TestCase):
@@ -212,6 +272,15 @@ class MacosVariantShapeTests(unittest.TestCase):
         # Deliberate: no CPU-only arm64 asset is published, and a Mac quietly
         # running on its CPU is the outcome the device check exists to refuse.
         self.assertIsNone(fetch.VARIANTS[fetch.MACOS_ARM64_DEFAULT].fallback)
+
+    def test_min_macos_is_set_exactly_on_the_macos_rows(self):
+        # It is read from the asset's own LC_BUILD_VERSION, so a macOS row
+        # without it is an unmeasured one, and a non-macOS row with it is a
+        # number nothing will ever compare against.
+        for name, variant in fetch.VARIANTS.items():
+            with self.subTest(variant=name):
+                self.assertEqual(name.startswith("macos-"),
+                                 variant.min_macos is not None)
 
     def test_posix_assets_are_tarballs(self):
         # zipfile.extractall ignores a member's unix mode, so a POSIX build

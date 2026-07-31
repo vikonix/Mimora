@@ -308,13 +308,20 @@ driver is too old), **Linux x64** (Vulkan, falling back to CPU) and **macOS**
 with Metal switched off).
 
 The macOS builds come with the release's own limits, and neither can be worked
-around from here. The Intel one needs macOS 13.3 or newer and is compiled for
-the CPU of llama.cpp's CI runner, so an older Mac stops with an illegal
-instruction. The Apple Silicon one is built without a deployment target, so it
-carries the macOS version of the machine it was built on and an older system
-may refuse to load it. In both cases the fetcher says so instead of leaving a
-binary that will not start: build llama.cpp yourself and name the result in
-`"llama_server_path"`.
+around from here. Both carry a minimum macOS version stamped into the binary at
+build time, read out of the current pin and checked **before** anything is
+downloaded: **13.3** for the Intel build (llama.cpp sets that deployment target
+explicitly) and **26.0** for the Apple Silicon one (llama.cpp sets none, so the
+build inherits the macOS of the runner it was compiled on). A Mac below its
+build's minimum is told so and left alone - the installer records it as a manual
+step and moves on, rather than failing.
+
+The Intel build has a second limit that no header states and nothing can check
+in advance: it is compiled for the CPU of llama.cpp's CI runner, so an older
+Intel Mac stops with an illegal instruction the first time the binary runs.
+
+In either case the way out is the same: build llama.cpp on the machine and name
+the result in `"llama_server_path"`, or switch `"llm_backend"` to `lm-studio`.
 
 The Linux fallback is worth a word. llama.cpp ships no CUDA binary for Linux,
 so the GPU build there is the Vulkan one, and whether it can see the GPU cannot
