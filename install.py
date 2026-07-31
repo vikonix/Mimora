@@ -305,19 +305,42 @@ class Confirmer:
             return self._prompt_installed()
         return self._prompt_fresh()
 
+    # Frames every question. Narrower than the 70-column step banner and drawn
+    # with a different character, so the two never read as the same kind of
+    # line: banners announce, rules ask.
+    _RULE = "    " + "-" * 62
+
     def _ask(self, prompt: str) -> str:
         """Read one answer, making sure the question is actually visible.
 
+        Two different things bury a question, and both end with the installer
+        looking hung while it waits for Enter.
+
         A preceding download shows a tqdm progress bar that writes to stderr and
         keeps the cursor on its own line (carriage-return based). A plain
-        ``input()`` prompt then lands on that same line and looks invisible -- the
-        installer seems to hang while it is really waiting for input. Flushing both
-        streams and leading with a newline forces the question onto its own line.
+        ``input()`` prompt then lands on that same line and looks invisible.
+        Flushing both streams and leading with a blank line fixes that one.
+
+        The other is plainer and was what actually caught a user out: after a
+        long download the question arrives below a step banner and a few lines
+        of progress notes, in the same shape as every other line of output, at
+        the moment the screen stops moving and the reader stops reading. So the
+        question is printed as a framed block instead of appended to the flow.
+        The rules are the only lines of their kind in the whole run, which is
+        what makes the block findable when scrolling back, and the answer is
+        typed on its own line below them.
         """
         sys.stdout.flush()
         sys.stderr.flush()
+        # Straight to stdout rather than through Logger: the frame is a console
+        # affordance, and repeating it in logs/install.log would just box in the
+        # ">>>" line that already records what was asked.
+        print()
+        print(self._RULE)
+        print(prompt)
+        print(self._RULE, flush=True)
         try:
-            return input("\n" + prompt).strip().lower()
+            return input("    > ").strip().lower()
         except EOFError:
             # stdin is closed or redirected (CI, piped input) and the questions
             # can never be answered: abort cleanly instead of crashing with a
@@ -332,8 +355,16 @@ class Confirmer:
             self._log.log("    [--yes] proceeding")
             return True
         while True:
-            answer = self._ask("    Proceed? [Y]es / [n]o-abort / [s]kip: ")
+            # The Enter hint is spelled out: a capitalised [Y] is the shell
+            # convention for "this is the default", but it is not obvious to
+            # everyone, and a question nobody knows how to answer reads exactly
+            # like a hang.
+            answer = self._ask("    Proceed?  [Y]es / [n]o-abort / [s]kip"
+                               "   (Enter = Yes)")
             if answer in ("", "y", "yes"):
+                # Logged like the other two answers, so logs/install.log shows
+                # where a run was waiting and what it was told.
+                self._log.log("    proceeding")
                 return True
             if answer in ("s", "skip"):
                 self._log.log("    skipped by user")
@@ -352,12 +383,13 @@ class Confirmer:
             self._log.log("    [--yes] already installed -> skipping")
             return False
         while True:
-            answer = self._ask("    Already installed. [S]kip / [r]einstall / "
-                               "[n]o-abort: ")
+            answer = self._ask("    Already installed.  [S]kip / [r]einstall / "
+                               "[n]o-abort   (Enter = Skip)")
             if answer in ("", "s", "skip"):
                 self._log.log("    kept existing (skipped)")
                 return False
             if answer in ("r", "reinstall"):
+                self._log.log("    reinstalling")
                 return True
             if answer in ("n", "no"):
                 self._log.log("    aborted by user")
@@ -383,8 +415,11 @@ class Confirmer:
         # No default: an empty answer re-prompts. The choice is consequential
         # (the install may fail), so require an explicit continue or abort.
         while True:
-            answer = self._ask("    Continue anyway? [c]ontinue / [a]bort: ")
+            # No Enter hint here, deliberately: there is no default, and
+            # promising one would be a lie the loop below would not honor.
+            answer = self._ask("    Continue anyway?  [c]ontinue / [a]bort")
             if answer in ("c", "continue"):
+                self._log.log("    continuing despite warning")
                 return True
             if answer in ("a", "abort"):
                 self._log.log("    aborted by user")
