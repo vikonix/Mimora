@@ -303,9 +303,18 @@ falls back to the CPU **silently** and just runs about three times slower.
 (`"llama_server_path"`) instead.
 
 Builds are pinned for **Windows x64** (CUDA, falling back to CPU when the
-driver is too old) and **Linux x64** (Vulkan, falling back to CPU). macOS has
-no pinned build yet: fetch one from the release page the command prints and
-name it in `"llama_server_path"`.
+driver is too old), **Linux x64** (Vulkan, falling back to CPU) and **macOS**
+(Metal on Apple Silicon, CPU-only on Intel - llama.cpp builds its Intel asset
+with Metal switched off).
+
+The macOS builds come with the release's own limits, and neither can be worked
+around from here. The Intel one needs macOS 13.3 or newer and is compiled for
+the CPU of llama.cpp's CI runner, so an older Mac stops with an illegal
+instruction. The Apple Silicon one is built without a deployment target, so it
+carries the macOS version of the machine it was built on and an older system
+may refuse to load it. In both cases the fetcher says so instead of leaving a
+binary that will not start: build llama.cpp yourself and name the result in
+`"llama_server_path"`.
 
 The Linux fallback is worth a word. llama.cpp ships no CUDA binary for Linux,
 so the GPU build there is the Vulkan one, and whether it can see the GPU cannot

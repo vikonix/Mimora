@@ -118,7 +118,7 @@ class Variant(NamedTuple):
     device_pattern: regex that must match `llama-server --list-devices` output
         after the install, or None when the build has no GPU backend to check.
     backend: the compute backend this build was compiled with ("CUDA",
-        "Vulkan", "CPU"), stated rather than inferred. Every message that has
+        "Vulkan", "Metal", "CPU"), stated rather than inferred. Every message that has
         to name it used to derive it some other way - from the platform, from
         the variant's name prefix - and each of those derivations was a guess
         that a new row in this table could silently invalidate. "CPU" holds
@@ -137,8 +137,7 @@ class Variant(NamedTuple):
     fallback: Optional[str] = None
 
 
-# Known builds: Windows x64 and Linux x64. The macOS entries are one line each
-# and get added when there is a machine to verify them on.
+# Known builds: Windows x64, Linux x64 and macOS (Apple Silicon + Intel).
 #
 # Bumping RELEASE_TAG means re-snapping every size_mb below with
 # `python tools/measure_model_sizes.py`, in the same commit as the checksums. A
@@ -211,6 +210,58 @@ VARIANTS: dict[str, Variant] = {
         device_pattern=None,
         backend="CPU",
     ),
+    # macOS, one build per architecture and no choice to make within either.
+    # Both assets are .tar.gz, which is what preserves the executable bit (see
+    # _extract), and both are a single archive: there is no separate runtime to
+    # merge in the way the Windows CUDA build needs cudart.
+    #
+    # UNVERIFIED - no Apple Silicon machine has run this yet, and two facts
+    # about it were read off the release sources rather than off a real run:
+    # * The device name. ggml-metal.cpp defines GGML_METAL_NAME "MTL" and
+    #   ggml-metal-device.m formats each device as "MTL%d", so --list-devices
+    #   is expected to print "MTL0: Apple M...". If a real Mac prints something
+    #   else, device_pattern is what has to change.
+    # * The minimum macOS version. The release workflow builds this asset on a
+    #   current macOS runner and passes no CMAKE_OSX_DEPLOYMENT_TARGET, so
+    #   clang stamps the runner's own version as the minimum - an older macOS
+    #   may refuse to start the binary at all. That failure lands in _probe,
+    #   whose macOS hint names it.
+    "macos-metal-arm64": Variant(
+        assets=(
+            Asset("llama-{tag}-bin-macos-arm64.tar.gz",
+                  "b63bb144fc1855b028984e6680b16532b7fbc2e8eb4002ce0314f61c15549263",
+                  size_mb=11),  # measured 2026-07-31
+        ),
+        min_driver_cuda=None,
+        device_pattern=r"\bMTL\d+\b",
+        backend="Metal",
+        # No fallback on purpose: there is no CPU-only arm64 asset to descend
+        # to, and a Mac with a GPU quietly running on its CPU is precisely the
+        # outcome the device check exists to refuse.
+    ),
+    # Intel Macs are CPU-only by construction, not by our choice: llama.cpp
+    # builds this asset with -DGGML_METAL=OFF because its Intel CI runners have
+    # no GPU to test against. So there is no GPU variant to prefer over this one
+    # and nothing for a device check to look for.
+    #
+    # Two limits of the build are the release's and worth knowing before the
+    # download, because both surface as a binary that will not run rather than
+    # as a bad download:
+    # * It is compiled with -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3, so a Mac that
+    #   cannot be updated to Ventura 13.3 cannot run it.
+    # * ggml's GGML_NATIVE defaults to ON and the workflow does not turn it
+    #   off, so the asset carries -march=native for the CI runner's CPU. An
+    #   older Intel CPU dies on the first instruction it lacks.
+    "macos-cpu-x64": Variant(
+        assets=(
+            Asset("llama-{tag}-bin-macos-x64.tar.gz",
+                  "211cb8c436eb4dba356345da505309a6c3e472de20284444b93517cfb14f3279",
+                  size_mb=11),  # measured 2026-07-31
+        ),
+        min_driver_cuda=None,
+        device_pattern=None,
+        backend="CPU",
+    ),
 }
 
 # Auto-selection order for Windows x64: the first variant whose requirements
@@ -222,6 +273,11 @@ WINDOWS_X64_PREFERENCE = ("win-cuda-12.4-x64", "win-cpu-x64")
 # entry anyway. The choice is a single name and the descent to CPU happens
 # after the device check, through Variant.fallback.
 LINUX_X64_DEFAULT = "linux-vulkan-x64"
+
+# macOS needs no preference list either, for a different reason: each Mac
+# architecture has exactly one pinned build, so the architecture IS the choice.
+MACOS_ARM64_DEFAULT = "macos-metal-arm64"
+MACOS_X64_DEFAULT = "macos-cpu-x64"
 
 
 def variant_size_mb(variant_name: str) -> int:
@@ -330,14 +386,54 @@ def detect_driver_cuda() -> Optional[tuple[int, int]]:
     return version
 
 
+def is_rosetta() -> bool:
+    """True when this x86_64 process is being translated on Apple Silicon.
+
+    platform.machine() answers for the interpreter, not for the machine: an
+    x86_64 Python under Rosetta 2 reports x86_64 on an M-series Mac, and
+    picking the x64 build from that would install a CPU-only binary on a machine
+    with a usable GPU - the silent slow path this module exists to prevent.
+    Nothing forces the two to agree, because llama-server is a separate process:
+    the arm64 build runs natively there whatever this interpreter was built for.
+
+    sysctl.proc_translated does not exist on Intel Macs, where sysctl exits
+    non-zero; anything other than a clean "1" therefore means "not translated".
+    """
+    if sys.platform != "darwin":
+        return False
+    try:
+        result = subprocess.run(["sysctl", "-n", "sysctl.proc_translated"],
+                                capture_output=True, text=True, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        log.info("Could not read sysctl.proc_translated (%s) - assuming this "
+                 "process is not translated.", exc)
+        return False
+    return result.stdout.strip() == "1"
+
+
 def select_variant() -> str:
     """Pick the best variant for this machine.
 
-    Raises UnsupportedPlatformError when no build is pinned for the platform,
-    which is the honest answer until the macOS entries are verified.
+    Raises UnsupportedPlatformError when no build is pinned for the platform.
     """
     machine = platform.machine().lower()
     is_x64 = machine in ("amd64", "x86_64")
+
+    if sys.platform == "darwin":
+        # Architecture decides and there is nothing else to weigh (see
+        # MACOS_ARM64_DEFAULT), but platform.machine() alone cannot name it -
+        # Rosetta 2 makes an Apple Silicon Mac report x86_64.
+        if machine == "arm64":
+            return MACOS_ARM64_DEFAULT
+        if is_x64:
+            if is_rosetta():
+                log.info("This Python runs under Rosetta 2, so the machine is "
+                         "Apple Silicon - installing %s rather than the Intel "
+                         "build.", MACOS_ARM64_DEFAULT)
+                return MACOS_ARM64_DEFAULT
+            return MACOS_X64_DEFAULT
+        # Anything else on macOS (a 32-bit or PowerPC interpreter) falls
+        # through to the error below: no such asset is published.
 
     if sys.platform.startswith("linux") and is_x64:
         # Nothing to weigh here (see LINUX_X64_DEFAULT), and nothing cheap to
@@ -350,9 +446,10 @@ def select_variant() -> str:
     if sys.platform != "win32" or not is_x64:
         raise UnsupportedPlatformError(
             f"No pinned llama.cpp build for {sys.platform}/{platform.machine()} "
-            f"yet (Windows x64 and Linux x64 only so far). Download a build "
-            f"from {RELEASE_PAGE_URL.format(tag=RELEASE_TAG)} and point "
-            f"llama_server_path at it, or add the variant to VARIANTS.")
+            f"yet (Windows x64, Linux x64 and macOS arm64/x64 only so far). "
+            f"Download a build from {RELEASE_PAGE_URL.format(tag=RELEASE_TAG)} "
+            f"and point llama_server_path at it, or add the variant to "
+            f"VARIANTS.")
 
     driver_cuda = detect_driver_cuda()
     for name in WINDOWS_X64_PREFERENCE:
@@ -514,7 +611,7 @@ def _extract(archive: Path, into: Path) -> None:
     """Unpack one asset archive into a directory.
 
     Two formats, because the release ships two: the Windows assets are .zip and
-    the Linux ones are .tar.gz.
+    the Linux and macOS ones are .tar.gz.
 
     The executable bit is why the branches are not interchangeable.
     zipfile.extractall does NOT apply a member's unix permissions (they live in
@@ -567,10 +664,10 @@ def _payload_root(extracted: Path) -> Path:
 
     llama.cpp archives keep the server binary and every library it needs side
     by side, but where that directory sits varies: flat at the root in some
-    Windows releases, one folder down in others, and under build/bin/ in the
-    Linux tarballs. Anchoring on the binary makes the unpacking survive all
-    three; the cudart archive has no binary and falls through to the
-    single-directory / flat-root cases.
+    Windows releases, one folder down in others, under build/bin/ in the Linux
+    tarballs and under llama-<tag>/ in the macOS ones. Anchoring on the binary
+    makes the unpacking survive all four; the cudart archive has no binary and
+    falls through to the single-directory / flat-root cases.
     """
     binaries = sorted(extracted.rglob(EXE_NAME))
     if binaries:
@@ -596,19 +693,48 @@ def _probe(exe: Path, args: list[str]) -> str:
             [str(exe), *args], capture_output=True, text=True,
             timeout=_PROBE_TIMEOUT_SEC, **_no_window())
     except (OSError, subprocess.TimeoutExpired) as exc:
-        # A binary that unpacked fine but will not start almost always misses a
-        # system library, and which one differs per platform, so the hint has
-        # to as well.
-        if sys.platform == "win32":
-            hint = ("On Windows this usually means a missing Visual C++ "
-                    "runtime (https://aka.ms/vs/17/release/vc_redist.x64.exe).")
-        else:
-            hint = ("On Linux this usually means a system library the release "
-                    "links against is missing: libcurl.so.4 (package "
-                    "libcurl4t64) or libgomp.so.1 (package libgomp1).")
         raise LlamaServerFetchError(
-            f"Could not run {exe.name} {' '.join(args)}: {exc}. {hint}") from exc
+            f"Could not run {exe.name} {' '.join(args)}: {exc}. "
+            f"{_start_failure_hint()}") from exc
+
+    # A negative return code on POSIX means the process was killed by a signal,
+    # which is not the same failure as "would not start" and does not raise
+    # above: subprocess.run reports it as an ordinary result with empty output.
+    # Without this branch it would surface from verify_build as "printed no
+    # recognisable version" over an empty string, which says nothing. The case
+    # that makes it worth naming is SIGILL (-4) from an Intel Mac older than the
+    # CPU the release was compiled for - see the macos-cpu-x64 comment.
+    if sys.platform != "win32" and result.returncode < 0:
+        raise LlamaServerFetchError(
+            f"{exe.name} {' '.join(args)} was killed by signal "
+            f"{-result.returncode} before it could answer. "
+            f"{_start_failure_hint()}")
     return (result.stdout or "") + (result.stderr or "")
+
+
+def _start_failure_hint() -> str:
+    """Why an unpacked binary might refuse to run, per platform.
+
+    A binary that unpacked fine but will not start almost always misses
+    something the release assumes about the machine, and what that is differs
+    per platform, so the hint has to as well.
+    """
+    if sys.platform == "win32":
+        return ("On Windows this usually means a missing Visual C++ runtime "
+                "(https://aka.ms/vs/17/release/vc_redist.x64.exe).")
+    if sys.platform == "darwin":
+        return ("On macOS this usually means the release does not fit this "
+                "Mac. The Intel build needs macOS 13.3 or newer and is "
+                "compiled for the CPU of llama.cpp's own CI runner, so an "
+                "older Mac stops with an illegal instruction; the Apple "
+                "Silicon build carries the minimum macOS version of the runner "
+                "it was built on, so an older system refuses to load it at all "
+                "(dyld reports a binary 'built for macOS ... newer than "
+                "running OS'). Neither is fixable from here: build llama.cpp "
+                "on this machine and point llama_server_path at the result.")
+    return ("On Linux this usually means a system library the release links "
+            "against is missing: libcurl.so.4 (package libcurl4t64) or "
+            "libgomp.so.1 (package libgomp1).")
 
 
 def verify_build(exe: Path, tag: str) -> int:
@@ -689,6 +815,15 @@ def verify_devices(exe: Path, variant_name: str) -> None:
         elif variant.backend == "CUDA":
             remedy = (f"Check that the cudart DLLs sit next to {exe.name} and "
                       f"that their major version matches the build.")
+        elif variant.backend == "Metal":
+            # Metal ships with macOS, so unlike Vulkan there is nothing to
+            # install: an empty device list means the binary is not seeing the
+            # GPU it was built for.
+            remedy = ("Metal is part of macOS, so there is nothing to install. "
+                      "An empty list here means the process is not reaching "
+                      "this Mac's GPU - check that it is not running under "
+                      "Rosetta 2, and that the machine really is Apple "
+                      "Silicon.")
         else:
             remedy = (f"Check that the {variant.backend} runtime this build "
                       f"needs is installed and reachable from {exe.name}.")

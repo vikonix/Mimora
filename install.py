@@ -1139,8 +1139,9 @@ def step_llama_server(
     is what catches llama.cpp's silent fallback to CPU when the cudart DLLs are
     missing or of the wrong major version.
 
-    A platform with no pinned build (currently everything except Windows x64
-    and Linux x64) is recorded as a manual action rather than a hard failure:
+    A platform with no pinned build (currently everything except Windows x64,
+    Linux x64 and macOS) is recorded as a manual action rather than a hard
+    failure:
     the rest of the install is perfectly usable, and such a machine can point
     "llama_server_path" at its own binary or switch to the lm-studio backend.
     """
