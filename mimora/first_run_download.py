@@ -343,7 +343,16 @@ def _hub_online():
     the constant as False, so "restoring" it left the whole process online for
     good: seventy HTTP round-trips during model loading and tts.py taking its
     online branch.
+
+    prepare_hf_env() runs before that import for the mirror-image reason: it
+    arms the Windows copy fallback (HF_HUB_DISABLE_SYMLINKS, HF_HUB_DISABLE_XET),
+    and constants.py freezes those at import time too, so reaching
+    huggingface_hub first would leave the fallback off for the rest of the
+    process and let a download die with WinError 1314. It touches neither
+    offline variable, so the ordering above is unaffected.
     """
+    # Idempotent, and it imports no third-party module of its own.
+    model_fetch.prepare_hf_env()
     hub_constants = _hub_constants()   # first, with the environment intact
     previous = None if hub_constants is None else hub_constants.HF_HUB_OFFLINE
     saved = {name: os.environ.pop(name, None) for name in _OFFLINE_VARS}

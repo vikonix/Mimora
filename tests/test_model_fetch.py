@@ -91,6 +91,55 @@ class PrepareHfEnvTests(unittest.TestCase):
             self.assertEqual(os.environ["SUPERTONIC_CACHE_DIR"], "/shared/st")
 
 
+class SymlinkFallbackTests(unittest.TestCase):
+    """Windows without symlink rights must get the deterministic copy path."""
+
+    def setUp(self):
+        # The probe result is cached for the life of the process; each test
+        # needs its own answer, so reset it and put back what was there.
+        previous = model_fetch._symlink_supported
+        self.addCleanup(setattr, model_fetch, "_symlink_supported", previous)
+        model_fetch._symlink_supported = None
+        # patch.dict restores additions and removals alike on exit.
+        patcher = patch.dict(os.environ, {}, clear=False)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        for name in ("HF_HUB_DISABLE_SYMLINKS", "HF_HUB_DISABLE_XET"):
+            os.environ.pop(name, None)
+
+    def _configure(self, *, platform: str, symlinks: bool) -> None:
+        with patch.object(model_fetch.sys, "platform", platform), \
+                patch.object(model_fetch, "_probe_symlink_support",
+                             return_value=symlinks):
+            model_fetch._configure_symlink_fallback()
+
+    def test_no_symlink_rights_disables_symlinks_outright(self):
+        # The warning variable alone is not enough. huggingface_hub's own copy
+        # fallback is gated on are_symlinks_supported(), which writes True into
+        # its per-directory cache before running the probe that may correct it
+        # to False - so a parallel download worker reading that cache mid-probe
+        # takes the os.symlink branch and dies with WinError 1314.
+        # HF_HUB_DISABLE_SYMLINKS is checked ahead of the cache, which makes it
+        # the only race-free way to force copying.
+        self._configure(platform="win32", symlinks=False)
+        self.assertEqual(os.environ["HF_HUB_DISABLE_SYMLINKS"], "1")
+        self.assertEqual(os.environ["HF_HUB_DISABLE_XET"], "1")
+
+    def test_symlink_rights_keep_the_cheaper_linked_cache(self):
+        # Developer Mode is on: linking stores each blob once, while copying
+        # would double the disk use for no gain.
+        self._configure(platform="win32", symlinks=True)
+        self.assertNotIn("HF_HUB_DISABLE_SYMLINKS", os.environ)
+        # xet is disabled regardless: older builds link into the cache
+        # themselves, with no copy fallback the probe could gate.
+        self.assertEqual(os.environ["HF_HUB_DISABLE_XET"], "1")
+
+    def test_other_platforms_are_left_alone(self):
+        self._configure(platform="linux", symlinks=False)
+        self.assertNotIn("HF_HUB_DISABLE_SYMLINKS", os.environ)
+        self.assertNotIn("HF_HUB_DISABLE_XET", os.environ)
+
+
 class SupertonicCachedTests(unittest.TestCase):
     """A present, non-empty directory means a complete download."""
 

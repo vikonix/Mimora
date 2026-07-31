@@ -353,6 +353,38 @@ class DownloadLoopTests(unittest.TestCase):
 
         self.assertEqual(order[0], "read")
 
+    def test_the_copy_fallback_is_armed_before_the_library_is_read(self):
+        """The other half of the same ordering, and just as silent when broken.
+
+        prepare_hf_env() sets HF_HUB_DISABLE_SYMLINKS and HF_HUB_DISABLE_XET,
+        and huggingface_hub freezes those into constants at import time exactly
+        as it freezes HF_HUB_OFFLINE. Every other caller gets the ordering for
+        free because the ensure_* functions call prepare_hf_env themselves - but
+        they run inside this context manager, by which point the library has
+        already been imported, so _hub_online has to call it first and on its
+        own. Reaching the library first left the Windows copy fallback off for
+        the rest of the process, and a download then died with WinError 1314 on
+        whichever small file lost the race inside are_symlinks_supported (see
+        model_fetch._configure_symlink_fallback).
+        """
+        from huggingface_hub import constants as hub_constants
+
+        order = []
+
+        def prepare():
+            order.append("prepare")
+
+        def read():
+            order.append("read")
+            return hub_constants
+
+        with mock.patch.object(model_fetch, "prepare_hf_env", prepare), \
+                mock.patch.object(first_run_download, "_hub_constants", read):
+            with first_run_download._hub_online():
+                pass
+
+        self.assertEqual(order, ["prepare", "read"])
+
     def test_offline_mode_is_restored_after_a_failure_too(self):
         from huggingface_hub import constants as hub_constants
 

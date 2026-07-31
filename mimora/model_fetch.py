@@ -38,8 +38,10 @@ Design notes
   with no imports of its own, so it costs this module nothing. Paths stay here,
   next to the code that writes into them.
 * prepare_hf_env() must run before huggingface_hub is first imported anywhere
-  in the process - HF_HOME and HF_HUB_DISABLE_XET are read at import time. Each
-  ensure_* function calls it, so callers do not have to remember the ordering.
+  in the process - HF_HOME, HF_HUB_DISABLE_XET and HF_HUB_DISABLE_SYMLINKS are
+  read at import time. Each ensure_* function calls it, so callers do not have
+  to remember the ordering; first_run_download._hub_online() calls it directly,
+  because it reaches huggingface_hub before any of them.
 """
 
 from __future__ import annotations
@@ -133,8 +135,9 @@ def prepare_hf_env() -> None:
     Shared by every download here and by gguf_fetch, because each of them can
     also run standalone from its own CLI and so cannot rely on another step
     having done this first. Must run before huggingface_hub is imported:
-    HF_HOME and HF_HUB_DISABLE_XET are read at import time. Idempotent, and
-    setdefault throughout, so an externally configured cache stays untouched.
+    HF_HOME, HF_HUB_DISABLE_XET and HF_HUB_DISABLE_SYMLINKS are read at import
+    time. Idempotent, and setdefault for the cache paths, so an externally
+    configured cache stays untouched.
     """
     MODEL_CACHE_DIR.mkdir(exist_ok=True)
     os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
@@ -166,31 +169,47 @@ def _probe_symlink_support() -> bool:
 
 
 def _configure_symlink_fallback() -> None:
-    """On Windows, keep HF off the hf-xet path that crashes without symlinks.
+    """On Windows, make huggingface_hub copy into the cache instead of linking.
 
-    huggingface_hub's cache points snapshots/ at blobs/ via symlinks. Creating a
-    symlink on Windows needs Developer Mode or admin rights.
+    The hub cache stores each file once as blobs/<sha> and points
+    snapshots/<revision>/<name> at it with a symlink. Creating a symlink on
+    Windows needs Developer Mode or admin rights; without either, os.symlink
+    raises OSError [WinError 1314].
 
-    The native hf-xet downloader links files into the cache itself and fails hard
-    with WinError 1314 when that privilege is missing - and, unlike the pure-
-    Python HTTP path, it does NOT fall back to copying. Crucially it can hit this
-    even when a plain symlink probe passes (the privilege can be present at probe
-    time yet unavailable to xet's linker), so a probe is not a reliable gate.
+    huggingface_hub has a fallback for that (move or copy the blob into the
+    snapshot instead), but it is gated on are_symlinks_supported(), which is NOT
+    thread safe: it writes True into its per-directory cache BEFORE running the
+    probe that may overwrite it with False. snapshot_download uses eight worker
+    threads and its file lock is per-etag, so a second file that reaches the
+    linking step inside that window reads the optimistic True, calls os.symlink
+    and gets 1314 - which _create_symlink does not catch (it handles
+    FileExistsError and PermissionError, and 1314 maps to EINVAL, so it arrives
+    as a bare OSError). The failure therefore lands on whichever small file
+    happened to race, while the large weights download fine.
 
-    We therefore disable hf-xet on every Windows run. Downloads then take the
-    HTTP path, which checks symlink support itself and copies into the cache when
-    symlinks are unavailable (uses more disk, but always works).
+    HF_HUB_DISABLE_SYMLINKS is the deterministic way out: are_symlinks_supported
+    returns False on it BEFORE consulting the racy cache, so every file takes
+    the copy path. It is set only when our own probe says symlinks are
+    unavailable, so a machine with Developer Mode keeps the cheaper symlinked
+    cache.
 
-    The env vars are re-applied on every call (they are cheap, and a caller that
-    restored os.environ must not silently lose them), while the probe and its
-    log line happen exactly once per process.
+    HF_HUB_DISABLE_XET stays on for every Windows run because older hf-xet
+    downloaders linked files into the cache themselves and raised 1314 with no
+    copy fallback at all.
+
+    All three variables are frozen by huggingface_hub's constants.py at import
+    time, so this must run before huggingface_hub is first imported anywhere in
+    the process. The env vars are re-applied on every call (they are cheap, and
+    a caller that restored os.environ must not silently lose them), while the
+    probe and its log line happen exactly once per process.
     """
     global _symlink_supported
     if sys.platform != "win32":
         return
 
-    # Unconditional: xet is the only path that raises 1314 without a copy
-    # fallback, and it can do so regardless of the symlink probe below.
+    # Unconditional, unlike HF_HUB_DISABLE_SYMLINKS below: older hf-xet builds
+    # link into the cache with no copy fallback at all, so the probe cannot be
+    # trusted to gate them.
     os.environ["HF_HUB_DISABLE_XET"] = "1"
 
     first_call = _symlink_supported is None
@@ -203,6 +222,10 @@ def _configure_symlink_fallback() -> None:
                      "safety).")
         return
 
+    # The first one changes behaviour (copy instead of link, race-free); the
+    # second only silences the library's own notice, which our log line below
+    # replaces.
+    os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
     if first_call:
         log.info("Symlinks unavailable (no Developer Mode / admin): HF "
