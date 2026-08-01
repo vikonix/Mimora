@@ -80,6 +80,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_FILE = LOG_DIR / "install.log"
 REQUIREMENTS = PROJECT_ROOT / "requirements.txt"
+# The app's own settings file. The installer reads and writes exactly one key
+# in it, in exactly one situation - see _disable_llm_backend().
+SETTINGS_FILE = PROJECT_ROOT / "config" / "settings.json"
 DETECT_HW_SCRIPT = PROJECT_ROOT / "tools" / "detect_hardware.py"
 LAUNCHER_BAT = PROJECT_ROOT / "run_mimora.bat"
 LAUNCHER_SH = PROJECT_ROOT / "run_mimora.sh"
@@ -484,13 +487,17 @@ def run_or_fail(cmd: list[str], log: Logger, report: StepReport,
 
 def _import_fetcher(module_name: str, log: Logger, report: StepReport,
                     step_name: str):
-    """Import one of the mimora/* download helpers, failing the step cleanly.
+    """Import one of the mimora/* helper modules, failing the step cleanly.
 
     The fetchers live in the package rather than in this script (see the design
     notes at the top), so every download step starts by importing one. Only
     mimora.llama_server_fetch is stdlib-only; the other two need
     huggingface_hub, so a failure here almost always means the requirements
     step was skipped or aborted.
+
+    Also used for mimora.loader, which downloads nothing but is imported the
+    same way for the same reason: the sys.path handling below is what makes
+    `python /somewhere/else/install.py` work, and it should exist once.
     """
     # install.py is normally run from the project root, which already puts it
     # on sys.path; this also covers `python /somewhere/else/install.py`.
@@ -1129,9 +1136,61 @@ def step_prefetch_supertonic(
     report.add("Supertonic model", DONE)
 
 
-def step_llama_server(
+def _disable_llm_backend(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
+    """Set "llm_backend" to "off" after step 8 found no build for this machine.
+
+    The default backend is "llama-server", so a machine the pinned release has
+    nothing for otherwise installs cleanly, starts, fails to launch a server it
+    has no binary for, and shows main.py's "no llama-server binary was found"
+    on every single run. "off" is a supported configuration rather than a
+    degraded one: practice phrases then come from the source text verbatim
+    (mimora/phrase_source.py). It is also the same value the first-run window
+    writes when the optional download is declined, so this adds no state the
+    app did not already know how to reach - only a way to reach it on a machine
+    where that download is never offered.
+
+    Two things it deliberately does not do. It never overrides a backend the
+    user already chose: only the "llama-server" default (or an absent value) is
+    rewritten, so an lm-studio setup on a platform without a build keeps
+    working, because it needs no local binary in the first place. And it asks
+    first, like every other side effect in this script, which is also what
+    makes it a no-op under --dry-run.
+    """
+    loader = _import_fetcher("mimora.loader", log, report, "LLM backend setting")
+    current = loader.read_json(SETTINGS_FILE).get("llm_backend")
+    if current not in (None, "llama-server"):
+        log.log(f"    settings.json already selects the {current!r} backend, "
+                f"which needs no binary from this step; leaving it alone.")
+        return
+
+    if not confirmer.confirm(
+            'Set "llm_backend" to "off" in config/settings.json, so the app '
+            'starts without an LLM instead of failing to launch one on every '
+            'run. Practice phrases then come from the source text verbatim, '
+            'and the setting is reversible in the settings window.'):
+        report.add("LLM backend setting", SKIPPED)
+        return
+
+    if loader.save_setting(SETTINGS_FILE, "llm_backend", "off", {}):
+        # The in-memory view save_setting also updates is a throwaway dict here:
+        # nothing in this process reads the settings afterwards, and the app is
+        # a separate run. Passing config's own _USER would mean importing
+        # config, which sets HF env vars and loads the language modules.
+        log.log('    settings.json: llm_backend = "off"')
+        report.add("LLM backend setting", DONE, "off")
+    else:
+        # save_setting prints the reason (unparsable or unwritable file) and
+        # never raises. A settings file the installer cannot write is not worth
+        # failing an otherwise complete install for, so this becomes one more
+        # line in the manual-actions list.
+        report.add("LLM backend setting", MANUAL, 'set llm_backend to "off"')
+
+
+def step_llama_server(
+    log: Logger, confirmer: Confirmer, report: StepReport
+) -> bool:
     """Install the pinned llama-server binary into bin/llama/.
 
     First half of the LLM stack (the GGUF model below is the second). The
@@ -1146,6 +1205,12 @@ def step_llama_server(
     select_variant() before anything is downloaded: an OS/architecture with no
     pinned build at all (everything except Windows x64, Linux x64 and macOS),
     and a Mac older than the minimum macOS its build was compiled for.
+
+    Returns False in exactly that case, so the caller can skip step 9: the GGUF
+    model is a 2.7 GB download for a server that will not exist. Every other
+    outcome returns True, including the user skipping the download - declining
+    a binary is a decision about this run, not a fact about the platform, and
+    the model may well be wanted for a build they install themselves.
     """
     log.banner("Step 8 - LLM stack: llama-server binary")
     fetch = _import_fetcher("mimora.llama_server_fetch", log, report,
@@ -1162,10 +1227,12 @@ def step_llama_server(
     try:
         variant = fetch.select_variant()
     except fetch.UnsupportedPlatformError as exc:
-        # No pinned build for this OS/arch yet: say so and move on.
+        # No pinned build for this OS/arch yet: say so, leave the app in a
+        # configuration that starts, and move on.
         log.log(f"    {exc}")
         report.add("llama-server binary", MANUAL, "no pinned build, see log")
-        return
+        _disable_llm_backend(log, confirmer, report)
+        return False
 
     desc = (f"Download the pinned llama.cpp release {fetch.RELEASE_TAG} "
             f"({variant}, {fetch.variant_size_mb(variant)} MB) into "
@@ -1185,7 +1252,7 @@ def step_llama_server(
     if not confirmer.confirm(desc, installed=installed):
         report.add("llama-server binary", SKIPPED,
                    "already installed" if installed else "")
-        return
+        return True
 
     try:
         # Passing the resolved variant keeps the install identical to what the
@@ -1197,6 +1264,7 @@ def step_llama_server(
         raise InstallError("llama-server binary")
     report.add("llama-server binary", DONE, fetch.RELEASE_TAG)
     log.log(f"    Installed: {exe}")
+    return True
 
 
 def step_download_gguf(
@@ -1462,13 +1530,19 @@ def main() -> int:
         # and off backends need neither. The binary comes first because step 10
         # probes it, and both come after pip because a 2.7 GB download is a bad
         # place to discover that the dependency install fails.
+        #
+        # Step 8 also decides whether step 9 runs at all. The two used to be
+        # independent, which on a platform with no pinned build offered a 2.7 GB
+        # model right after saying that nothing here can load it.
         if args.skip_llm:
             report.add("llama-server binary", SKIPPED, "--skip-llm")
             report.add("GGUF model", SKIPPED, "--skip-llm")
         else:
-            step_llama_server(log, confirmer, report)
+            platform_has_build = step_llama_server(log, confirmer, report)
             if args.skip_gguf:
                 report.add("GGUF model", SKIPPED, "--skip-gguf")
+            elif not platform_has_build:
+                report.add("GGUF model", SKIPPED, "no llama-server build")
             else:
                 step_download_gguf(log, confirmer, report)
 

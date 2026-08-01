@@ -52,6 +52,21 @@ transformers>=4.44,<5; platform_system == 'Darwin' and platform_machine == 'x86_
 # (same reasoning as the three pins above).
 huggingface_hub>=1.24; platform_system != 'Darwin' or platform_machine != 'x86_64'
 
+# Nothing in Mimora imports click, and no dependency of ours declares it
+# either: it used to arrive only because huggingface_hub 1.x requires it
+# (Requires-Dist: click<9.0.0,>=8.4.2). That made it invisible until Intel
+# macOS, where the pin above does not apply and transformers 4.x caps the hub
+# below 1.0 - and hub 0.x has no such requirement, so click was simply absent
+# and the first run died with "No module named 'click'" from inside the
+# kokoro -> misaki -> spacy chain (spacy's CLI layer is imported by
+# `import spacy` itself, so this is not avoidable by not using a CLI).
+# Listed unconditionally rather than behind an Intel-macOS marker: the real
+# fault is depending on another package's dependency, which the same silence
+# would repeat on every platform the day the hub drops it. Pure Python, no
+# dependencies of its own, so it costs nothing to state. The floor is the
+# version the hub itself asks for.
+click>=8.4.2
+
 # Themed ttk widgets (mimora/ui.py imports it as a drop-in "ttk"); the base
 # theme is picked from the Mimora color theme, colors still come from
 # config/themes/. Capped below 2.0: ui.py disables the classic-widget
