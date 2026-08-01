@@ -1265,6 +1265,15 @@ def analyze(user_audio: np.ndarray,
         "n_spoken": len(spoken),
         "reference_phonemes": reference,
         "spoken_phonemes": spoken,
+        # Exact phone-to-phone alignment behind the score, straight from
+        # align_and_score() (same "" gap convention as _weak_phonemes): each
+        # pair is [reference_phone, heard_phone], with "" marking a deletion
+        # (reference phone not produced) or an insertion (extra phone with no
+        # reference counterpart). Unlike the per-word expected/heard lists
+        # below, this is positionally exact even when lengths diverge, so it
+        # can drive a substitution/deletion/insertion confusion-matrix
+        # analysis directly instead of re-deriving alignment from the log.
+        "alignment": [[ref_sym, hyp_sym] for ref_sym, hyp_sym in result.pairs],
         "words": [
             {"word": tokens[wi] if wi < len(tokens) else "",
              "level": levels[wi],
