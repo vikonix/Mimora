@@ -59,12 +59,20 @@ Homepage = "https://github.com/vikonix/Mimora"
 Repository = "https://github.com/vikonix/Mimora"
 Issues = "https://github.com/vikonix/Mimora/issues"
 
+# cli:main, not app:run. The application module imports torch, transformers and
+# Kokoro at module level, so an entry point naming it would load all of that
+# before it could answer --version; cli.py is stdlib-only and imports the
+# application after parsing the arguments. mimora/__main__.py routes
+# `python -m mimora` into the same function.
+[project.scripts]
+mimora = "mimora.cli:main"
+
 # Runtime dependencies still live in requirements.txt (plus the
 # pronunciation/acoustic/ and pronunciation/phoneme/ files it chains in) rather
 # than in [project.dependencies]: they are installed per-machine with CPU/CUDA
-# variants by install.py. There is no [project.scripts] entry point yet either,
-# so the project is not installable as a package in the useful sense - see
-# prototypes-pronunciation/tasks/installer.md, works 2, 5 and 6.
+# variants by install.py. Until that moves here, an installed wheel has an
+# entry point but none of the libraries behind it - see
+# prototypes-pronunciation/tasks/installer.md, works 5 and 6.
 
 # Discovered rather than listed by hand. The previous explicit list had silently
 # lost mimora.languages, without which config.LANGUAGE_PROFILES cannot be built

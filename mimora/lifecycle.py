@@ -50,6 +50,46 @@ def hard_exit():
     os._exit(0)
 
 
+def relaunch_command() -> list:
+    """The command that starts this application again, the way it was started.
+
+    Three launch forms reach the same code, and they need three different
+    commands. Prepending sys.executable to sys.argv - which is what this used
+    to do unconditionally - is right for exactly one of them:
+
+    * ``python main.py`` (and any direct script path): sys.argv[0] is a .py
+      file, so the interpreter goes in front, as before.
+    * ``python -m mimora``: sys.argv[0] is the full path to __main__.py, and
+      running that file directly is NOT equivalent - executing a file puts its
+      own directory on sys.path instead of the current one, so ``import
+      mimora`` would fail from a source checkout. The launch is reconstructed
+      as ``-m`` against the package the main module came from.
+    * the ``mimora`` console script: sys.argv[0] is the script itself
+      (``Scripts\\mimora.exe`` on Windows, a shebang file on POSIX), which
+      knows how to start the interpreter on its own. Putting sys.executable in
+      front would produce ``python.exe mimora.exe``, which does not run at all.
+
+    The console-script case is the one that fails silently until a package
+    exists, which is why the test is written the other way round: the
+    interpreter is prepended only for something that is recognisably a Python
+    source file, and anything else is assumed to be self-executing.
+    """
+    # __spec__ is set only when the process was started with -m; for a script
+    # or a console script it is None. spec.name is "mimora.__main__" for a
+    # package run this way, and the package itself is what -m needs back.
+    spec = getattr(sys.modules.get("__main__"), "__spec__", None)
+    if spec is not None and spec.name:
+        module = spec.parent if spec.name.endswith(".__main__") else spec.name
+        if module:
+            return [sys.executable, "-m", module] + sys.argv[1:]
+
+    suffix = os.path.splitext(sys.argv[0])[1].lower()
+    if suffix in (".py", ".pyw"):
+        return [sys.executable] + sys.argv
+
+    return list(sys.argv)
+
+
 def spawn_replacement():
     """Spawn a detached replacement process running the same command line.
 
@@ -70,7 +110,7 @@ def spawn_replacement():
     relaunches by hand).
     """
     try:
-        command = [sys.executable] + sys.argv
+        command = relaunch_command()
         logging.info(f"Relaunching: {command}")
         popen_kwargs = {
             "cwd": os.getcwd(),

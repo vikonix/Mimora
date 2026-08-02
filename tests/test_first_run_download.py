@@ -299,7 +299,7 @@ class DownloadLoopTests(unittest.TestCase):
         a machine with the repos and without the GGUF reached the downloader
         with the network already off. Clearing the environment is not enough:
         huggingface_hub freezes the flag into constants at import time, and
-        main.py imports it long before the window opens.
+        app.py imports it long before the window opens.
         """
         from huggingface_hub import constants as hub_constants
 
