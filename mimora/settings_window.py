@@ -310,7 +310,7 @@ def build_sections() -> tuple:
             Field("save_recordings", "Save recordings (debug)", "bool",
                   lambda: config.user_setting("save_recordings",
                                               config.SAVE_RECORDINGS),
-                  help="Writes each take's WAVs and phrase to records/."),
+                  help="Writes each take's WAVs and phrase to logs/records/."),
             Field("warm_up", "Warm up models at startup", "bool",
                   lambda: config.user_setting("warm_up", config.WARM_UP),
                   restart=True,

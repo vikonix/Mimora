@@ -20,7 +20,9 @@ env/
 .DS_Store
 Thumbs.db
 
-# Audio
+# Audio. The diagnostic take dumps moved to logs/records/ (covered by the logs/
+# rule below); records/ stays listed for the machines that still have the old
+# directory, where *.wav alone would leave phrase.txt showing up in git status.
 records/
 *.wav
 *.mp3

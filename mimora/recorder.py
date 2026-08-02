@@ -41,7 +41,13 @@ RECORD_THREAD_JOIN_TIMEOUT_SEC = 1.5
 # independently of playback. Only three fixed files are kept, each overwritten
 # on every take (no history): the model's spoken reference, the raw mic
 # capture, and the normalized signal.
-RECORDS_DIR = str(config.BASE_DIR / "records")
+#
+# Under LOG_DIR rather than beside it: this is diagnostic output with the same
+# lifetime and the same audience as logs/main.log and the *_samples.jsonl files,
+# so it is one thing to look at when something went wrong and one thing to
+# delete afterwards. Its own subdirectory because these four names are generic
+# (model.wav, phrase.txt) and would read as anybody's files in a shared folder.
+RECORDS_DIR = str(config.LOG_DIR / "records")
 
 # Fixed file names for the dumped recordings (overwritten each take).
 RECORD_MODEL_FILE = "model.wav"        # what the model said (TTS reference)
@@ -68,7 +74,7 @@ def normalize_audio(audio: np.ndarray) -> np.ndarray:
 
 
 def dump_record_wav(audio: np.ndarray, file_name: str, sample_rate: int):
-    """Write a mono float32 waveform to records/<file_name> as 16-bit PCM.
+    """Write a mono float32 waveform to logs/records/<file_name> as 16-bit PCM.
 
     Diagnostic only (guarded by config.SAVE_RECORDINGS). The file name is fixed
     (model.wav / raw.wav / normalized.wav), so each take overwrites the previous
@@ -90,7 +96,7 @@ def dump_record_wav(audio: np.ndarray, file_name: str, sample_rate: int):
 
 
 def dump_record_text(text: str, file_name: str):
-    """Write the spoken phrase to records/<file_name> as UTF-8 text.
+    """Write the spoken phrase to logs/records/<file_name> as UTF-8 text.
 
     Companion to dump_record_wav (guarded by config.SAVE_RECORDINGS): the file
     name is fixed (phrase.txt), so each take overwrites the previous one and

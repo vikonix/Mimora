@@ -300,7 +300,7 @@ SILENCE_THRESHOLD = _num("silence_threshold", 0.01, minimum=0.001)
 # Diagnostic recording dumps ("save_recordings"): when true, every take writes
 # the spoken reference (model.wav), the raw mic capture (raw.wav), the
 # normalized signal (normalized.wav) and the phrase text (phrase.txt) to
-# records/, each overwritten per take so only the latest is kept. Off by
+# logs/records/, each overwritten per take so only the latest is kept. Off by
 # default: the dumps put the user's voice on disk on every attempt, so they
 # are opt-in for debugging rather than always-on.
 SAVE_RECORDINGS = _bool("save_recordings", False)
