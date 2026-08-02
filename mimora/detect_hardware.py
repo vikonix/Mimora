@@ -3,8 +3,8 @@
 
 """Hardware detection for Mimora.
 
-Standalone tool: probes the machine (RAM, CPU, GPU/VRAM, audio devices) and
-writes config/hardware_config.json with two sections:
+Probes the machine (RAM, CPU, GPU/VRAM, audio devices) and writes
+config/hardware_config.json with two sections:
 
   "hardware" - raw facts about the machine, for diagnostics;
   "config"   - ready-to-use parameter values (EXTERNAL_N_GPU_LAYERS etc.)
@@ -13,7 +13,18 @@ writes config/hardware_config.json with two sections:
 
 Run it manually whenever the hardware changes:
 
-    python tools/detect_hardware.py
+    python -m mimora.detect_hardware
+
+It lives in the package rather than in tools/ because of who runs it: tools/
+holds what the maintainer runs, and this has to execute on the user's machine.
+Installed as a package there is no tools/ directory and no install.py, so a
+probe left outside the package would simply never run and the app would sit on
+its conservative defaults on a machine with a GPU.
+
+**This module must not import mimora.config.** ``config`` reads
+hardware_config.json at import time, so importing it here would take a snapshot
+of the very file this module is about to rewrite. The rule is the same as for
+the three fetchers: ``mimora.paths`` yes, ``mimora.config`` no.
 
 It only relies on packages the project already uses (torch, sounddevice) plus
 the stdlib-only mimora.llama_server_fetch; each probe degrades gracefully if
@@ -32,18 +43,24 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if __package__ in (None, ""):
+    # Executed as a plain script rather than with -m: that form puts THIS
+    # directory on sys.path instead of the project root, so "import mimora"
+    # would not resolve. Same shim, and the same reason, as in the fetchers.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-# The tool lives in tools/ but its output is a config artifact, so it is written
-# to the project's config/ directory (read by mimora/config.py), not next to the
-# script.
-OUTPUT_FILE = PROJECT_ROOT / "config" / "hardware_config.json"
+from mimora import paths
+
+# The output is a config artifact read by mimora/config.py, so it goes to the
+# config directory rather than next to this module. Both locations come from
+# paths.py, which is also what config.py binds to - the two cannot drift.
+OUTPUT_FILE = paths.config_dir() / "hardware_config.json"
 
 # A timestamped record of each run is kept in the project-wide logs/ directory
 # (the same one config.py uses for main.log), alongside the human-friendly
 # console print()s. The log file is the place to look when diagnosing why a
 # given machine was detected the way it was - it captures the warnings too.
-LOG_DIR = PROJECT_ROOT / "logs"
+LOG_DIR = paths.log_dir()
 LOG_FILE = LOG_DIR / "hwdetect.log"
 
 logger = logging.getLogger("hwdetect")
@@ -54,8 +71,11 @@ def _setup_logging() -> None:
 
     Kept independent of the console output: the terminal stays concise while the
     log file preserves a timestamped, complete record for later inspection.
+    Idempotent, because the CLI is no longer the only entry point.
     """
-    LOG_DIR.mkdir(exist_ok=True)
+    if logger.handlers:
+        return
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     handler = logging.FileHandler(LOG_FILE, mode="w", encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     logger.setLevel(logging.INFO)
@@ -219,12 +239,10 @@ def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
     a machine without a GPU "the LLM cannot use the GPU" is not news, and
     build_config zeroes the LLM's VRAM budget on absence anyway.
     """
-    # detect_hardware.py runs as a script, so sys.path starts at tools/ and the
-    # package next door is not importable without this. llama_server_fetch is
-    # stdlib-only and side-effect-free on import, which is why it is safe to
-    # pull in from a tool that may run before the requirements are installed.
-    if str(PROJECT_ROOT) not in sys.path:
-        sys.path.insert(0, str(PROJECT_ROOT))
+    # Deferred rather than imported at the top: an unimportable fetcher is a
+    # recorded warning here, not a failure to detect the rest of the machine.
+    # llama_server_fetch is stdlib-only and side-effect-free on import, which
+    # is why it is safe to pull in even before the requirements are installed.
     try:
         from mimora import llama_server_fetch
     except ImportError as exc:
@@ -413,15 +431,22 @@ def build_config(hardware: dict) -> dict:
 
 
 # =====================================================================
-# Main
+# Entry points
 # =====================================================================
 
-def main() -> int:
-    _setup_logging()
-    warnings: list[str] = []
+def probe_and_write() -> dict:
+    """Probe the machine, write hardware_config.json, return the whole result.
 
-    print("Detecting hardware...")
-    logger.info("Detecting hardware...")
+    Separated from :func:`main` so a caller inside the app can run the probe
+    without the CLI's console output. The app's first-run window is such a
+    caller: it has just installed the llama-server binary, which is exactly
+    what _probe_llama_offload needs in place to answer anything, and on a
+    package install there is no install.py left to run this step.
+
+    Raises OSError if the file cannot be written. Everything else is degraded
+    into the "warnings" list, which is also part of the returned dict.
+    """
+    warnings: list[str] = []
     hardware = {
         "platform": f"{platform.system()} {platform.release()}",
         "ram_total_gb": detect_ram_gb(warnings),
@@ -438,9 +463,23 @@ def main() -> int:
         "warnings": warnings,
     }
 
+    # config.py creates this directory at import, but this module runs from its
+    # own CLI too, where nothing has imported config.
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_FILE.write_text(
         json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
+    return result
+
+
+def main() -> int:
+    _setup_logging()
+
+    print("Detecting hardware...")
+    logger.info("Detecting hardware...")
+    result = probe_and_write()
+    hardware = result["hardware"]
+    warnings = result["warnings"]
 
     gpu = hardware["gpu"]
     ram_line = f"RAM: {hardware['ram_total_gb']} GB, CPU cores: {hardware['cpu_cores']}"

@@ -61,7 +61,7 @@ if __package__ in (None, ""):
     # same reason, as in gguf_fetch.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from mimora import loader, models_info
+from mimora import loader, models_info, paths
 
 log = logging.getLogger(__name__)
 
@@ -69,10 +69,12 @@ log = logging.getLogger(__name__)
 # Paths
 # ---------------------------------------------------------------------------
 
-BASE_DIR = Path(__file__).resolve().parent.parent
+# paths.py is stdlib-only, which is what makes it importable here despite the
+# rule against importing config (see the module docstring): the ban is on
+# config's import-time side effects, not on knowing where files go.
 # Mirrors config.MODEL_CACHE_DIR; config imports this constant instead of
 # spelling the path a second time.
-MODEL_CACHE_DIR = BASE_DIR / "model_cache"
+MODEL_CACHE_DIR = paths.model_cache_dir()
 
 # Supertonic keeps its weights OUTSIDE the HF hub cache: the package downloads
 # them with snapshot_download(local_dir=...) into the directory named by the
@@ -139,7 +141,9 @@ def prepare_hf_env() -> None:
     time. Idempotent, and setdefault for the cache paths, so an externally
     configured cache stays untouched.
     """
-    MODEL_CACHE_DIR.mkdir(exist_ok=True)
+    # parents=True: run from its own CLI in package mode, this may be the first
+    # thing to touch the data root, and its parent does not exist yet.
+    MODEL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
     os.environ.setdefault("SUPERTONIC_CACHE_DIR",
                           str(DEFAULT_SUPERTONIC_CACHE_DIR))

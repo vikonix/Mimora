@@ -39,6 +39,19 @@ What the two levels mean here
   settings.json - the outcome itself rather than a "the user said no" marker,
   so the settings window shows exactly how the app now behaves and the same
   control that already edits llm_backend is where the user changes their mind.
+
+Why it can ask for a restart
+----------------------------
+A finished first run is also the moment the machine is worth probing: the
+llama-server binary has just been installed, and asking whether it can reach
+the GPU is the one question mimora/detect_hardware.py cannot answer before it
+exists. But ``config`` reads hardware_config.json when it is imported, which
+happened long before this window opened, so the values the probe writes cannot
+reach the constants of this process. Rather than re-applying them live - they
+are read once, all over the code - ensure_ready reports RESTART and main.py
+relaunches. Nothing heavy is loaded at that point (no models, no CUDA context,
+no Tk root of the app itself), so the relaunch costs the imports and nothing
+else, and it happens at most once per installation.
 """
 
 from __future__ import annotations
@@ -49,12 +62,17 @@ import tkinter as tk
 from tkinter import messagebox
 from typing import Container, NamedTuple, Optional, Sequence
 
-from mimora import config, first_run, first_run_download
+from mimora import config, detect_hardware, first_run, first_run_download
 from mimora.ui_theme import (FONT_FAMILY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
                              FONT_SIZE_SMALL, FONT_SIZE_TITLE, THEME,
                              FlatButton)
 
 log = logging.getLogger(__name__)
+
+# What ensure_ready() tells main.py to do next.
+READY = "ready"          # start the app in this process
+CANCELLED = "cancelled"  # the user left; exit without starting
+RESTART = "restart"      # start over, so the freshly detected hardware applies
 
 # How often the Tk side reads the shared progress variable. The worker writes
 # thousands of times a second; this is what decouples the two.
@@ -455,8 +473,34 @@ class FirstRunWindow:
         # already on disk, so a retry only pays for what actually failed.
 
 
-def ensure_ready() -> bool:
-    """Make the machine runnable, asking first. False means "the user quit".
+def _detect_hardware_once() -> bool:
+    """Probe the machine after a first run. True when a restart is warranted.
+
+    Runs only when hardware_config.json is absent, which is both the "this has
+    never been done" test and the loop guard: after a successful write the file
+    is there, so the relaunched process cannot arrive here again. (A second
+    guard exists anyway - a completed first run leaves nothing missing, and
+    ensure_ready returns before the window.)
+
+    A failure is logged and swallowed. Detection is an optimisation: without it
+    config keeps its conservative defaults, which is exactly the state every
+    packaged install was in before this call existed, and it is not worth
+    refusing to start over.
+    """
+    if detect_hardware.OUTPUT_FILE.exists():
+        return False
+    log.info("First run finished - probing the hardware to tune the defaults.")
+    try:
+        detect_hardware.probe_and_write()
+    except Exception:  # noqa: BLE001 - any probe failure must not block startup
+        log.exception("Hardware detection failed; keeping the default settings:")
+        return False
+    return True
+
+
+def ensure_ready() -> str:
+    """Make the machine runnable, asking first. Returns one of READY /
+    CANCELLED / RESTART.
 
     Called before the GUI exists, so it may block: the checks are a handful of
     stat calls and the window runs its own event loop.
@@ -480,9 +524,12 @@ def ensure_ready() -> bool:
                  "starting without it.", plan.llama_server_blocked)
 
     if not plan.missing_required and not plan.missing_optional:
-        return True
+        return READY
 
     outcome = FirstRunWindow(plan).run()
+
+    if outcome.quit_requested:
+        return CANCELLED
 
     if outcome.optional_declined:
         # The result, not the refusal: one fact in one place, visible and
@@ -493,5 +540,6 @@ def ensure_ready() -> bool:
 
     # A binary downloaded just now needs no announcement: llm_server_ctl
     # resolves the path when it builds the command line, so it sees whatever is
-    # on disk by then (config.resolve_llama_server_path).
-    return not outcome.quit_requested
+    # on disk by then (config.resolve_llama_server_path). The hardware values
+    # are the opposite case - config read them at import - hence the restart.
+    return RESTART if _detect_hardware_once() else READY

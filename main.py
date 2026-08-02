@@ -52,7 +52,6 @@ print("starting ...", flush=True)
 import logging
 import tkinter as tk
 from tkinter import ttk
-from pathlib import Path
 import numpy as np
 
 from mimora import config, first_run, first_run_window, lifecycle, prosody
@@ -511,11 +510,11 @@ class PronunciationTrainerGUI:
 
         Called by the settings window's practice-file picker: the file is
         applied immediately and stored in settings.json. A relative *path*
-        (the stored settings.json form) is resolved against the project root,
-        matching the loader convention.
+        (the stored settings.json form) is resolved against that file's own
+        directory, matching the loader convention.
         """
         if not os.path.isabs(path):
-            path = str(config.BASE_DIR / path)
+            path = str(config.CONFIG_DIR / path)
         try:
             with open(path, "r", encoding="utf-8") as f:
                 text = f.read().strip()
@@ -533,13 +532,15 @@ class PronunciationTrainerGUI:
         self.view.append_system_msg(f"Loaded practice text: {os.path.basename(path)}")
         logging.info(f"Practice text loaded from {path!r}.")
 
-        # Persist for the next launch. Files inside the project are stored
-        # relative to the root (the settings.json convention - see _user_path);
-        # as_posix() keeps the JSON free of escaped backslashes on Windows.
-        try:
-            saved = Path(path).relative_to(config.BASE_DIR).as_posix()
-        except ValueError:
-            saved = path  # outside the project - keep the absolute path
+        # Persist for the next launch, always as the absolute path. The stored
+        # form used to be relative to the project root, which stopped being a
+        # single well-defined place once the settings file and the shipped
+        # texts moved to different roots in package mode: a relative value is
+        # read back against the settings file's own directory, and the picked
+        # file is rarely under it. Relative values remain fully supported for
+        # somebody hand-editing settings.json - they are simply not what the
+        # picker writes.
+        saved = str(path)
         self.settings_ctl.persist("practice_text_file", saved)
         # Keep the runtime view current for load_practice_text and the file
         # dialog's initialdir; the settings window reads the persisted value.
@@ -1512,7 +1513,9 @@ if __name__ == "__main__":
     # picks LLMManager or SourceTextPhraseProvider from config.LLM_BACKEND, and
     # ensure_ready has to have rewritten that first. Returns immediately when
     # nothing is missing, which is every run after the first.
-    if not first_run_window.ensure_ready():
+    first_run_outcome = first_run_window.ensure_ready()
+
+    if first_run_outcome == first_run_window.CANCELLED:
         # "cancelled", not "declined": this branch is the user leaving - the
         # window's Quit button, its close box, or Escape, including mid-
         # download. Declining the optional level is the opposite outcome, it
@@ -1528,6 +1531,18 @@ if __name__ == "__main__":
         # by skipping cleanup - the fetchers are built to survive being killed
         # (staged install, .incomplete files), and no model or CUDA context has
         # been loaded yet at this point.
+        lifecycle.hard_exit()
+
+    if first_run_outcome == first_run_window.RESTART:
+        # The first run just wrote hardware_config.json, and config read its
+        # own copy of those values at import - long before this line. Starting
+        # over is what makes them apply, and it is cheap exactly here: unlike
+        # restart_app there is no runtime to shut down first (no models, no
+        # recorder, no LLM subprocess, no Tk root of the app), so the pair
+        # below is the whole procedure. Happens at most once per installation;
+        # ensure_ready will not ask again once the file exists.
+        logging.info("Restarting to apply the detected hardware settings.")
+        lifecycle.spawn_replacement()
         lifecycle.hard_exit()
 
     app = PronunciationTrainerGUI()

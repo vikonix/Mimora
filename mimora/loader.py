@@ -74,7 +74,9 @@ def user_path(user_data: dict, base_dir: Path, key: str, default: Path) -> str:
 
     A relative value is resolved against *base_dir* (pathlib keeps an absolute
     value as-is when joined), so settings.json works regardless of the working
-    directory at launch.
+    directory at launch. config.py passes the directory settings.json itself is
+    in, which makes "relative to the file you are editing" one rule for every
+    path key; *default* arrives already absolute and is returned untouched.
     """
     value = user_data.get(key)
     if value is None:
@@ -203,11 +205,6 @@ def server_url(address: str, default_port: int) -> str:
     if ":" not in rest:
         rest = f"{rest}:{default_port}"
     return f"{scheme}://{rest}/v1"
-
-
-def ensure_dir(path: Path) -> None:
-    """Create *path* if missing (parents assumed to exist), idempotently."""
-    path.mkdir(exist_ok=True)
 
 
 def models_cached(hub_dir: Path, repos) -> bool:

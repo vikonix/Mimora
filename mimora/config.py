@@ -8,14 +8,32 @@ import threading
 from functools import partial
 from pathlib import Path
 
-from mimora import llama_server_fetch, loader, model_fetch, models_info
+from mimora import llama_server_fetch, loader, model_fetch, models_info, paths
 from mimora.languages import english, spanish
 
-# Project root - always absolute, regardless of working directory at launch.
-# This file lives in mimora/, so the root is one level up.
-BASE_DIR = Path(__file__).resolve().parent.parent
+# The two roots this module resolves paths against, frozen for the run. Both
+# are absolute regardless of the working directory at launch, and both are
+# computed in mimora/paths.py - the single place that knows the difference
+# between them:
+#   BASE_DIR      - what this machine WRITES (settings, downloads, logs). The
+#                   project root when running from a clone, the OS user-data
+#                   directory when installed as a package.
+#   RESOURCE_DIR  - what ships WITH the code and is only read (practice texts,
+#                   the committed model calibrations). Always beside the
+#                   package.
+# In a clone the two are the same directory, which is why one constant used to
+# do both jobs; installed as a package they are not, and every path below picks
+# the one it means.
+BASE_DIR = paths.data_root()
+RESOURCE_DIR = paths.resource_root()
 # Hand-edited configuration data (settings.json, themes/) lives here.
-CONFIG_DIR = BASE_DIR / "config"
+CONFIG_DIR = paths.config_dir()
+
+# Before the first read below: in package mode none of these directories exists
+# on a first run, and an unwritable config/ would make every later
+# save_user_setting fail silently (loader.save_setting reports and returns
+# False). Cheap and idempotent, so it runs unconditionally.
+paths.ensure_dirs()
 
 # =====================================================================
 # Settings files (optional overrides)
@@ -23,7 +41,7 @@ CONFIG_DIR = BASE_DIR / "config"
 # Values in this module are layered, lowest priority first:
 #   1. built-in defaults - the literals in this file;
 #   2. config/hardware_config.json, "config" section - machine-derived
-#      values written by `python tools/detect_hardware.py`;
+#      values written by `python -m mimora.detect_hardware`;
 #   3. settings.json - hand-edited user preferences.
 # A missing or broken file simply leaves the lower layers in effect: problems
 # are reported to stderr instead of crashing startup, because both files are
@@ -128,10 +146,18 @@ USER_SETTING_DEFAULTS = {
 
 
 # Validated accessors for settings.json values. The loader functions are pure
-# (they take the parsed dict as their first argument); binding _USER - and
-# BASE_DIR for path resolution - here keeps every call site below short.
+# (they take the parsed dict as their first argument); binding _USER - and the
+# base a relative path resolves against - here keeps every call site below
+# short.
+#
+# That base is CONFIG_DIR, the directory settings.json itself is in: a relative
+# path is something the user typed into that file, and "relative to the file
+# you are editing" is one rule for every key, statable in one line of
+# settings.example.json. The built-in defaults are NOT relative strings - they
+# come from paths.py already absolute, and from different roots (the GGUF from
+# the downloads, the practice text from the shipped resources).
 _num = partial(loader.user_number, _USER)
-_path = partial(loader.user_path, _USER, BASE_DIR)
+_path = partial(loader.user_path, _USER, CONFIG_DIR)
 _bool = partial(loader.user_bool, _USER)
 
 
@@ -182,6 +208,10 @@ def default_user_settings() -> dict:
     (voice -> the default variant's default voice) and makes the path defaults
     absolute; keys with no resolvable literal (external_n_ctx) are omitted -
     hardware detection supplies them on the next start.
+
+    The two path defaults resolve against DIFFERENT roots, which is why they
+    cannot simply be joined onto one base: the GGUF model is downloaded onto
+    this machine, the practice text ships with the code.
     """
     values = {key: value for key, value in USER_SETTING_DEFAULTS.items()
               if value is not None}
@@ -191,7 +221,7 @@ def default_user_settings() -> dict:
     # (accent_default_voice defaults to the running language otherwise).
     values["voice"] = accent_default_voice(
         USER_SETTING_DEFAULTS["accent"], USER_SETTING_DEFAULTS["practice_language"])
-    values["practice_text_file"] = str(BASE_DIR / values["practice_text_file"])
+    values["practice_text_file"] = str(RESOURCE_DIR / values["practice_text_file"])
     values["external_model_path"] = str(BASE_DIR / values["external_model_path"])
     return values
 
@@ -248,8 +278,8 @@ if not isinstance(USER_NAME, str):
 # workaround and not something the app should decide for a cache it merely
 # reads. The app does download on its own now (mimora/first_run_window.py), and
 # that path arms the environment itself, right before it starts fetching.
+# Already created by paths.ensure_dirs() at the top of this module.
 MODEL_CACHE_DIR = model_fetch.MODEL_CACHE_DIR
-loader.ensure_dir(MODEL_CACHE_DIR)
 os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 
 # Supertonic 3 (the Spanish TTS backend, mimora/tts.py SupertonicBackend) keeps
@@ -430,9 +460,12 @@ def _resolve_llama_server(setting) -> str:
               file=sys.stderr)
         setting = ""
     if setting.strip():
-        # A relative path resolves against the project root, like every other
-        # path setting (pathlib keeps an absolute value unchanged).
-        return str(BASE_DIR / setting.strip())
+        # A relative path resolves against the directory settings.json is in,
+        # like every other path setting (pathlib keeps an absolute value
+        # unchanged). Spelled out here rather than taken from loader.user_path
+        # because this setting has its own fallback chain below, not a single
+        # default path.
+        return str(CONFIG_DIR / setting.strip())
     bundled = llama_server_fetch.installed_exe()
     if bundled is not None:
         return str(bundled)
@@ -454,10 +487,11 @@ def resolve_llama_server_path() -> str:
 # The model llama-server loads and the parameters it loads it with. Unused by
 # "lm-studio" (LM Studio manages its own model) and by "off".
 # GGUF file, read from settings.json ("external_model_path"); a relative path
-# resolves against the project root.
+# resolves against the directory settings.json is in. The default points at the
+# downloads (paths.models_dir), which is where gguf_fetch puts it.
 EXTERNAL_MODEL_PATH = _path(
     "external_model_path",
-    BASE_DIR / "models" / "llama-3.2-3b-instruct-q4_k_m.gguf",
+    paths.models_dir() / "llama-3.2-3b-instruct-q4_k_m.gguf",
 )
 # GPU offload and context size: hardware detection picks values matched to the
 # detected VRAM/RAM; the literals here are conservative fallbacks for unknown
@@ -547,7 +581,12 @@ def available_engines(language: str = None) -> tuple:
 # language ("en_model_calibration.json", "es_model_calibration.json", ...). The
 # key is the espeak language with any dialect suffix dropped ("en-us" -> "en"),
 # matching pronunciation/phoneme/speech.py _lang_key.
-_PHONEME_CALIBRATION_DIR = BASE_DIR / "pronunciation" / "phoneme"
+#
+# RESOURCE_DIR, not BASE_DIR: these files are committed and travel with the
+# code, so they sit beside the pronunciation package in both modes. The
+# machine-local calibration.json is the opposite kind of file and lives under
+# BASE_DIR - see engine.py, which injects its path.
+_PHONEME_CALIBRATION_DIR = RESOURCE_DIR / "pronunciation" / "phoneme"
 
 
 def engine_experimental(engine: str = None, language: str = None,
@@ -821,10 +860,11 @@ PRONUNCIATION_ACOUSTIC_GOOD = 0.20
 # Source text shown in the input panel at startup. The LLM builds practice
 # phrases from whatever text the user has in that panel. Read from
 # settings.json ("practice_text_file"); a relative path resolves against the
-# project root. The default is the active language's profile text, so each
-# language ships its own starter text without a code change.
+# directory settings.json is in. The default is the active language's profile
+# text, so each language ships its own starter text without a code change - and
+# because it ships, it comes from RESOURCE_DIR rather than from BASE_DIR.
 PRACTICE_TEXT_FILE = _path("practice_text_file",
-                                BASE_DIR / _LANG_PROFILE["practice_text_file"])
+                                RESOURCE_DIR / _LANG_PROFILE["practice_text_file"])
 
 # Shown in the source panel instead when PRACTICE_TEXT_FILE cannot be read
 # (main.py _load_practice_text), in the practiced language (from the profile).
@@ -1164,10 +1204,10 @@ AUDIO_OUTPUT_DEVICE = _HW.get("AUDIO_OUTPUT_DEVICE")
 # =====================================================================
 # Logging Settings
 # =====================================================================
-# All log files live in a dedicated logs/ directory (created on import so the
-# handlers can open their files immediately).
-LOG_DIR = BASE_DIR / "logs"
-loader.ensure_dir(LOG_DIR)
+# All log files live in a dedicated logs/ directory (created by
+# paths.ensure_dirs() at the top of this module, so the handlers can open their
+# files immediately).
+LOG_DIR = paths.log_dir()
 LOG_FILE = str(LOG_DIR / "main.log")
 # Log file for the auto-started local LLM server subprocess (see main.py).
 LLM_SERVER_LOG_FILE = str(LOG_DIR / "llm_server.log")

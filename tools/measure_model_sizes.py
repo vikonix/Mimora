@@ -47,7 +47,7 @@ from typing import Callable, Optional
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # The tool runs as a script, so sys.path starts at tools/ and the package next
-# door is not importable without this (same as tools/detect_hardware.py).
+# door is not importable without this (same as tools/preview_first_run.py).
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 

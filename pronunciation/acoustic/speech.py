@@ -96,8 +96,21 @@ ACOUSTIC_BAD_DEFAULT = 0.60      # fixed ceiling when no per-utterance baseline 
 ACOUSTIC_BAD_FRACTION = 0.9      # ceiling = this fraction of the random-pair baseline
 ACOUSTIC_MIN_SPAN = 0.05         # minimal floor-to-ceiling span (avoids degenerate scale)
 
-# Persisted calibration (floor override) lives next to this module.
+# Standalone default for the persisted calibration (floor override): next to
+# this module, which is where a host-less caller and the eval tooling expect it.
+# A host overrides it through AnalyzerConfig.calibration_file - see
+# current_calibration_file(), which every read and write below goes through.
 CALIBRATION_FILE = Path(__file__).resolve().parent / "calibration.json"
+
+
+def current_calibration_file() -> Path:
+    """The calibration file in effect: the host's, else the package default.
+
+    Asked at every read and write rather than resolved once, because
+    configure() may not have run when this module is imported and the answer
+    must reflect the configuration that is active now.
+    """
+    return get_config().calibration_file or CALIBRATION_FILE
 
 
 def samples_file() -> Path:
@@ -119,9 +132,10 @@ def _load_calibration() -> float:
     """Return the current user's calibrated acoustic floor, or the default."""
     user_name = get_config().user_name
     default = get_config().acoustic_good
+    path = current_calibration_file()
     try:
-        if CALIBRATION_FILE.exists():
-            data = json.loads(CALIBRATION_FILE.read_text(encoding="utf-8"))
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
             users = data.get("users") if isinstance(data, dict) else None
             entry = users.get(user_name) if isinstance(users, dict) else None
             if isinstance(entry, dict) and "acoustic_good" in entry:
@@ -133,7 +147,7 @@ def _load_calibration() -> float:
             else:
                 return default
             logging.info(f"[acoustic] Loaded calibration ({source}): "
-                         f"acoustic_good={value:.4f} ({CALIBRATION_FILE})")
+                         f"acoustic_good={value:.4f} ({path})")
             return value
     except Exception:
         logging.exception("Failed to read calibration file; using defaults:")
@@ -173,6 +187,9 @@ def save_calibration(acoustic_good: float, extra: Optional[Dict[str, Any]] = Non
     """
     global _acoustic_good, _acoustic_good_user
     user_name = get_config().user_name
+    # Resolved once: this function reads the file and writes it back, and both
+    # must be the same file even if the configuration were replaced between.
+    path = current_calibration_file()
     entry: Dict[str, Any] = {
         "acoustic_good": round(float(acoustic_good), 5),
         "created": datetime.now().isoformat(timespec="seconds"),
@@ -183,9 +200,9 @@ def save_calibration(acoustic_good: float, extra: Optional[Dict[str, Any]] = Non
 
     # Merge into the existing store so other users keep their floors.
     data: Dict[str, Any] = {}
-    if CALIBRATION_FILE.exists():
+    if path.exists():
         try:
-            existing = json.loads(CALIBRATION_FILE.read_text(encoding="utf-8"))
+            existing = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(existing, dict):
                 data = existing
         except Exception:
@@ -198,12 +215,15 @@ def save_calibration(acoustic_good: float, extra: Optional[Dict[str, Any]] = Non
         users[""] = {k: data[k] for k in _LEGACY_CALIBRATION_KEYS if k in data}
     users[user_name] = entry
 
-    CALIBRATION_FILE.write_text(
+    # The host's directory exists (config.py creates it at import), but a
+    # standalone caller may have pointed this somewhere new.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
         json.dumps({"users": users}, indent=2) + "\n", encoding="utf-8")
     _acoustic_good = float(acoustic_good)
     _acoustic_good_user = user_name
     logging.info(f"[acoustic] Saved calibration user={user_name!r} "
-                 f"acoustic_good={acoustic_good:.4f} -> {CALIBRATION_FILE}")
+                 f"acoustic_good={acoustic_good:.4f} -> {path}")
 
 # Lazily-initialised model singletons (loaded once, reused for every analysis).
 _processor: Optional[Wav2Vec2Processor] = None

@@ -26,6 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -60,6 +61,13 @@ class AnalyzerConfig:
     log_dir: Path = Path("logs")
     # Practising user; reserved for per-user calibration ("" when unset).
     user_name: str = ""
+    # Where the machine-local user calibration is read and written. None keeps
+    # the library autonomous: it falls back to calibration.json beside this
+    # package, which is what standalone use and the eval tooling expect. A host
+    # injects its own path because that file is machine-local STATE, unlike the
+    # committed <lang>_model_calibration.json next to it, and an installed
+    # package's own directory is no place to write state to.
+    calibration_file: Optional[Path] = None
 
 
 # Active configuration for this process. The default keeps the library

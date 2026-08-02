@@ -97,7 +97,10 @@ KOKORO_SAMPLE_RATE = 24_000
 # never breaks. Keys prefixed with ``_`` (``_meta``) are informational.
 _DIR = Path(__file__).resolve().parent
 _DEFAULT_LANG = "en"
-# Where save_calibration() / phoneme/calibrate.py read and write the user anchor.
+# Standalone default for the user anchor: beside this package, which is where a
+# host-less caller and the eval tooling expect it. A host overrides it through
+# AnalyzerConfig.calibration_file - see current_calibration_file(), which is
+# what every read and write below actually goes through.
 CALIBRATION_FILE = _DIR / "calibration.json"
 
 # Intrinsic scoring constants -- not part of the data-fit calibration, so they
@@ -114,6 +117,17 @@ def _read_json(path: Path) -> dict:
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def current_calibration_file() -> Path:
+    """The user-calibration file in effect: the host's, else the package default.
+
+    Asked at every read and write rather than resolved once, for the same
+    reason the host injects it at all: configure() may not have run yet when
+    this module is imported, and the answer must reflect the configuration that
+    is active now.
+    """
+    return get_config().calibration_file or CALIBRATION_FILE
 
 
 def _lang_key(espeak_language: str) -> str:
@@ -141,7 +155,7 @@ def _user_phoneme_good(lang: str, user_name: str) -> Optional[float]:
 
     User file shape: ``{lang: {"users": {user_name: {"phoneme_good": float, ...}}}}``.
     """
-    data = _read_json(CALIBRATION_FILE)
+    data = _read_json(current_calibration_file())
     lang_block = data.get(lang) if isinstance(data, dict) else None
     users = lang_block.get("users") if isinstance(lang_block, dict) else None
     entry = users.get(user_name) if isinstance(users, dict) else None
@@ -280,7 +294,7 @@ def _ensure_calibration_locked() -> None:
     )
     logging.info(
         "[phoneme] user calibration loaded (lang=%s, user=%r, file=%s): %s",
-        lang, user, CALIBRATION_FILE.name,
+        lang, user, current_calibration_file().name,
         json.dumps({
             "user_phoneme_good": user_good,
             "effective_phoneme_good": PHONEME_GOOD,
@@ -370,8 +384,12 @@ def save_calibration(phoneme_good: float, extra: Optional[Dict[str, Any]] = None
     cfg = get_config()
     lang = _lang_key(cfg.espeak_language)
     user = cfg.user_name
+    # Resolved once here rather than per use: this function reads the file and
+    # then writes it back, and those two must be the same file even if the
+    # configuration were replaced in between.
+    path = current_calibration_file()
 
-    data = _read_json(CALIBRATION_FILE)
+    data = _read_json(path)
     lang_block = data.get(lang)
     if not isinstance(lang_block, dict):
         lang_block = {}
@@ -390,13 +408,16 @@ def save_calibration(phoneme_good: float, extra: Optional[Dict[str, Any]] = None
     lang_block["users"] = users
     data[lang] = lang_block
 
-    CALIBRATION_FILE.write_text(
+    # The host's directory exists (config.py creates it at import), but a
+    # standalone caller may have pointed this somewhere new.
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
         json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     # Apply to the running process immediately (mirrors the acoustic engine).
     PHONEME_GOOD = float(phoneme_good)
     _loaded_lang, _loaded_user = lang, user
     logging.info("[phoneme] wrote phoneme_good=%.6f (lang=%s user=%r) -> %s",
-                 phoneme_good, lang, user, CALIBRATION_FILE)
+                 phoneme_good, lang, user, path)
 
 
 # =====================================================================

@@ -225,7 +225,7 @@ The offline translator (NLLB-200) needs no extra step - its dependencies
 and macOS wheels ship that library inside; its Linux wheels do not, so without
 the system package every import fails with
 `OSError: PortAudio library not found` - including the one in
-`tools/detect_hardware.py`, which is why `install.py` checks for it up front:
+`mimora/detect_hardware.py`, which is why `install.py` checks for it up front:
 
 ```bash
 sudo apt-get install libportaudio2     # Debian / Ubuntu
@@ -366,6 +366,35 @@ and loading their data into memory on their first call. This is normal; speed
 settles to its steady state after the initial requests.
 
 Press `ESC` or close the window to quit (the LLM server subprocess is terminated cleanly).
+
+### Where Mimora keeps your files
+
+Running from a clone - which is every installation today - everything stays
+inside the project directory: `config/`, `models/`, `model_cache/`, `bin/llama/`
+and `logs/`. Nothing about that changes, and there is nothing to migrate.
+
+Installed as a package (a future option), the same layout moves under the
+operating system's user-data directory, because a package's own directory
+belongs to whatever installed it and is rebuilt on the next upgrade:
+
+| OS | Location |
+|---|---|
+| Windows | `%APPDATA%\Mimora\` |
+| macOS | `~/Library/Application Support/Mimora/` |
+| Linux | `$XDG_DATA_HOME/mimora/` (default `~/.local/share/mimora/`) |
+
+Set the `MIMORA_HOME` environment variable to put that directory anywhere else.
+It overrides both cases and is the answer to the three situations that need one:
+moving several gigabytes of downloads to another drive, escaping a roaming
+Windows profile that would carry them across the network at every login, and
+running two configurations side by side.
+
+**Paths inside `config/settings.json` resolve against that file's own
+directory.** Absolute paths work everywhere and are what the settings window
+writes; a relative one is read as relative to the settings file you are editing.
+Keys you leave out are not affected by the rule at all - their defaults are
+resolved for you, and the downloads and the files shipped with the app do not
+live in the same place.
 
 ---
 

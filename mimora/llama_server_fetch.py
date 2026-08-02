@@ -11,7 +11,7 @@ runs with the backend it advertises.
 Callers: install.py (its LLM-stack step), the app's first-run window
 (mimora/first_run_download.py) when the binary is missing, and - for the read-
 only parts - mimora/config.py, mimora/llm_server_ctl.py and
-tools/detect_hardware.py.
+mimora/detect_hardware.py.
 
 Run it directly:
 
@@ -66,6 +66,15 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, NamedTuple, Optional
+
+if __package__ in (None, ""):
+    # Executed as a plain script rather than with -m: that form puts THIS
+    # directory on sys.path instead of the project root, so the "import mimora"
+    # below would not resolve. Same shim, and the same reason, as in
+    # model_fetch and gguf_fetch.
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from mimora import paths
 
 log = logging.getLogger(__name__)
 
@@ -316,8 +325,9 @@ def variant_size_mb(variant_name: str) -> int:
 # Paths
 # ---------------------------------------------------------------------------
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-INSTALL_DIR = BASE_DIR / "bin" / "llama"
+# paths.py is stdlib-only, which keeps this module importable by install.py
+# before the requirements exist - the property the whole file is built around.
+INSTALL_DIR = paths.llama_dir()
 # Written only after a successful install AND verification; its presence with a
 # matching tag/variant is what "already installed" means.
 STAMP_NAME = "installed.json"

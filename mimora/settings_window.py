@@ -1150,14 +1150,15 @@ class SettingsWindow:
 
     def _browse_path(self, field: Field):
         current = str(self._committed.get(field.key) or "")
-        # Stored paths may be project-relative (the settings.json convention);
-        # resolve against the project root so initialdir opens the right place.
+        # Stored paths may be relative to settings.json (the settings.json
+        # convention); resolve against its directory so initialdir opens the
+        # right place.
         if current and not os.path.isabs(current):
-            current = os.path.join(str(config.BASE_DIR), current)
+            current = os.path.join(str(config.CONFIG_DIR), current)
         path = filedialog.askopenfilename(
             parent=self.top,
             title=field.label,
-            initialdir=os.path.dirname(current) or str(config.BASE_DIR),
+            initialdir=os.path.dirname(current) or str(config.CONFIG_DIR),
             filetypes=list(field.file_types) or [("All files", "*.*")],
         )
         if not path:
@@ -1288,10 +1289,15 @@ class SettingsWindow:
 
     @staticmethod
     def _normalize_path(value) -> str:
-        """Absolute, case/separator-normalized form of a stored path value."""
+        """Absolute, case/separator-normalized form of a stored path value.
+
+        A relative value is one the user typed into settings.json, so it
+        resolves against that file's directory - the same rule config.py
+        applies when it builds the running constants.
+        """
         path = str(value or "")
         if path and not os.path.isabs(path):
-            path = os.path.join(str(config.BASE_DIR), path)
+            path = os.path.join(str(config.CONFIG_DIR), path)
         return os.path.normcase(os.path.normpath(path))
 
     def _update_restart_hint(self):

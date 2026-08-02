@@ -45,12 +45,13 @@ if __package__ in (None, ""):
     # directly is what an IDE's "run" button does.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from mimora import model_fetch, models_info
+from mimora import model_fetch, models_info, paths
 
 log = logging.getLogger(__name__)
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-MODELS_DIR = BASE_DIR / "models"
+# paths.py is stdlib-only, so importing it does not breach this module's ban on
+# importing config (that ban is about config's import-time side effects).
+MODELS_DIR = paths.models_dir()
 
 # The GGUF chat model. Identity and size come from mimora/models_info.py, where
 # every model's facts live; these names bind to that record rather than

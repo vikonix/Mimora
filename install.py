@@ -17,7 +17,7 @@ run Mimora on a fresh machine:
      supertonic package uses its own cache directory).
   8. Install the LLM stack: the pinned llama-server binary into bin/llama/ and
      the GGUF chat model into models/.
-  9. Run tools/detect_hardware.py to write config/hardware_config.json.
+  9. Run `python -m mimora.detect_hardware` to write config/hardware_config.json.
  10. Write run_mimora.bat / run_mimora.sh: one-click launchers that activate
      the project's virtual environment and run main.py.
 
@@ -38,8 +38,8 @@ Design notes
   install.py at all. Their log output is bridged into logs/install.log (see
   _LogBridge).
 * GPU detection deliberately relies only on `nvidia-smi`, because
-  detect_hardware.py imports torch (which may not be installed yet) - a classic
-  bootstrap chicken-and-egg. detect_hardware.py is run at the very end, once
+  mimora/detect_hardware.py imports torch (which may not be installed yet) - a
+  classic bootstrap chicken-and-egg. The probe is run at the very end, once
   those packages exist.
 * The CUDA torch wheels are installed before the requirements file so that the
   `torch` constraint in requirements.txt is already satisfied - otherwise pip
@@ -61,6 +61,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import importlib.metadata as ilmeta
+import importlib.util  # find_spec, for the hardware-probe module check
 import logging
 import os
 import platform
@@ -83,7 +84,10 @@ REQUIREMENTS = PROJECT_ROOT / "requirements.txt"
 # The app's own settings file. The installer reads and writes exactly one key
 # in it, in exactly one situation - see _disable_llm_backend().
 SETTINGS_FILE = PROJECT_ROOT / "config" / "settings.json"
-DETECT_HW_SCRIPT = PROJECT_ROOT / "tools" / "detect_hardware.py"
+# The hardware probe is a package module, not a script under tools/: it has to
+# run on the user's machine, and tools/ is what the maintainer runs. Named as a
+# module because that is how it is invoked - see step_detect_hardware.
+DETECT_HW_MODULE = "mimora.detect_hardware"
 LAUNCHER_BAT = PROJECT_ROOT / "run_mimora.bat"
 LAUNCHER_SH = PROJECT_ROOT / "run_mimora.sh"
 
@@ -870,7 +874,7 @@ def step_check_portaudio(
     sounddevice is a cffi wrapper around PortAudio. Its Windows and macOS
     wheels bundle the library, its Linux wheels do not, and importing it
     without the system library raises OSError('PortAudio library not found').
-    That import happens inside tools/detect_hardware.py, which is the last step
+    That import happens inside mimora/detect_hardware.py, the last step
     but one, so on a fresh Linux machine the installer used to abort after
     several gigabytes of downloads over a 300 kB package. Hence the check runs
     here, in the preflight block, next to the other things that only look.
@@ -1296,14 +1300,27 @@ def step_download_gguf(
 def step_detect_hardware(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
-    """Run detect_hardware.py late, once torch is installed."""
+    """Run the hardware probe late, once torch is installed."""
     log.banner("Step 10 - Hardware detection (writes hardware_config.json)")
-    if not DETECT_HW_SCRIPT.exists():
-        log.log(f"    {DETECT_HW_SCRIPT} not found; skipping.")
-        report.add("hardware detection", SKIPPED, "script missing")
+    # A module, so the check is "can it be imported" rather than "is the file
+    # there". importlib.util.find_spec answers without executing it, which
+    # matters because the module imports torch and sounddevice when it runs.
+    # install.py is normally run from the project root, which already puts it on
+    # sys.path; this also covers `python /somewhere/else/install.py`.
+    if str(PROJECT_ROOT) not in sys.path:
+        sys.path.insert(0, str(PROJECT_ROOT))
+    try:
+        found = importlib.util.find_spec(DETECT_HW_MODULE) is not None
+    except (ImportError, ValueError):
+        # find_spec imports the parent package to look inside it, so an absent
+        # or broken `mimora` raises here rather than answering None.
+        found = False
+    if not found:
+        log.log(f"    {DETECT_HW_MODULE} not found; skipping.")
+        report.add("hardware detection", SKIPPED, "module missing")
         return
 
-    cmd = [sys.executable, str(DETECT_HW_SCRIPT)]
+    cmd = [sys.executable, "-m", DETECT_HW_MODULE]
     desc = ("Probe the machine and write config/hardware_config.json (the app "
             "reads GPU-tuned parameters from it).")
     if not confirmer.confirm(desc, " ".join(cmd)):

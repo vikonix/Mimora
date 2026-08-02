@@ -53,6 +53,25 @@ def _backend():
     return _module
 
 
+def _calibration_file(engine_name: str) -> Path:
+    """Where *engine_name* keeps its machine-local user calibration.
+
+    Beside settings.json rather than beside the engine's own code, which is
+    where the libraries default to. Two files sit next to each other in
+    ``pronunciation/<engine>/`` and are different in kind: the committed
+    ``<lang>_model_calibration.json`` ships with the code, while
+    ``calibration.json`` is state this machine produced. Installed as a
+    package, the first belongs in site-packages and the second must not be
+    there - it would be written into a directory owned by the installer and
+    carried off by the next upgrade.
+
+    The engine name is part of the file name instead of a directory level: two
+    files, one per engine, are not worth a directory, and the flat name is what
+    somebody scanning config/ can read.
+    """
+    return Path(config.CONFIG_DIR) / f"calibration_{engine_name}.json"
+
+
 def configure(engine_name: str | None = None) -> None:
     """Build an engine's AnalyzerConfig from app settings and inject it.
 
@@ -82,6 +101,7 @@ def configure(engine_name: str | None = None) -> None:
             good_mode=config.PHONEME_GOOD_MODE,
             log_dir=Path(config.LOG_DIR),
             user_name=config.USER_NAME,
+            calibration_file=_calibration_file("phoneme"),
         )
     else:
         cfg = eng.AnalyzerConfig(
@@ -92,6 +112,7 @@ def configure(engine_name: str | None = None) -> None:
             acoustic_good=config.PRONUNCIATION_ACOUSTIC_GOOD,
             log_dir=Path(config.LOG_DIR),
             user_name=config.USER_NAME,
+            calibration_file=_calibration_file("acoustic"),
         )
     eng.configure(cfg)
 

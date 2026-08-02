@@ -161,8 +161,11 @@ def main() -> int:
         "phoneme_good_samples_used": len(good),
         "phoneme_good_voice": args.voice,
     })
-    print(f"\nWritten {speech.CALIBRATION_FILE}. Restart the app (it reads the new "
-          "value at startup) to score with the new anchor.")
+    # The effective path, not the package default: engine.configure() above
+    # points the engine at the app's own config directory, and printing the
+    # other one would send the reader to a file that was never written.
+    print(f"\nWritten {speech.current_calibration_file()}. Restart the app (it "
+          "reads the new value at startup) to score with the new anchor.")
     return 0
 
 

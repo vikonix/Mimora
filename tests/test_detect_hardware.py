@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2026 Valery Kovalev
 
-"""Unit tests for the hardware probe (tools/detect_hardware.py).
+"""Unit tests for the hardware probe (mimora/detect_hardware.py).
 
 Two things are worth testing without a machine to probe: the decision table of
 the llama-server offload probe (which of True/False/None each situation
@@ -16,8 +16,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from mimora import llama_server_fetch
-from tools import detect_hardware
+from mimora import detect_hardware, llama_server_fetch
 
 # Fake install location: the probe only ever reads its .name for a message.
 EXE = Path("/opt/mimora/bin/llama/llama-server")
