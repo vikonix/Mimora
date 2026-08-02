@@ -1,5 +1,9 @@
 [build-system]
-requires = ["setuptools>=68"]
+# 77 is the release that added PEP 639 support (license = "MIT" plus
+# license-files below). pip installs a current setuptools into the isolated
+# build environment anyway, so the floor only matters for a build with
+# isolation disabled against a pinned older version.
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -12,22 +16,71 @@ readme = "README.md"
 # newer interpreters get a warning there (WHEEL_TESTED_MAX), and the
 # binary-only dependency install fails loudly if wheels are missing.
 requires-python = ">=3.11"
-license = { file = "LICENSE" }
-
-# The app is run from the project root (`python main.py`) and is not meant to
-# be installed; this file documents project metadata and the package layout.
-# Runtime dependencies stay in requirements.txt (plus the pronunciation/acoustic/
-# and pronunciation/phoneme/ requirements it chains in) because they are
-# installed per-machine with CPU/CUDA variants.
-[tool.setuptools]
-packages = [
-    "mimora",
+# PEP 639 SPDX expression, not the older license = { file = ... } table: that
+# form embeds the whole licence TEXT into the License: metadata field, and
+# setuptools deprecated it in 77 - which is the floor in build-system above.
+# The file itself travels as License-File, listed explicitly rather than left
+# to the default LICENSE* glob.
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Valeriy Kovalev" }]
+keywords = [
     "pronunciation",
-    "pronunciation.acoustic",
-    "pronunciation.common",
-    "pronunciation.none",
-    "pronunciation.phoneme",
+    "language-learning",
+    "speech",
+    "text-to-speech",
+    "speech-recognition",
+    "offline",
+    "llm",
+    "tkinter",
 ]
+# No "License ::" classifier: PyPI takes the licence from the field above, and
+# the two disagreeing is a known way to publish a package labelled twice.
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: MacOS X",
+    "Environment :: Win32 (MS Windows)",
+    "Environment :: X11 Applications",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: English",
+    "Natural Language :: Spanish",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Education",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+[project.urls]
+Homepage = "https://github.com/vikonix/Mimora"
+Repository = "https://github.com/vikonix/Mimora"
+Issues = "https://github.com/vikonix/Mimora/issues"
+
+# Runtime dependencies still live in requirements.txt (plus the
+# pronunciation/acoustic/ and pronunciation/phoneme/ files it chains in) rather
+# than in [project.dependencies]: they are installed per-machine with CPU/CUDA
+# variants by install.py. There is no [project.scripts] entry point yet either,
+# so the project is not installable as a package in the useful sense - see
+# prototypes-pronunciation/tasks/installer.md, works 2, 5 and 6.
+
+# Discovered rather than listed by hand. The previous explicit list had silently
+# lost mimora.languages, without which config.LANGUAGE_PROFILES cannot be built
+# and the app does not start at all - and a hand-written list loses the next
+# subpackage the same way. namespaces = false keeps the search to directories
+# with an __init__.py, so a stray directory cannot become a package.
+[tool.setuptools.packages.find]
+include = ["mimora*", "pronunciation*"]
+namespaces = false
+
+# A wheel carries only .py files unless the data is named here. This one is a
+# committed resource that ships WITH the code (paths.resource_root), unlike the
+# per-machine calibration.json that used to sit beside it and now lives under
+# the user's config/ directory.
+[tool.setuptools.package-data]
+"pronunciation.phoneme" = ["*_model_calibration.json"]
 
 [tool.setuptools.dynamic]
 version = { attr = "mimora.__version__" }
