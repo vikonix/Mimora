@@ -74,11 +74,21 @@ def relaunch_command() -> list:
     interpreter is prepended only for something that is recognisably a Python
     source file, and anything else is assumed to be self-executing.
     """
-    # __spec__ is set only when the process was started with -m; for a script
-    # or a console script it is None. spec.name is "mimora.__main__" for a
-    # package run this way, and the package itself is what -m needs back.
+    # __spec__ says the process was started with -m, but only when it names a
+    # module: spec.name is "mimora.__main__" for a package run that way, and
+    # the package itself is what -m needs back.
+    #
+    # It is NOT None for a console script on Windows, which is what the first
+    # live test of this function found. Scripts\mimora.exe is a launcher with a
+    # zip archive appended to it, and the __main__.py inside that archive is
+    # imported through the normal machinery - so __spec__ exists and its name
+    # is literally "__main__", which says nothing about what to pass to -m.
+    # Relaunching such a process produced `python.exe -m __main__`, a command
+    # that does not run, so the application simply closed instead of restarting.
+    # POSIX never showed it: there a console script is a source file with a
+    # shebang, started by path, and __spec__ really is None.
     spec = getattr(sys.modules.get("__main__"), "__spec__", None)
-    if spec is not None and spec.name:
+    if spec is not None and spec.name and spec.name != "__main__":
         module = spec.parent if spec.name.endswith(".__main__") else spec.name
         if module:
             return [sys.executable, "-m", module] + sys.argv[1:]

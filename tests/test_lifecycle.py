@@ -20,6 +20,14 @@ Only the first form is observable on a machine running from a checkout, and
 the third one cannot exist until the package is published - which is exactly
 why it is stubbed here rather than left to be discovered after publication.
 
+The stubbing has to be right to be worth anything, though, and it was not:
+these tests originally gave the console script ``__spec__ = None``, and the
+first live run of an installed package showed that a Windows one carries a
+spec named ``"__main__"`` (the .exe is a launcher with a zip archive appended,
+and the __main__.py inside it is imported like any module). The relaunch came
+out as ``python.exe -m __main__`` and the application closed instead of
+restarting. Both halves of that are pinned below.
+
 Run from the project root with:
 
     python -m unittest tests.test_lifecycle
@@ -40,7 +48,9 @@ def _launched_as(argv, spec=None):
     """Context in which sys.argv, the interpreter and __main__.__spec__ are stubbed.
 
     ``spec`` is what the import system leaves on the main module: a ModuleSpec
-    for ``python -m ...`` and None for every other launch form.
+    named ``<package>.__main__`` for ``python -m ...``, a ModuleSpec named
+    ``"__main__"`` for a zipapp (which is what a Windows console script is),
+    and None for a plain script path.
     """
     fake_main = types.SimpleNamespace(__spec__=spec)
     return (
@@ -125,11 +135,30 @@ class ConsoleScriptLaunchTests(unittest.TestCase):
     """The installed entry point, which starts the interpreter itself."""
 
     def test_windows_executable_runs_alone(self):
+        # A Windows console script carries a __spec__ after all: the .exe is a
+        # launcher with a zip archive appended, and the __main__.py inside it is
+        # imported like any module, so the spec exists and is named literally
+        # "__main__". The first live run of an installed package relaunched as
+        # `python.exe -m __main__` because of it, and the process died on the
+        # spot. Passing this with spec=None would prove nothing - that is the
+        # POSIX case below.
         argv = [r"C:\venv\Scripts\mimora.exe"]
-        self.assertEqual(_command_for(argv), argv)
+        self.assertEqual(
+            _command_for(argv, ModuleSpec("__main__", loader=None)), argv)
+
+    def test_the_windows_launcher_drops_the_extension(self):
+        # Observed on a live run: launching Scripts\mimora.exe leaves
+        # sys.argv[0] WITHOUT the extension, so the real Windows form looks
+        # exactly like the POSIX one. It still takes the same branch (not a
+        # .py suffix), and CreateProcess appends .exe on its own - but the
+        # test above spells a shape Windows does not actually produce.
+        argv = [r"D:\venv\Scripts\mimora"]
+        self.assertEqual(
+            _command_for(argv, ModuleSpec("__main__", loader=None)), argv)
 
     def test_posix_console_script_runs_alone(self):
-        # No extension at all on POSIX; the shebang does the work.
+        # No extension at all on POSIX; the shebang does the work, the script
+        # is started by path, and __spec__ really is None there.
         argv = ["/home/user/.local/bin/mimora"]
         self.assertEqual(_command_for(argv), argv)
 
@@ -138,6 +167,13 @@ class ConsoleScriptLaunchTests(unittest.TestCase):
         # branch exists to prevent.
         command = _command_for([r"C:\venv\Scripts\mimora.exe"])
         self.assertNotIn(FAKE_PYTHON, command)
+
+    def test_the_zipapp_spec_is_not_treated_as_a_module(self):
+        # The other half of the same bug: "__main__" says nothing about what to
+        # pass to -m, so the -m branch must decline it rather than echo it.
+        command = _command_for([r"C:\venv\Scripts\mimora.exe"],
+                               ModuleSpec("__main__", loader=None))
+        self.assertNotIn("-m", command)
 
     def test_arguments_survive(self):
         argv = ["/home/user/.local/bin/mimora", "--version"]
