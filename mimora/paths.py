@@ -12,10 +12,15 @@ that only coincide when the app runs from a clone:
   OS user-data directory, because a package's own directory belongs to the tool
   that installed it (``uv tool upgrade`` rebuilds that environment, which would
   carry off both the downloads and settings.json).
-* :func:`resource_root` - files that ship WITH the code and are only read:
-  practice texts, the committed per-language model calibrations, the built-in
-  theme schemas. Always the parent of this package, so they are found next to
-  the code in both modes.
+* :func:`resource_root` - files that ship WITH the code and are only read, in
+  the packages BESIDE this one: the committed per-language model calibrations
+  under ``pronunciation/``. Always the parent of this package, so they are
+  found next to the code in both modes.
+* :func:`shipped_root` - the same kind of file, but inside this package: the
+  starter practice texts and the built-in theme schemas. They live here rather
+  than at the top of the source tree for one reason - a wheel carries only what
+  belongs to a package, and a directory at the root of the tree belongs to no
+  package and is simply absent from an installed copy.
 
 Conflating the two is the bug this module exists to prevent: a single
 ``BASE_DIR`` used to answer both questions, and moving it wholesale to the
@@ -126,21 +131,41 @@ def data_root() -> Path:
 
 
 def resource_root() -> Path:
-    """Root of the read-only files shipped alongside the code.
+    """Root of the read-only files shipped in the packages BESIDE this one.
 
     Always the parent of this package: the source tree in a clone,
     site-packages in an installed package. MIMORA_HOME does NOT apply - it
     redirects what the machine writes, and cannot move files that arrive with
     the code.
+
+    Its one remaining tenant is ``pronunciation/phoneme/``'s committed model
+    calibrations, which belong to a sibling package. Resources owned by
+    ``mimora`` itself are under :func:`shipped_root` instead.
     """
     return _PARENT_OF_PACKAGE
+
+
+def shipped_root() -> Path:
+    """Root of the read-only files shipped INSIDE this package.
+
+    The package directory itself, which is what makes these files survive
+    packaging: setuptools puts a non-Python file into the wheel only when it
+    sits inside a package and is named in ``package-data``. The practice texts
+    and theme schemas used to live at the top of the source tree, where both
+    conditions fail silently - the wheel built fine and the installed app found
+    neither.
+
+    Callers join the same relative path they always did (``texts/...``), so
+    the layout under this root matches the one the source tree used to have.
+    """
+    return _PACKAGE_DIR
 
 
 # ---------------------------------------------------------------------------
 # Named locations
 # ---------------------------------------------------------------------------
-# Every directory the project writes to is named here once. Callers bind to
-# these instead of joining their own strings onto data_root(), for the same
+# Every directory the project globs or writes to is named here once. Callers
+# bind to these instead of joining their own strings onto a root, for the same
 # reason models_info holds the repo ids: a second spelling of the same path is
 # free to drift from the first.
 
@@ -151,8 +176,24 @@ def config_dir() -> Path:
 
 
 def themes_dir() -> Path:
-    """The user's own theme schemas (the shipped ones come from the package)."""
+    """The user's own theme schemas; see :func:`shipped_themes_dir` for the rest.
+
+    Read-only as far as the app is concerned - nothing here writes a theme -
+    but created by :func:`ensure_dirs` all the same, because it is the
+    documented place to drop one and an instruction that starts with "create
+    this directory" is an instruction nobody follows.
+    """
     return config_dir() / "themes"
+
+
+def shipped_themes_dir() -> Path:
+    """The theme schemas that travel with the code.
+
+    Searched after :func:`themes_dir`, so a user file of the same name wins.
+    Named here rather than joined at the call site because config.py both globs
+    this directory (to list the selectable themes) and reads one file out of it.
+    """
+    return shipped_root() / "themes"
 
 
 def models_dir() -> Path:
@@ -183,15 +224,20 @@ def log_dir() -> Path:
 
 
 def ensure_dirs() -> None:
-    """Create the directories the app writes to, idempotently.
+    """Create the directories a working installation needs, idempotently.
 
     Called once by ``config.py`` at import. ``parents=True`` is load-bearing
     rather than defensive: in package mode the data root itself does not exist
-    on a first run, and creating a child of a missing parent would fail. The
-    config directory is created here for a failure that is otherwise silent -
-    ``loader.save_setting`` reports an unwritable settings.json and returns
-    False, so without this directory no preference would ever persist and
-    nothing would say why.
+    on a first run, and creating a child of a missing parent would fail.
+
+    The criterion for being listed here is that a documented scenario would
+    otherwise require the user to run mkdir first. Three of the four are places
+    the app writes to - and ``config/`` earns it twice over, because
+    ``loader.save_setting`` reports an unwritable settings.json only on stderr
+    and returns False, so without the directory no preference would ever
+    persist and nothing would say why. ``config/themes/`` is the exception the
+    criterion is worded for: nothing writes a theme, but it is where the user
+    is told to put one.
     """
-    for directory in (config_dir(), model_cache_dir(), log_dir()):
+    for directory in (config_dir(), themes_dir(), model_cache_dir(), log_dir()):
         directory.mkdir(parents=True, exist_ok=True)

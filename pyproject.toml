@@ -83,11 +83,17 @@ mimora = "mimora.cli:main"
 include = ["mimora*", "pronunciation*"]
 namespaces = false
 
-# A wheel carries only .py files unless the data is named here. This one is a
-# committed resource that ships WITH the code (paths.resource_root), unlike the
-# per-machine calibration.json that used to sit beside it and now lives under
-# the user's config/ directory.
+# A wheel carries only .py files unless the data is named here, and only for
+# files that sit INSIDE a package - which is why texts/ and the theme schemas
+# moved under mimora/ rather than staying at the top of the source tree, where
+# both the build and the install would have skipped them without a word.
+#
+# The calibration is the same kind of file one package over: committed, shipped
+# with the code, read-only (paths.resource_root), unlike the per-machine
+# calibration.json that used to sit beside it and now lives under the user's
+# config/ directory.
 [tool.setuptools.package-data]
+mimora = ["texts/*.txt", "themes/*_schema.json"]
 "pronunciation.phoneme" = ["*_model_calibration.json"]
 
 [tool.setuptools.dynamic]

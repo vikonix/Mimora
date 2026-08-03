@@ -2,7 +2,7 @@
 
 Key options in [`mimora/config.py`](../mimora/config.py) (overridable via [`config/settings.json`](../config/settings.json)). `config/settings.json` is machine-local and not committed: copy [`config/settings.example.json`](../config/settings.example.json) to start, or just launch the app - every key (and the file itself) is optional and falls back to the built-in defaults.
 
-Where `config/` and the other directories are is answered by [`mimora/paths.py`](../mimora/paths.py): the project directory when running from a clone (which is every installation today), the OS user-data directory when installed as a package, and `MIMORA_HOME` over both. **A relative path in `settings.json` resolves against that file's own directory**; the built-in defaults are resolved independently of that rule, since the downloads and the files shipped with the app live in different roots.
+Where `config/` and the other directories are is answered by [`mimora/paths.py`](../mimora/paths.py): the project directory when running from a clone (which is every installation today), the OS user-data directory when installed as a package, and `MIMORA_HOME` over both. **A relative path in `settings.json` resolves against that file's own directory**; the built-in defaults are resolved independently of that rule, since the downloads and the files shipped with the app live in different roots - the starter texts and theme schemas travel inside the `mimora` package, which is the only place an installed copy carries them from.
 
 | Setting | Default | Description |
 |---|---|---|
@@ -13,7 +13,7 @@ Where `config/` and the other directories are is answered by [`mimora/paths.py`]
 | `WAV2VEC2_MODEL_NAME` | `facebook/wav2vec2-large-960h` | Embedding/transcription model used only by the `acoustic` engine. |
 | `WAV2VEC2_DEVICE` | `DEVICE` (cuda/cpu) | Device for the active engine's Wav2Vec2 model. Set to `"cpu"` to avoid VRAM contention with llama.cpp / Kokoro. |
 | `PRONUNCIATION_SCORE_THRESHOLD` | `70.0` | Target score (0-100): feeds each engine's `result.passed`, which the app does not enforce yet (reserved for a future pass/repeat gate). |
-| `PRACTICE_TEXT_FILE` | per language | Source text pre-loaded into the input panel; defaults to the active language's starter text (`texts/practice_text.txt` for English, `texts/practice_text_es.txt` for Spanish). |
+| `PRACTICE_TEXT_FILE` | per language | Source text pre-loaded into the input panel; defaults to the active language's starter text, shipped inside the package (`mimora/texts/practice_text.txt` for English, `mimora/texts/practice_text_es.txt` for Spanish). Point `"practice_text_file"` at your own file to replace it; the picker in the app writes an absolute path. |
 | `PHRASE_GEN_TEMPERATURE` / `PHRASE_GEN_TOP_P` / `PHRASE_GEN_MAX_TOKENS` | `0.7` / `0.9` / `40` | Phrase-generation sampling. `top_p` is sent explicitly rather than left to the server's own default, so switching backends cannot change how the same prompt samples. |
 | `PHRASE_GEN_WINDOW_SENTENCES` | `5` | Sentences of the source text sent to the model per request (sliding window). |
 | `PHRASE_GEN_WINDOW_REPEATS` | `5` | Phrases generated per window position before it slides forward by half its size. |

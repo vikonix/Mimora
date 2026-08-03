@@ -18,14 +18,20 @@ from mimora.languages import english, spanish
 #   BASE_DIR      - what this machine WRITES (settings, downloads, logs). The
 #                   project root when running from a clone, the OS user-data
 #                   directory when installed as a package.
-#   RESOURCE_DIR  - what ships WITH the code and is only read (practice texts,
-#                   the committed model calibrations). Always beside the
-#                   package.
-# In a clone the two are the same directory, which is why one constant used to
-# do both jobs; installed as a package they are not, and every path below picks
+#   RESOURCE_DIR  - what ships WITH the code and is only read, in the packages
+#                   BESIDE this one (the committed model calibrations under
+#                   pronunciation/). Always the parent of the package.
+#   SHIPPED_DIR   - the same kind of file, inside this package: the starter
+#                   practice texts and the built-in theme schemas. A directory
+#                   at the top of the source tree belongs to no package and so
+#                   never reaches an installed copy, which is why these two are
+#                   separate roots rather than one.
+# In a clone all three are the same tree, which is why one constant used to do
+# every job; installed as a package they are not, and every path below picks
 # the one it means.
 BASE_DIR = paths.data_root()
 RESOURCE_DIR = paths.resource_root()
+SHIPPED_DIR = paths.shipped_root()
 # Hand-edited configuration data (settings.json, themes/) lives here.
 CONFIG_DIR = paths.config_dir()
 
@@ -211,7 +217,7 @@ def default_user_settings() -> dict:
 
     The two path defaults resolve against DIFFERENT roots, which is why they
     cannot simply be joined onto one base: the GGUF model is downloaded onto
-    this machine, the practice text ships with the code.
+    this machine, the practice text ships inside the package.
     """
     values = {key: value for key, value in USER_SETTING_DEFAULTS.items()
               if value is not None}
@@ -221,7 +227,7 @@ def default_user_settings() -> dict:
     # (accent_default_voice defaults to the running language otherwise).
     values["voice"] = accent_default_voice(
         USER_SETTING_DEFAULTS["accent"], USER_SETTING_DEFAULTS["practice_language"])
-    values["practice_text_file"] = str(RESOURCE_DIR / values["practice_text_file"])
+    values["practice_text_file"] = str(SHIPPED_DIR / values["practice_text_file"])
     values["external_model_path"] = str(BASE_DIR / values["external_model_path"])
     return values
 
@@ -523,7 +529,8 @@ EXTERNAL_N_CTX = int(_num("external_n_ctx",
 #                        Availability is a language property: the acoustic
 #                        engine is English-only ASR, so a non-English profile
 #                        omits it (see available_engines);
-#   practice_text_file - default source text, relative to the project root;
+#   practice_text_file - default source text, relative to SHIPPED_DIR (the
+#                        package directory), i.e. "texts/<file>";
 #   variants           - the former "accents": a display key -> TTS/espeak
 #                        wiring. Each variant names its synthesis backend
 #                        ("tts_backend", default "kokoro" - see TTS_BACKEND
@@ -583,7 +590,9 @@ def available_engines(language: str = None) -> tuple:
 # matching pronunciation/phoneme/speech.py _lang_key.
 #
 # RESOURCE_DIR, not BASE_DIR: these files are committed and travel with the
-# code, so they sit beside the pronunciation package in both modes. The
+# code, so they sit beside the pronunciation package in both modes. Not
+# SHIPPED_DIR either, despite being the same kind of file - they belong to a
+# sibling package, and RESOURCE_DIR is the root that reaches it. The
 # machine-local calibration.json is the opposite kind of file and lives under
 # BASE_DIR - see engine.py, which injects its path.
 _PHONEME_CALIBRATION_DIR = RESOURCE_DIR / "pronunciation" / "phoneme"
@@ -862,9 +871,11 @@ PRONUNCIATION_ACOUSTIC_GOOD = 0.20
 # settings.json ("practice_text_file"); a relative path resolves against the
 # directory settings.json is in. The default is the active language's profile
 # text, so each language ships its own starter text without a code change - and
-# because it ships, it comes from RESOURCE_DIR rather than from BASE_DIR.
+# because it ships inside the package, it comes from SHIPPED_DIR rather than
+# from BASE_DIR. The profile still spells the path as "texts/<file>", which is
+# the layout under SHIPPED_DIR as much as it was the layout under the old root.
 PRACTICE_TEXT_FILE = _path("practice_text_file",
-                                RESOURCE_DIR / _LANG_PROFILE["practice_text_file"])
+                                SHIPPED_DIR / _LANG_PROFILE["practice_text_file"])
 
 # Shown in the source panel instead when PRACTICE_TEXT_FILE cannot be read
 # (main.py _load_practice_text), in the practiced language (from the profile).
@@ -1082,12 +1093,15 @@ PRACTICE_TEXT_COLLAPSED = _bool("practice_text_collapsed", True)
 # Color Theme (UI palette)
 # =====================================================================
 # UI colors, read from settings.json ("color_theme") at startup; changing the
-# theme requires a restart. Each theme lives in themes/<name>_schema.json as a
-# flat map of semantic color names to hex values, so adding a theme is just
-# adding a file. The built-in palette below doubles as the complete list of
-# valid keys and as the fallback: a missing or broken schema file, or a missing
-# key inside one, falls back to these values, so the app always starts with a
-# usable (dark) palette.
+# theme requires a restart. Each theme is one <name>_schema.json, a flat map of
+# semantic color names to hex values, so adding a theme is just adding a file.
+# The file is looked for in TWO places (see _theme_file): the user's
+# config/themes/ first, then the schemas shipped inside the package. That is
+# what lets a user add a theme without touching the installation and override a
+# shipped one by reusing its name. The built-in palette below doubles as the
+# complete list of valid keys and as the fallback: a missing or broken schema
+# file, or a missing key inside one, falls back to these values, so the app
+# always starts with a usable (dark) palette.
 _DARK_THEME = {
     # Surfaces
     "bg_main": "#121214",           # window background (darkest surface)
@@ -1133,19 +1147,36 @@ _DARK_THEME = {
     "mic_speaking_bg": "#0f2c1d",
 }
 
-def available_themes() -> tuple:
-    """Theme names selectable in the UI, discovered from config/themes/.
 
-    Every ``<name>_schema.json`` file is one theme; the built-in "dark" palette
-    is always included even without a schema file (see the fallback logic
-    below). Sorted for a stable selector order.
+def _theme_file(name: str) -> Path:
+    """The schema file for theme *name*, user copy preferred over the shipped one.
+
+    Returns the shipped path when neither exists: it is the one worth naming in
+    an error message, and read_json answers the same way for a file that is not
+    there as for one that is unreadable.
+    """
+    filename = f"{name}_schema.json"
+    user_file = paths.themes_dir() / filename
+    return user_file if user_file.is_file() else paths.shipped_themes_dir() / filename
+
+
+def available_themes() -> tuple:
+    """Theme names selectable in the UI, from both places a schema can live.
+
+    Every ``<name>_schema.json`` file is one theme, discovered in the user's
+    config/themes/ and among the schemas shipped inside the package. A name
+    present in both is one entry, and the user's file is the one that will be
+    read (see :func:`_theme_file`). The built-in "dark" palette is always
+    included even without a schema file (see the fallback logic below). Sorted
+    for a stable selector order.
     """
     names = {"dark"}
-    try:
-        for schema in (CONFIG_DIR / "themes").glob("*_schema.json"):
-            names.add(schema.name[: -len("_schema.json")])
-    except OSError:
-        pass  # unreadable themes dir - the built-in dark theme still works
+    for directory in (paths.shipped_themes_dir(), paths.themes_dir()):
+        try:
+            for schema in directory.glob("*_schema.json"):
+                names.add(schema.name[: -len("_schema.json")])
+        except OSError:
+            pass  # unreadable themes dir - the built-in dark theme still works
     return tuple(sorted(names))
 
 
@@ -1159,7 +1190,7 @@ if not isinstance(COLOR_THEME, str) or not COLOR_THEME.strip():
 # built-in dark palette so every key is always present.
 THEME = dict(_DARK_THEME)
 
-_THEME_FILE = CONFIG_DIR / "themes" / f"{COLOR_THEME}_schema.json"
+_THEME_FILE = _theme_file(COLOR_THEME)
 _SCHEMA = loader.read_json(_THEME_FILE)
 if not _SCHEMA:
     # For "dark" a missing file is fine - the built-in palette IS dark.

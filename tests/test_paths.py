@@ -11,9 +11,12 @@ which is also the only way to check all three operating systems from one.
 
 What is worth pinning here, in order of what would hurt most if it broke:
 
-* the two roots stay separate (a package's downloads must not be looked for
-  among its code, and its shipped resources must not be looked for among the
+* the roots stay separate (a package's downloads must not be looked for among
+  its code, and its shipped resources must not be looked for among the
   downloads);
+* the shipped resources sit INSIDE the package, because that is the only place
+  a wheel carries a non-Python file from - a directory at the top of the source
+  tree is skipped by both the build and the install without a word;
 * MIMORA_HOME wins over both modes, since it is the documented way out of
   every wrong automatic answer;
 * the marker is the file next to the package, not a "site-packages" test on
@@ -188,12 +191,67 @@ class LayoutTests(unittest.TestCase):
         with _clean_env():
             self.assertEqual(paths.themes_dir().parent, paths.config_dir())
 
+    def test_shipped_themes_are_not_part_of_the_writable_layout(self):
+        # The counterpart of the test above, and the reason the theme lookup
+        # has two places rather than one: this directory is inside the package,
+        # so in package mode it is not under the data root at all and a user
+        # cannot add a file to it.
+        with _clean_env():
+            self.assertEqual(paths.shipped_themes_dir().parent,
+                             paths.shipped_root())
+            self.assertNotEqual(paths.shipped_themes_dir(), paths.themes_dir())
+
     def test_logs_sit_beside_the_settings_rather_than_in_an_os_log_directory(self):
         # A separate log convention exists on only two of the three platforms,
         # and logs are wanted exactly when somebody is already looking at the
         # config directory.
         with _clean_env():
             self.assertEqual(paths.log_dir().parent, paths.data_root())
+
+
+class ShippedRootTests(unittest.TestCase):
+    """What ships inside the package, and that it really is inside it.
+
+    These are the tests that would have caught the packaging bug this root was
+    introduced for: the practice texts and theme schemas used to live at the
+    top of the source tree, which works perfectly in a clone and produces a
+    wheel without them.
+    """
+
+    def test_shipped_root_is_the_package_directory(self):
+        self.assertEqual(paths.shipped_root(), Path(paths.__file__).resolve().parent)
+
+    def test_shipped_root_sits_inside_the_resource_root(self):
+        # The two answer different questions and must not be confused: the
+        # resource root is the parent, where the sibling pronunciation package
+        # keeps its committed calibrations.
+        self.assertEqual(paths.shipped_root().parent, paths.resource_root())
+
+    def test_the_environment_override_does_not_move_it(self):
+        # MIMORA_HOME redirects what the machine writes. These files arrive
+        # with the code and cannot be anywhere else.
+        with _no_marker(), _clean_env(**{paths.HOME_ENV_VAR: "/tmp/elsewhere"}):
+            self.assertEqual(paths.shipped_root(),
+                             Path(paths.__file__).resolve().parent)
+
+    def test_package_mode_keeps_the_shipped_files_away_from_the_downloads(self):
+        with _no_marker(), \
+                mock.patch.object(paths.sys, "platform", "linux"), \
+                _clean_env(XDG_DATA_HOME="/xdg"):
+            self.assertNotEqual(paths.shipped_root(), paths.data_root())
+
+    def test_the_shipped_files_exist_in_this_checkout(self):
+        # Pinned by name rather than by count: these are the files config.py
+        # falls back to when settings.json names nothing, and a rename that
+        # missed one would show up as a missing theme or an empty practice
+        # panel, both of which the app survives quietly.
+        for relative in ("texts/practice_text.txt",
+                         "texts/practice_text_es.txt",
+                         "themes/dark_schema.json",
+                         "themes/light_schema.json"):
+            with self.subTest(file=relative):
+                self.assertTrue((paths.shipped_root() / relative).is_file(),
+                                f"{relative} is missing from the package")
 
 
 class EnsureDirsTests(unittest.TestCase):
@@ -217,15 +275,31 @@ class EnsureDirsTests(unittest.TestCase):
                 self.assertTrue(parents)
                 self.assertTrue(exist_ok)
 
-    def test_creates_the_config_directory(self):
-        # Without it loader.save_setting fails on every write and only says so
-        # on stderr, so no preference would ever persist.
+    def _created_by_ensure_dirs(self):
         created = []
         with _with_marker(), _clean_env(), \
                 mock.patch.object(paths.Path, "mkdir",
                                   lambda self, **kw: created.append(self)):
             paths.ensure_dirs()
-        self.assertIn(paths.config_dir(), created)
+        return created
+
+    def test_creates_the_config_directory(self):
+        # Without it loader.save_setting fails on every write and only says so
+        # on stderr, so no preference would ever persist.
+        self.assertIn(paths.config_dir(), self._created_by_ensure_dirs())
+
+    def test_creates_the_user_themes_directory(self):
+        # The one entry nothing writes to. It is created because it is the
+        # documented place to drop a theme, and in package mode it does not
+        # otherwise exist - an instruction beginning "first create this
+        # directory" is one nobody follows.
+        self.assertIn(paths.themes_dir(), self._created_by_ensure_dirs())
+
+    def test_does_not_create_anything_inside_the_package(self):
+        # The shipped resources are read-only and belong to the installation.
+        created = self._created_by_ensure_dirs()
+        self.assertNotIn(paths.shipped_themes_dir(), created)
+        self.assertNotIn(paths.shipped_root(), created)
 
 
 if __name__ == "__main__":

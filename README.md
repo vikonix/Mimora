@@ -11,7 +11,7 @@
 |:---:|:---:|
 | ![Mimora pronunciation trainer, dark theme](docs/mimora-dark.png) | ![Mimora pronunciation trainer, light theme](docs/mimora-light.png) |
 
-*Themes are configurable in `config/themes/`.*
+*Both themes ship with the app; drop your own `<name>_schema.json` into `config/themes/` to add or replace one.*
 
 ---
 

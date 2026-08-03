@@ -63,9 +63,12 @@ bin/
 # User settings (machine-local; copy config/settings.example.json to start)
 config/settings.json
 
-# Custom texts (personal practice texts stay local; the bundled starter
-# texts are tracked and unaffected by this rule)
-texts/
+# Custom texts (personal practice texts stay local). The leading slash is
+# load-bearing: without it the pattern matches at every depth and would swallow
+# mimora/texts/, where the bundled starter texts now live - they would drop out
+# of the wheel and nothing would report it. This rule covers only the legacy
+# directory at the top of a clone.
+/texts/
 
 prototypes-pronunciation/
 

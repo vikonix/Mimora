@@ -1,7 +1,7 @@
 {
   "_readme": "Mimora user settings. Edit by hand; restart the app to apply. Delete a key (or this whole file) to fall back to the built-in default. Keys starting with '_' are ignored and may be used as comments.",
   "_paths": "Every path key below may be absolute or relative. A relative path resolves against the directory THIS file is in, whichever that is on your machine. The built-in defaults are not affected by that rule: they are resolved for you, and the downloads and the files shipped with the app do not live in the same place.",
-  "_color_theme": "UI color theme: 'dark' or 'light'. Loads config/themes/<name>_schema.json; restart the app to apply.",
+  "_color_theme": "UI color theme: 'dark' or 'light'. Loads <name>_schema.json, looked for in config/themes/ first and among the themes shipped with the app second - so your own file of the same name replaces the shipped one, and a new name adds a theme. Restart the app to apply.",
   "color_theme": "dark",
   "_practice_language": "Practice language: 'english' or 'spanish'. Selects the language profile (variants, voices, engines, starter text). Restart to apply. Also changeable in the settings window ('Language').",
   "practice_language": "english",

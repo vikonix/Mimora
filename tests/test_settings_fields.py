@@ -12,7 +12,10 @@ from the project root with:
 """
 
 import importlib
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 # These tests validate the field model against the BUILT-IN defaults, not
 # against this machine's config/settings.json or hardware_config.json: a valid
@@ -180,9 +183,83 @@ class ConfigHelperTests(unittest.TestCase):
         self.assertIn("dark", themes)
         self.assertEqual(tuple(sorted(themes)), themes)  # stable order
 
+    def test_available_themes_include_the_shipped_light_schema(self):
+        # Against the real directories, so this fails if light_schema.json ever
+        # stops being found where the package keeps it. Without the shipped
+        # half of the lookup an installed copy offers "dark" alone - and does so
+        # silently, because the built-in palette IS dark and nothing errors.
+        self.assertIn("light", config.available_themes())
+
     def test_user_setting_falls_back(self):
         self.assertEqual(
             config.user_setting("no_such_key_ever", "fallback"), "fallback")
+
+
+class ThemeLookupTests(unittest.TestCase):
+    """Two places hold theme schemas, and which one wins is a decision.
+
+    The user's config/themes/ is searched before the schemas inside the
+    package, so a theme can be added without touching the installation and a
+    shipped one can be replaced by reusing its name. Both directories are
+    stubbed here: the real ones hold the project's own themes, and a test that
+    depended on them would break the day one is added.
+    """
+
+    def setUp(self):
+        self._temp = tempfile.TemporaryDirectory()
+        root = Path(self._temp.name)
+        self.user_dir = root / "user"
+        self.shipped_dir = root / "shipped"
+        self.user_dir.mkdir()
+        self.shipped_dir.mkdir()
+        patches = (
+            mock.patch.object(config.paths, "themes_dir",
+                              return_value=self.user_dir),
+            mock.patch.object(config.paths, "shipped_themes_dir",
+                              return_value=self.shipped_dir),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+        self.addCleanup(self._temp.cleanup)
+
+    @staticmethod
+    def _write(directory, name):
+        (directory / f"{name}_schema.json").write_text("{}", encoding="utf-8")
+
+    def test_a_shipped_theme_is_found_when_the_user_has_none(self):
+        # The package-mode default: config/themes/ exists (ensure_dirs creates
+        # it) and is empty.
+        self._write(self.shipped_dir, "light")
+        self.assertEqual(config._theme_file("light"),
+                         self.shipped_dir / "light_schema.json")
+
+    def test_a_user_file_overrides_the_shipped_one_of_the_same_name(self):
+        self._write(self.shipped_dir, "light")
+        self._write(self.user_dir, "light")
+        self.assertEqual(config._theme_file("light"),
+                         self.user_dir / "light_schema.json")
+
+    def test_a_missing_theme_resolves_to_the_shipped_path(self):
+        # Nothing reads it - loader.read_json answers {} either way - but it is
+        # the path named in the "missing or invalid" message, and pointing at
+        # the user's empty directory would send the reader to the wrong place.
+        self.assertEqual(config._theme_file("nosuch"),
+                         self.shipped_dir / "nosuch_schema.json")
+
+    def test_available_themes_merge_both_places_without_duplicates(self):
+        self._write(self.shipped_dir, "light")
+        self._write(self.shipped_dir, "dark")
+        self._write(self.user_dir, "light")   # overrides, not a second entry
+        self._write(self.user_dir, "solar")
+        self.assertEqual(config.available_themes(), ("dark", "light", "solar"))
+
+    def test_a_missing_user_directory_is_not_an_error(self):
+        # It only exists because ensure_dirs makes it, and a user is free to
+        # delete it; the shipped themes must keep working.
+        self._write(self.shipped_dir, "light")
+        self.user_dir.rmdir()
+        self.assertIn("light", config.available_themes())
 
 
 class DefaultsTests(unittest.TestCase):
