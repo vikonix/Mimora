@@ -96,6 +96,28 @@ class EnvOverrideTests(unittest.TestCase):
         with _with_marker(), _clean_env(**{paths.HOME_ENV_VAR: "relative/dir"}):
             self.assertTrue(paths.data_root().is_absolute())
 
+    def test_surrounding_quotes_are_dropped(self):
+        # `set MIMORA_HOME="D:\dir"` in cmd keeps the quotes IN the value,
+        # unlike a POSIX shell, and a quote cannot appear in a Windows
+        # filename - so keeping them turns ensure_dirs() into an OSError raised
+        # while config is being imported.
+        for quoted in ('"/tmp/elsewhere"', "'/tmp/elsewhere'"):
+            with self.subTest(value=quoted):
+                with _with_marker(), _clean_env(**{paths.HOME_ENV_VAR: quoted}):
+                    self.assertEqual(paths.data_root(),
+                                     Path("/tmp/elsewhere").absolute())
+
+    def test_quotes_alone_are_treated_as_unset(self):
+        with _with_marker(), _clean_env(**{paths.HOME_ENV_VAR: '"  "'}):
+            self.assertEqual(paths.data_root(), paths.resource_root())
+
+    def test_unpaired_quote_is_left_alone(self):
+        # Only a matching pair is shell quoting; a lone quote is either a typo
+        # or, on a POSIX filesystem, a legal part of the name. Stripping one
+        # side would silently point the data root somewhere else.
+        with _with_marker(), _clean_env(**{paths.HOME_ENV_VAR: '"/tmp/odd'}):
+            self.assertEqual(paths.data_root(), Path('"/tmp/odd').absolute())
+
     def test_override_does_not_move_the_resources(self):
         # It redirects what this machine writes; it cannot move files that
         # arrive with the code.

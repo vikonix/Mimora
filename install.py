@@ -9,7 +9,7 @@ run Mimora on a fresh machine:
   1. Verify the Python version.
   2. Detect an NVIDIA GPU / CUDA version (via nvidia-smi, no extra packages).
   3. (GPU only) install torch/torchaudio as CUDA builds.
-  4. pip install the project requirements (root file pulls in the subprojects).
+  4. pip install the project dependencies (read from pyproject.toml).
   5. Check for the native espeak-ng binary (optionally help install it).
   6. Pre-download the Hugging Face models into model_cache/.
   7. Pre-download the Supertonic 3 TTS model into model_cache/supertonic3/
@@ -41,9 +41,13 @@ Design notes
   mimora/detect_hardware.py imports torch (which may not be installed yet) - a
   classic bootstrap chicken-and-egg. The probe is run at the very end, once
   those packages exist.
-* The CUDA torch wheels are installed before the requirements file so that the
-  `torch` constraint in requirements.txt is already satisfied - otherwise pip
-  would pull the CPU build from PyPI only for it to be replaced afterwards.
+* The dependency list is read from `[project.dependencies]` in pyproject.toml
+  rather than from a requirements.txt, so the project states its dependencies
+  once. The root requirements.txt is gone; the two under pronunciation/ remain,
+  because those subpackages are installable on their own.
+* The CUDA torch wheels are installed before the dependency step so that the
+  `torch` constraint is already satisfied - otherwise pip would pull the CPU
+  build from PyPI only for it to be replaced afterwards.
 * Packages install into the interpreter that runs this script (sys.executable);
   the script does not create a venv. It checks up front whether it is inside a
   virtual environment and, if not, warns and asks before installing globally
@@ -66,6 +70,7 @@ import logging
 import os
 import platform
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -80,7 +85,8 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 # Logs live in the project's logs/ dir alongside main.log / llm_server.log.
 LOG_DIR = PROJECT_ROOT / "logs"
 LOG_FILE = LOG_DIR / "install.log"
-REQUIREMENTS = PROJECT_ROOT / "requirements.txt"
+# The dependency list, and the only copy of it (see project_dependencies).
+PYPROJECT = PROJECT_ROOT / "pyproject.toml"
 # The app's own settings file. The installer reads and writes exactly one key
 # in it, in exactly one situation - see _disable_llm_backend().
 SETTINGS_FILE = PROJECT_ROOT / "config" / "settings.json"
@@ -117,10 +123,13 @@ TORCH_INDEX_URL = "https://download.pytorch.org/whl/{series}"
 
 PIP = [sys.executable, "-m", "pip"]
 
-# Distribution names (PyPI names, not import names) that requirements.txt and
-# its subproject files install. Used to detect whether the dependency step has
-# already run. Names with dashes (scikit-learn, phonemizer-fork,
-# python-Levenshtein) are the distribution names importlib.metadata expects.
+# Distribution names (PyPI names, not import names) the dependency step is
+# expected to leave behind. Used to detect whether it has already run. Names
+# with dashes (scikit-learn, phonemizer-fork, python-Levenshtein) are the
+# distribution names importlib.metadata expects. Not derived from
+# [project.dependencies] on purpose: this list also names what arrives
+# transitively (onnxruntime, via supertonic), which is exactly what a "did the
+# install really finish" check wants to see.
 REQUIRED_DISTS = [
     "numpy", "soundfile", "sounddevice", "kokoro", "supertonic", "openai",
     "torch", "transformers",
@@ -438,6 +447,49 @@ class Confirmer:
 # Command execution
 # ---------------------------------------------------------------------------
 
+# Characters that make a Windows shell do something other than pass the word
+# along. The redirection pair is the one that matters here and the one easiest
+# to overlook: every version specifier contains '>' or '<', so an unquoted
+# `soundfile>=0.12.0` is not an argument at all - cmd reads it as "run soundfile,
+# send its output to a file named =0.12.0", and PowerShell reserves both
+# characters outright.
+_WINDOWS_SHELL_SPECIAL = frozenset(' \t"<>|&^;,()%!')
+
+
+def display_command(cmd: list[str]) -> str:
+    """The command written so a shell on THIS platform would run it unchanged.
+
+    Every step prints the exact command before running it, and that line is
+    meant to be read and re-run by hand - which is the whole requirement here.
+    A plain " ".join stopped meeting it when the dependency step began passing
+    PEP 508 requirement strings: their markers hold spaces and a ';', so the
+    joined line is not an ugly rendering of the command but a different one,
+    cut short at the first semicolon.
+
+    Quoting is per-platform because the shells disagree, and neither branch is a
+    fallback for the other. shlex.join is right for POSIX, and already covers
+    this: shlex.quote treats '>' as unsafe, so specifiers come out quoted.
+
+    Windows gets its own pass rather than subprocess.list2cmdline. That function
+    is correct for what subprocess uses it for - handing CreateProcess something
+    the C runtime will split back into the same argv - and it therefore quotes
+    on whitespace alone. A printed line has a shell for an audience, not the
+    argv parser, so the redirection characters have to be covered too. Extra
+    double quotes cost nothing if the line is pasted: the argv parser strips
+    them, so the reconstructed argument is identical either way.
+
+    Display only, and it assumes no argument contains a double quote of its own
+    - true of every command this installer builds, and not worth the escaping
+    rules it would otherwise drag in.
+    """
+    if os.name != "nt":
+        return shlex.join(cmd)
+    return " ".join(
+        f'"{arg}"' if any(char in _WINDOWS_SHELL_SPECIAL for char in arg) else arg
+        for arg in cmd
+    )
+
+
 def run_command(cmd: list[str], log: Logger) -> bool:
     """Run a subprocess, streaming combined output live to console and log.
 
@@ -446,7 +498,7 @@ def run_command(cmd: list[str], log: Logger) -> bool:
     code 0, False otherwise. Never raises on a non-zero exit - the caller
     decides how a failure affects the rest of the run.
     """
-    log.log(f"    $ {' '.join(cmd)}")
+    log.log(f"    $ {display_command(cmd)}")
     try:
         # Merge stderr into stdout and read incrementally. line-buffered text
         # mode keeps memory flat regardless of how much the command prints.
@@ -947,15 +999,45 @@ def step_check_python(
     report.add("Python version", DONE, platform.python_version())
 
 
+def project_dependencies() -> list[str]:
+    """The `[project.dependencies]` list from pyproject.toml, verbatim.
+
+    The requirement strings (markers included) are handed to pip unchanged, so
+    this is a reader and not a parser - nothing here interprets a specifier.
+
+    tomllib is imported here rather than at module level on purpose: it is
+    stdlib only from 3.11, which is MIN_PYTHON, and this script has to stay
+    *runnable* on an older interpreter for exactly as long as it takes to print
+    "Mimora needs Python >= 3.11" in step 1. A module-level import would replace
+    that message with a traceback.
+    """
+    import tomllib
+
+    with PYPROJECT.open("rb") as handle:
+        data = tomllib.load(handle)
+    deps = data.get("project", {}).get("dependencies")
+    if not isinstance(deps, list) or not deps:
+        raise InstallError("pyproject.toml has no [project] dependencies")
+    return [str(item) for item in deps]
+
+
 def step_install_requirements(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
-    """Install the project requirements; the root file chains the subprojects."""
+    """Install the project dependencies, as declared in pyproject.toml."""
     log.banner("Step 4 - Project dependencies")
-    if not REQUIREMENTS.exists():
-        log.log(f"    ERROR: {REQUIREMENTS} not found. Aborting.")
-        report.add("pip requirements", FAILED, "requirements.txt missing")
+    if not PYPROJECT.exists():
+        log.log(f"    ERROR: {PYPROJECT} not found. Aborting.")
+        report.add("pip requirements", FAILED, "pyproject.toml missing")
         raise InstallError("pip requirements")
+
+    try:
+        requirements = project_dependencies()
+    except (OSError, ValueError, InstallError) as exc:
+        # ValueError covers tomllib.TOMLDecodeError, which subclasses it.
+        log.log(f"    ERROR: cannot read dependencies from {PYPROJECT}: {exc}")
+        report.add("pip requirements", FAILED, "unreadable pyproject.toml")
+        raise InstallError("pip requirements") from exc
 
     installed = all_requirements_installed()
     # Binary-only install: if pip can't find a prebuilt wheel for the current
@@ -963,15 +1045,21 @@ def step_install_requirements(
     # downloading an sdist and compiling it (which is what happened on an
     # untested Python and triggered a numpy source build). The few sdist-only
     # packages are exempted so they can still build.
-    cmd = PIP + ["install", "-r", str(REQUIREMENTS),
+    #
+    # The requirements are passed as arguments rather than through `-r`: the
+    # list lives in pyproject.toml now, and writing it to a temporary file would
+    # only add a way for the two to disagree. Each string is one argv element,
+    # so the markers survive without quoting.
+    cmd = PIP + ["install", *requirements,
                  "--only-binary", ":all:",
                  "--no-binary", ",".join(SOURCE_ONLY_PACKAGES)]
-    desc = ("Install all Python dependencies (requirements.txt also pulls in "
-            "the pronunciation/acoustic/ and pronunciation/phoneme/ "
-            "requirements).")
+    desc = (f"Install all {len(requirements)} Python dependencies declared in "
+            f"pyproject.toml (both pronunciation engines included).")
     if installed:
         log.log("    All expected dependencies are already installed.")
-    if not confirmer.confirm(desc, " ".join(cmd), installed=installed):
+    # display_command rather than " ".join, for the reason given there: this is
+    # the one step whose arguments are PEP 508 requirement strings.
+    if not confirmer.confirm(desc, display_command(cmd), installed=installed):
         report.add("pip requirements", SKIPPED,
                    "already installed" if installed else "")
         return
@@ -1514,11 +1602,11 @@ def main() -> int:
         report.add("GPU detection", DONE,
                    gpu_name or ("forced" if args.gpu else "none"))
 
-        # Step 3: the CUDA torch build, installed BEFORE requirements so the
-        # torch constraint in requirements.txt is already satisfied (otherwise
-        # pip pulls the CPU wheel from PyPI first and it is replaced right
-        # after). torch ships CPU wheels on PyPI, so the CPU path needs no
-        # step of its own here.
+        # Step 3: the CUDA torch build, installed BEFORE the dependency step so
+        # its `torch` constraint is already satisfied (otherwise pip pulls the
+        # CPU wheel from PyPI first and it is replaced right after). PyPI ships
+        # CPU wheels for torch on Windows and macOS and CUDA wheels on Linux, so
+        # the CPU path needs no step of its own here.
         if use_gpu:
             log.banner("Step 3 - GPU (CUDA) builds")
             step_gpu_torch(log, confirmer, report, driver_cuda)

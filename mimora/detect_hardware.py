@@ -434,6 +434,51 @@ def build_config(hardware: dict) -> dict:
 # Entry points
 # =====================================================================
 
+def warn_if_gpu_unused(device: str) -> None:
+    """Log a warning when an NVIDIA GPU is present but torch is not using it.
+
+    The counterpart of ``llm_server_ctl.log_compute_devices``, for the same
+    class of failure one layer over. A CPU-only torch on a machine with a card
+    raises nothing: the app works, Wav2Vec2 and the Kokoro synthesis are simply
+    several times slower, and only a comparison anyone would have to think of
+    making would reveal it. That is the same reason the LLM's device probe
+    exists - see _probe_llama_offload above, which asks the identical question
+    about the llama-server binary.
+
+    It is reachable by accident because a published package cannot name an
+    index. PyPI serves CUDA-enabled torch on Linux and CUDA does not exist on
+    macOS, so the gap is one platform wide: Windows with an NVIDIA card, where
+    an install that did not name a backend gets the CPU wheel.
+
+    *device* is passed in rather than read from ``config``, which this module
+    may not import (see the module docstring). It is already the answer to "does
+    torch see CUDA" - ``loader.detect_device`` probed it, or a previous run of
+    this module wrote it - and no user setting overrides it, so "cpu" means
+    torch could not use a GPU rather than that somebody asked for one. Which
+    also means torch is never imported here, and nvidia-smi is only consulted in
+    that case: on a machine already running on CUDA this costs nothing.
+
+    A driver present while torch sits on the CPU is equally what a broken CUDA
+    installation looks like, so the message names that way out too.
+    """
+    if device != "cpu":
+        return
+    try:
+        from mimora import llama_server_fetch
+    except ImportError:
+        return  # same degradation as _probe_llama_offload: diagnostics only
+    if llama_server_fetch.detect_driver_cuda() is None:
+        return  # no NVIDIA driver, so the CPU is the correct answer here
+    logging.warning(
+        "An NVIDIA GPU is present, but torch is a CPU-only build and will not "
+        "use it - pronunciation scoring and speech synthesis will run several "
+        "times slower. To reinstall with a CUDA build: `uv tool install "
+        "--reinstall mimora --torch-backend auto` (or set UV_TORCH_BACKEND=auto "
+        "beforehand), or `python install.py` from a clone. If the install did "
+        "name a CUDA backend, then the driver and the build disagree - see "
+        "https://pytorch.org/get-started/locally/.")
+
+
 def probe_and_write() -> dict:
     """Probe the machine, write hardware_config.json, return the whole result.
 

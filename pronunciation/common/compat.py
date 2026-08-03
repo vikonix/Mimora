@@ -4,8 +4,8 @@
 """Runtime compatibility shims for the Intel-macOS fallback stack.
 
 Intel Macs (x86_64) cap PyTorch at 2.2.2 - no newer wheel is published for that
-platform - which in turn forces transformers<5 (see the "Intel macOS note" in
-the root requirements.txt). transformers 4.5x refuses ``torch.load`` on torch
+platform - which in turn forces transformers<5 (see the Intel macOS note above
+``dependencies`` in pyproject.toml). transformers 4.5x refuses ``torch.load`` on torch
 < 2.6 (CVE-2025-32434) unless the checkpoint is a safetensors file. Every model
 Mimora loads through transformers (facebook/wav2vec2-large-960h,
 facebook/wav2vec2-xlsr-53-espeak-cv-ft, facebook/nllb-200-distilled-600M)

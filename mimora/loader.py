@@ -227,15 +227,37 @@ def models_cached(hub_dir: Path, repos) -> bool:
 def detect_device(hw_value) -> str:
     """Resolve the compute device: 'cuda' or 'cpu'.
 
-    A valid *hw_value* (written by detect_hardware) wins and short-circuits - torch is
-    not imported in that case, so callers that already know the device (and unit
-    tests) never pay the ~1s torch import. Otherwise probe torch directly,
+    *hw_value* is what detect_hardware wrote into hardware_config.json, and it
+    is trusted in one direction only.
+
+    'cpu' short-circuits: torch is not imported, so callers that already know
+    the device (and unit tests) do not pay the ~1s import. A machine that has
+    since GAINED a usable GPU is merely slower, and detect_hardware's
+    warn_if_gpu_unused says so at startup.
+
+    'cuda' is verified rather than believed, because the file outlives the
+    environment that wrote it: `uv tool upgrade` without a CUDA backend replaces
+    the wheel with a CPU-only build, and paths.py offers carrying the data
+    directory to another machine as a feature. A stale 'cuda' is not a slow app
+    but a dead one - Kokoro's `.to(config.DEVICE)` raises "Torch not compiled
+    with CUDA enabled" before the window ever appears. The cost is the torch
+    import on a GPU machine, which every consumer of config pays anyway; the
+    modules that must stay light (install.py, the three fetchers, `mimora
+    --version`) do not import config at all.
+
+    Anything else - including a missing file - probes torch the same way,
     falling back to 'cpu' when torch is absent.
     """
-    if hw_value in ("cuda", "cpu"):
+    if hw_value == "cpu":
         return hw_value
     try:
         import torch
-        return "cuda" if torch.cuda.is_available() else "cpu"
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     except ImportError:
-        return "cpu"
+        device = "cpu"
+    if hw_value == "cuda" and device != "cuda":
+        print("[config] hardware_config.json says DEVICE=cuda, but this torch "
+              "build cannot use CUDA; falling back to cpu. Re-run "
+              "`python -m mimora.detect_hardware` to refresh the file.",
+              file=sys.stderr)
+    return device

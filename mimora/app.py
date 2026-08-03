@@ -39,7 +39,7 @@ import tkinter as tk
 from tkinter import ttk
 import numpy as np
 
-from mimora import config, first_run, first_run_window, lifecycle, prosody
+from mimora import config, detect_hardware, first_run, first_run_window, lifecycle, prosody
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.phrase_source import SourceTextPhraseProvider
@@ -1540,6 +1540,13 @@ def run():
         logging.info("Restarting to apply the detected hardware settings.")
         lifecycle.spawn_replacement()
         lifecycle.hard_exit()
+
+    # After the first run and its possible restart, so the device this reports
+    # on is the one this process will actually use, and so a machine that
+    # relaunches does not say it twice. config.DEVICE is passed in rather than
+    # read there: detect_hardware must not import config (it rewrites the file
+    # config reads at import).
+    detect_hardware.warn_if_gpu_unused(config.DEVICE)
 
     # Named gui, not app: inside this module "app" is the module itself.
     gui = PronunciationTrainerGUI()

@@ -30,7 +30,7 @@ from ttkbootstrap.style import Bootstyle
 # canvas), which the per-widget ``autostyle=False`` flag cannot reach. Only the
 # classic-widget hook is disabled; ttk widgets (the comboboxes) keep their
 # ttkbootstrap styling. Verified against ttkbootstrap 1.x internals - see the
-# version pin in requirements.txt.
+# version pin in pyproject.toml.
 Bootstyle.update_tk_widget_style = staticmethod(lambda widget=None: None)
 
 from mimora import config

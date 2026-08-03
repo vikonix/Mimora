@@ -12,10 +12,19 @@ name = "mimora"
 dynamic = ["version"]
 description = "Local, offline pronunciation trainer: Kokoro TTS prompts, Wav2Vec2 scoring, local LLM phrase generation."
 readme = "README.md"
-# Tested on 3.11 and 3.12. No upper bound on purpose, matching install.py:
-# newer interpreters get a warning there (WHEEL_TESTED_MAX), and the
-# binary-only dependency install fails loudly if wheels are missing.
-requires-python = ">=3.11"
+# Tested on 3.11 and 3.12, and bounded rather than left open. The old reasoning
+# ("a newer interpreter gets install.py's WHEEL_TESTED_MAX warning, and the
+# binary-only install fails loudly") holds only inside install.py: `pip install
+# mimora` and `uv tool install mimora` see neither the warning nor
+# --only-binary, so on 3.14 the resolver walks into sdists (numpy, then spacy)
+# and the install dies in a Cython traceback from somebody else's package -
+# the worst possible failure for the audience a published package is for. With
+# the bound, uv simply fetches a 3.12 to install into.
+#
+# Raising the ceiling is a deliberate act, together with WHEEL_TESTED_MAX in
+# install.py and the requirements section of README.md, once a newer minor is
+# verified to have wheels for every dependency.
+requires-python = ">=3.11,<3.13"
 # PEP 639 SPDX expression, not the older license = { file = ... } table: that
 # form embeds the whole licence TEXT into the License: metadata field, and
 # setuptools deprecated it in 77 - which is the floor in build-system above.
@@ -54,6 +63,114 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]
 
+# The single list of runtime dependencies. It used to live in requirements.txt,
+# which chained pronunciation/acoustic/ and pronunciation/phoneme/ with -r; that
+# file is gone and install.py reads this list instead (tomllib, stdlib since
+# 3.11 = requires-python above), so there is one list and not a list plus a
+# copy. The two pronunciation/*/requirements.txt files stay: those subpackages
+# are reusable GUI-agnostic libraries and must remain installable on their own -
+# which is also why they still repeat torch/transformers/numpy with the same
+# markers. Change one, change all of them.
+#
+# No index is named here, because a PyPI package cannot name one. That matters
+# on exactly one platform: PyPI's torch is a CUDA build on Linux and CUDA does
+# not exist on macOS, so only Windows with an NVIDIA card gets a CPU-only wheel
+# it did not want. The answer is `--torch-backend auto` at install time (README)
+# plus a startup warning when that was missed
+# (detect_hardware.warn_if_gpu_unused, called once from app.run).
+#
+# Intel macOS (x86_64) runs on relaxed pins throughout: PyTorch published no
+# wheel newer than 2.2.2 for it, that build wants NumPy 1.x, and transformers
+# 5.x requires torch>=2.7. So torch, torchaudio, transformers and numpy each
+# carry a pair of markers. This accepts CVE-2026-4372 on Intel Mac (a local
+# desktop app loading only trusted models) in exchange for a working stack;
+# every other platform keeps the hardened pins.
+dependencies = [
+    # --- core runtime -----------------------------------------------------
+    # NumPy upper bound: numba (via librosa) supports NumPy <= 2.4, and without
+    # the cap librosa.resample fails at runtime with "Numba needs NumPy 2.4 or
+    # less". Drop it once numba supports 2.5.
+    "numpy>=1.24.0,<2.5; platform_system != 'Darwin' or platform_machine != 'x86_64'",
+    "numpy>=1.24.0,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+    "torch>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'",
+    "torch==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+    "torchaudio>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'",
+    "torchaudio==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+    # transformers>=5.3 closes CVE-2026-4372 (config-injection RCE; no 4.x fix
+    # exists). 5.x needs torch>=2.7 for torch.float8_e8m0fnu.
+    "transformers>=5.3; platform_system != 'Darwin' or platform_machine != 'x86_64'",
+    "transformers>=4.44,<5; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+
+    # --- audio in and out -------------------------------------------------
+    "soundfile>=0.12.0",
+    "sounddevice>=0.4.6",
+    "librosa>=0.10.0",
+    "scipy>=1.10.0",
+    "scikit-learn>=1.2.0",
+
+    # --- speech synthesis -------------------------------------------------
+    "kokoro>=0.3.0",
+    # Supertonic 3 (mimora/tts.py SupertonicBackend, Spanish). Pulls
+    # onnxruntime and huggingface-hub. The weights (~400 MB, OpenRAIL-M) are
+    # NOT bundled: install.py pre-downloads them, or the first run fetches them.
+    "supertonic>=0.1",
+
+    # --- pronunciation scoring -------------------------------------------
+    # phonemizer-FORK, never plain "phonemizer": both own the same import name
+    # and must not be installed together, and only the fork has the
+    # EspeakWrapper.set_data_path() that Kokoro/misaki call.
+    "phonemizer-fork>=3.3.0",
+    # Articulatory feature distance for the phoneme substitution cost - the one
+    # dependency the acoustic engine does not share.
+    "panphon>=0.20.0",
+    "python-Levenshtein>=0.21.0",
+    "fastdtw>=0.3.4",
+    # transformers needs protobuf to parse the sentencepiece model when it
+    # builds a fast tokenizer; both NLLB and the wav2vec2 phoneme tokenizer take
+    # that path. Usually transitive, pinned so a minimal resolve cannot fail
+    # with "requires the protobuf library".
+    "sentencepiece>=0.1.99",
+    "protobuf>=3.20.0",
+
+    # --- LLM and phrase generation ---------------------------------------
+    # The LLM itself has no entry on purpose: it runs in the official
+    # llama-server binary, installed by mimora/llama_server_fetch.py rather than
+    # by pip. Do not add llama-cpp-python back - it publishes no CPU wheel on
+    # recent releases, so the binary-only install would fail outright.
+    "openai>=1.0.0",
+    # Zipf word frequencies for the proficiency level's vocabulary floor. Pure
+    # Python, data ships inside the package, imported lazily.
+    "wordfreq>=3.0",
+
+    # --- model downloads --------------------------------------------------
+    # Arrives transitively but pinned because first_run_download.py passes
+    # huggingface_hub's own tqdm_class hook to snapshot_download and
+    # hf_hub_download to count bytes for the progress bar; a version without
+    # that parameter turns the required-level download into a TypeError. 1.24 is
+    # the version the aggregation was verified against. Intel macOS is left
+    # unconstrained on purpose - transformers 4.x caps the hub below 1.0 there,
+    # so a pin would make that platform unsatisfiable.
+    "huggingface_hub>=1.24; platform_system != 'Darwin' or platform_machine != 'x86_64'",
+    # Nothing here imports click and no dependency of ours declares it: it used
+    # to arrive only because huggingface_hub 1.x requires it. That stayed
+    # invisible until Intel macOS, where the pin above does not apply, hub 0.x
+    # has no such requirement, and the first run died with "No module named
+    # 'click'" from inside the kokoro -> misaki -> spacy chain. Listed
+    # unconditionally rather than behind a marker: depending on another
+    # package's dependency would repeat this silence everywhere the day the hub
+    # drops it.
+    "click>=8.4.2",
+
+    # --- user interface ---------------------------------------------------
+    # Themed ttk widgets, imported as a drop-in "ttk". Capped below 2.0:
+    # ui_theme.py disables the classic-widget autostyle hook through the 1.x
+    # internal Bootstyle.update_tk_widget_style, which the 2.x rewrite renames.
+    "ttkbootstrap>=1.10,<2",
+    # The face and progress ring are drawn supersampled and downscaled for the
+    # antialiasing Tk Canvas lacks. >=9.1 for Image.Resampling.
+    "pillow>=9.1",
+]
+
 [project.urls]
 Homepage = "https://github.com/vikonix/Mimora"
 Repository = "https://github.com/vikonix/Mimora"
@@ -66,13 +183,6 @@ Issues = "https://github.com/vikonix/Mimora/issues"
 # `python -m mimora` into the same function.
 [project.scripts]
 mimora = "mimora.cli:main"
-
-# Runtime dependencies still live in requirements.txt (plus the
-# pronunciation/acoustic/ and pronunciation/phoneme/ files it chains in) rather
-# than in [project.dependencies]: they are installed per-machine with CPU/CUDA
-# variants by install.py. Until that moves here, an installed wheel has an
-# entry point but none of the libraries behind it - see
-# prototypes-pronunciation/tasks/installer.md, works 5 and 6.
 
 # Discovered rather than listed by hand. The previous explicit list had silently
 # lost mimora.languages, without which config.LANGUAGE_PROFILES cannot be built

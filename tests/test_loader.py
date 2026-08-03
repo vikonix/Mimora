@@ -4,18 +4,22 @@
 """Unit tests for mimora.loader - the pure configuration machinery.
 
 These exercise the validation rules and fallbacks in isolation: loader imports
-only the standard library, so nothing here touches torch, the HuggingFace stack,
-or config.py's import-time side effects. Run from the project root with:
+only the standard library, so nothing here touches the HuggingFace stack or
+config.py's import-time side effects. The one function that reaches for torch
+(detect_device, lazily) gets a stub in sys.modules, so these stay fast and pass
+with or without torch and a GPU. Run from the project root with:
 
     python -m unittest tests.test_loader
 """
 
 import io
 import json
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr
 from pathlib import Path
+from unittest import mock
 
 from mimora import loader
 
@@ -218,15 +222,59 @@ class ModelsCachedTests(unittest.TestCase):
         self.assertFalse(loader.models_cached(self.hub, self.repos))
 
 
-class DetectDeviceTests(unittest.TestCase):
-    # Only the short-circuit branches are tested: a valid hw_value must be
-    # returned verbatim without importing torch, so these stay fast and do not
-    # depend on torch being installed or a GPU being present.
-    def test_cuda_passes_through(self):
-        self.assertEqual(loader.detect_device("cuda"), "cuda")
+class _FakeTorch:
+    """Stand-in for the torch module, so these tests need neither it nor a GPU.
 
-    def test_cpu_passes_through(self):
-        self.assertEqual(loader.detect_device("cpu"), "cpu")
+    Installed into sys.modules, which is what `import torch` inside
+    detect_device consults first. A sys.modules entry of None is the documented
+    way to make that same import raise ImportError, which covers the third case.
+    """
+
+    def __init__(self, cuda_available: bool):
+        self.cuda = type("cuda", (), {
+            "is_available": staticmethod(lambda: cuda_available)})
+
+
+class DetectDeviceTests(unittest.TestCase):
+    def _detect(self, hw_value, torch_module) -> tuple[str, str]:
+        """Return (device, stderr) with *torch_module* standing in for torch."""
+        err = io.StringIO()
+        with mock.patch.dict(sys.modules, {"torch": torch_module}), \
+                redirect_stderr(err):
+            return loader.detect_device(hw_value), err.getvalue()
+
+    def test_cpu_short_circuits_without_asking_torch(self):
+        # The fake reports CUDA: anything other than "cpu" here would mean the
+        # value was probed rather than trusted, i.e. the ~1s import was paid.
+        device, err = self._detect("cpu", _FakeTorch(True))
+        self.assertEqual(device, "cpu")
+        self.assertEqual(err, "")
+
+    def test_cuda_confirmed_by_torch(self):
+        device, err = self._detect("cuda", _FakeTorch(True))
+        self.assertEqual(device, "cuda")
+        self.assertEqual(err, "")
+
+    def test_stale_cuda_falls_back_to_cpu(self):
+        device, err = self._detect("cuda", _FakeTorch(False))
+        self.assertEqual(device, "cpu")
+        self.assertIn("hardware_config.json", err)
+
+    def test_cuda_without_torch_falls_back_to_cpu(self):
+        device, err = self._detect("cuda", None)  # None => import raises
+        self.assertEqual(device, "cpu")
+        self.assertIn("hardware_config.json", err)
+
+    def test_no_hw_value_probes_torch(self):
+        self.assertEqual(self._detect(None, _FakeTorch(True))[0], "cuda")
+        self.assertEqual(self._detect(None, _FakeTorch(False))[0], "cpu")
+
+    def test_unknown_hw_value_probes_torch_silently(self):
+        # An unrecognised value is not a claim about CUDA, so it is not worth a
+        # message about a stale file.
+        device, err = self._detect("gpu", _FakeTorch(False))
+        self.assertEqual(device, "cpu")
+        self.assertEqual(err, "")
 
 
 if __name__ == "__main__":

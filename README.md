@@ -202,14 +202,24 @@ git clone https://github.com/vikonix/Mimora.git Mimora
 cd Mimora
 
 # 2. All dependencies in one step
-#    The root requirements.txt already pulls in the subproject files via -r:
-#    pronunciation/acoustic/ and pronunciation/phoneme/ (panphon for the
-#    default phoneme engine). No separate per-engine install is needed.
-pip install -r requirements.txt
+#    The list lives in [project.dependencies] in pyproject.toml and covers both
+#    pronunciation engines (panphon included, for the default phoneme engine).
+#    No separate per-engine install is needed.
+#
+#    Editable (-e), because this is a clone: a plain `pip install .` would copy
+#    the code into site-packages, leaving a second copy that your edits do not
+#    reach. Editable also keeps Mimora in "source tree" mode, so config/, models/
+#    and logs/ stay in the project directory rather than moving to the OS
+#    user-data directory (see mimora/paths.py).
+pip install -e .
 ```
 
 The offline translator (NLLB-200) needs no extra step - its dependencies
-(`transformers`, `sentencepiece`) are already in the root `requirements.txt`.
+(`transformers`, `sentencepiece`) are in that same list.
+
+On Windows with an NVIDIA card, add the CUDA build of `torch` afterwards (see
+[GPU support](#gpu-support-recommended)): PyPI's `torch` is CPU-only there. On
+Linux PyPI already serves a CUDA build, and macOS has no CUDA at all.
 
 ### Install espeak-ng (required for phoneme analysis)
 
@@ -269,7 +279,12 @@ Then restart Mimora.
 
 ### GPU support (recommended)
 
-The default `torch` wheel is CPU-only. For NVIDIA GPUs:
+Whether you need this step depends on your platform. PyPI serves **CPU-only**
+`torch` on Windows and macOS and a **CUDA-enabled** build on Linux, and macOS has
+no CUDA at all - so this section is about **Windows with an NVIDIA card**, which
+is the one combination that gets a CPU wheel it did not want. Mimora says so at
+startup if it happens: the app still works, Wav2Vec2 and speech synthesis are
+just several times slower.
 
 - **PyTorch** - install a CUDA build (other CUDA versions: see [pytorch.org](https://pytorch.org/get-started/locally/)):
   ```powershell
@@ -278,6 +293,17 @@ The default `torch` wheel is CPU-only. For NVIDIA GPUs:
   Reinstall `torch` and `torchaudio` **together**: force-reinstalling `torch` alone
   leaves a `torchaudio` built against the previous torch, which then fails to
   import (`OSError: [WinError 127]`) and breaks pronunciation analysis.
+
+  With **uv** this is one flag instead - it reads the installed driver and picks
+  the matching PyTorch index itself, falling back to CPU when there is no GPU:
+  ```powershell
+  uv tool install mimora --torch-backend auto
+  # or, equivalently:
+  # UV_TORCH_BACKEND=auto uv tool install mimora
+  ```
+  Needs uv 0.9.20 or newer. There is no equivalent for `pipx`: an index cannot be
+  named in a published package's metadata, so a pipx install gets the CPU wheel
+  and the manual step above.
 - **The LLM** needs no pip package at all: it runs in the official llama.cpp
   binary, and the fetcher below picks the GPU build for your platform
   automatically - CUDA on Windows, Vulkan on Linux, where llama.cpp publishes

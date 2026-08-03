@@ -1,18 +1,26 @@
-"""Validate the PEP 508 environment markers in the requirements files.
+"""Validate the PEP 508 environment markers in the project's dependency lists.
 
-The root and pronunciation/* requirements carry per-platform markers so that
-Intel macOS (x86_64) gets a relaxed stack (torch==2.2.2, NumPy<2, transformers
-<5) while every other platform keeps the hardened pins. This script parses each
-marked line and prints which simulated environments it activates in, so a
-mistake (an overlapping or missing marker) is obvious without running pip.
+The project list and the pronunciation/* requirements carry per-platform markers
+so that Intel macOS (x86_64) gets a relaxed stack (torch==2.2.2, NumPy<2,
+transformers<5) while every other platform keeps the hardened pins. This script
+parses each marked line and prints which simulated environments it activates in,
+so a mistake (an overlapping or missing marker) is obvious without running pip.
 
-Pure string parsing - no network, no installs - safe to run on any OS. The
-requirements paths are resolved against the repository root derived from this
-file's location, so the working directory does not matter:
+There are three lists rather than one because the two subpackages under
+pronunciation/ are reusable GUI-agnostic libraries and must stay installable on
+their own. They therefore repeat torch, transformers and numpy with the same
+markers as the application - which is the duplication this script exists to
+police. (The root requirements.txt that used to be the first of the three is
+gone: the application's list lives in pyproject.toml now.)
+
+Pure parsing - no network, no installs - safe to run on any OS. The paths are
+resolved against the repository root derived from this file's location, so the
+working directory does not matter:
 
     python tools/check_markers.py
 """
 
+import tomllib
 from pathlib import Path
 
 from packaging.requirements import Requirement
@@ -28,13 +36,30 @@ ENVIRONMENTS = {
 # The packages that carry platform-conditional markers.
 MARKED_PACKAGES = ("numpy", "torch", "torchaudio", "transformers")
 
-REQUIREMENTS_FILES = (
-    "requirements.txt",
+DEPENDENCY_SOURCES = (
+    "pyproject.toml",
     "pronunciation/acoustic/requirements.txt",
     "pronunciation/phoneme/requirements.txt",
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+def requirement_lines(path: Path) -> list[str]:
+    """The requirement strings held by *path*, whichever format it uses.
+
+    Two formats, one job: `[project.dependencies]` in pyproject.toml for the
+    application, and a plain requirements file for each subpackage. TOML entries
+    arrive already stripped of comments; the text files are stripped here, and
+    the caller filters both the same way.
+    """
+    if path.suffix == ".toml":
+        with path.open("rb") as handle:
+            data = tomllib.load(handle)
+        return [str(item)
+                for item in data.get("project", {}).get("dependencies", [])]
+    return [line.strip()
+            for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 def active_environments(req: Requirement) -> list[str]:
@@ -48,15 +73,14 @@ def active_environments(req: Requirement) -> list[str]:
 
 def main() -> int:
     ok = True
-    for rel_path in REQUIREMENTS_FILES:
+    for rel_path in DEPENDENCY_SOURCES:
         path = REPO_ROOT / rel_path
         print(f"\n== {rel_path} ==")
         # package name -> environment -> number of active lines. Each marked
         # package must resolve to exactly ONE line per environment: zero means
         # pip installs nothing there, two+ means conflicting specifiers.
         coverage: dict[str, dict[str, int]] = {}
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            line = raw.strip()
+        for line in requirement_lines(path):
             if not any(line.startswith(pkg) for pkg in MARKED_PACKAGES):
                 continue
             req = Requirement(line)  # raises on an invalid marker/specifier

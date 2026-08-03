@@ -79,8 +79,16 @@ def _env_root() -> Path | None:
     ``~`` is expanded so the variable can be written the way a shell would
     accept it, and the result is made absolute so a relative value cannot make
     the app's files depend on the working directory at launch.
+
+    One matching pair of surrounding quotes is dropped: ``set MIMORA_HOME="D:\\x"``
+    in cmd keeps the quotes inside the value, unlike a POSIX shell, and a quote
+    is not a legal character in a Windows filename - so ``ensure_dirs`` would
+    raise OSError while ``config`` was still being imported, showing a traceback
+    where the whole point of the variable is to be an easy way out.
     """
     value = os.environ.get(HOME_ENV_VAR, "").strip()
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        value = value[1:-1].strip()
     if not value:
         return None
     return Path(value).expanduser().absolute()

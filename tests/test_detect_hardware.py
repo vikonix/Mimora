@@ -12,6 +12,7 @@ root with:
     python -m unittest tests.test_detect_hardware
 """
 
+import logging
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -202,6 +203,46 @@ class BuildConfigTorchTests(unittest.TestCase):
             hardware(vram_gb=4.0, offload=True, torch_cuda=True))
         self.assertEqual(config["DEVICE"], "cuda")
         self.assertEqual(config["WAV2VEC2_DEVICE"], "cpu")
+
+
+class WarnIfGpuUnusedTests(unittest.TestCase):
+    """The startup warning for a CPU-only torch on a machine with a card.
+
+    The failure it exists for is silent by nature, so what matters is that it
+    fires in exactly one situation and stays quiet - and cheap - in the others.
+    nvidia-smi is stubbed throughout; the real one would answer for whatever
+    machine happens to run the suite.
+    """
+
+    def _run(self, device, driver_cuda):
+        with patch.object(llama_server_fetch, "detect_driver_cuda",
+                          return_value=driver_cuda) as detect:
+            with self.assertLogs(level="WARNING") as captured:
+                detect_hardware.warn_if_gpu_unused(device)
+                # assertLogs fails an empty block, so every path needs one
+                # record of its own to compare against.
+                logging.warning("sentinel")
+        return [line for line in captured.output if "sentinel" not in line], detect
+
+    def test_cpu_torch_with_a_driver_present_is_warned_about(self):
+        warnings, _ = self._run("cpu", (12, 4))
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("--torch-backend auto", warnings[0])
+
+    def test_a_machine_without_an_nvidia_driver_is_not_warned(self):
+        # The overwhelmingly common case: no card, so the CPU is correct.
+        warnings, _ = self._run("cpu", None)
+        self.assertEqual(warnings, [])
+
+    def test_a_gpu_run_is_silent(self):
+        warnings, _ = self._run("cuda", (12, 4))
+        self.assertEqual(warnings, [])
+
+    def test_nvidia_smi_is_not_consulted_when_torch_uses_the_gpu(self):
+        # Ordering, not cosmetics: this is what keeps the check free at every
+        # startup on a machine that is already fine.
+        _, detect = self._run("cuda", (12, 4))
+        detect.assert_not_called()
 
 
 if __name__ == "__main__":

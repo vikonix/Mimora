@@ -364,11 +364,31 @@ PLAYBACK_OWN_RECORDING = _bool("playback_own_recording", True)
 # panphon/espeak use), it is never paid twice.
 WARM_UP = _bool("warm_up", False)
 
-# Hardware Acceleration setup - the value detected by hardware detection wins;
-# otherwise loader.detect_device probes torch directly (and does not import torch
-# at all when hardware detection already supplied a valid device, so this stays
-# cheap).
+# Hardware Acceleration setup. A detected "cpu" wins outright (and costs no
+# torch import); a detected "cuda" is re-checked against the installed torch,
+# because hardware_config.json can outlive the environment that wrote it - see
+# loader.detect_device for the two ways that happens.
 DEVICE = loader.detect_device(_HW.get("DEVICE"))
+
+
+def _model_device(hw_key: str, default: str) -> str:
+    """A per-model torch device from hardware detection, capped by DEVICE.
+
+    The detector pins individual models to a device of their own to spread one
+    card between llama-server, Kokoro and Wav2Vec2. Those keys come from the
+    same file as DEVICE and can be stale in the same way, and they are read
+    with `or`, so a pinned "cuda" would otherwise reach torch even after DEVICE
+    had stepped down to "cpu" - moving the crash one model over instead of
+    preventing it. DEVICE is the whole answer to "can torch use CUDA here", so
+    nothing derived from it may exceed it.
+
+    A pin to "cpu" while DEVICE is "cuda" is left alone: that is the VRAM
+    decision the detector is there to make.
+    """
+    if DEVICE != "cuda":
+        return "cpu"
+    return _HW.get(hw_key) or default
+
 
 # =====================================================================
 # LLM Backend Settings
@@ -848,8 +868,9 @@ WAV2VEC2_MODEL_NAME = models_info.WAV2VEC2_ACOUSTIC.repo_id
 # emits espeak-style IPA, so its phone inventory matches the espeak reference.
 WAV2VEC2_PHONEME_MODEL_NAME = models_info.WAV2VEC2_PHONEME.repo_id
 # Device for Wav2Vec2. Defaults to the shared DEVICE; hardware detection may pin
-# it to "cpu" to avoid VRAM contention with llama-server / Kokoro on a single GPU.
-WAV2VEC2_DEVICE = _HW.get("WAV2VEC2_DEVICE") or DEVICE
+# it to "cpu" to avoid VRAM contention with llama-server / Kokoro on a single
+# GPU. It can never be more than DEVICE - see _model_device.
+WAV2VEC2_DEVICE = _model_device("WAV2VEC2_DEVICE", DEVICE)
 # Target score (0-100): feeds each engine's result.passed. NOT used by the app
 # yet - computed and logged only, reserved for a future pass/repeat gate (see
 # the Pass-threshold note in AGENTS.md).
@@ -974,8 +995,9 @@ NLLB_TRANSLATOR_MODEL_NAME = models_info.NLLB.repo_id
 # latency-tolerant (it runs in the background after the phrase is shown and the
 # reference has played), and keeping NLLB off the GPU avoids VRAM contention
 # with Kokoro / Wav2Vec2 / llama-server - matching the translator's RAM (not VRAM) budget.
-# hardware detection may pin it to "cuda" on a machine with VRAM to spare.
-TRANSLATOR_DEVICE = _HW.get("TRANSLATOR_DEVICE") or "cpu"
+# hardware detection may pin it to "cuda" on a machine with VRAM to spare -
+# which _model_device caps at DEVICE, so a stale pin cannot reach torch.
+TRANSLATOR_DEVICE = _model_device("TRANSLATOR_DEVICE", "cpu")
 # The translator's source language is the language being practiced: NLLB
 # tokenizes the source with this FLORES-200 prefix (mimora/translator.py), and
 # it comes from the active profile so it follows the practice language.

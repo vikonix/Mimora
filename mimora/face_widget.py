@@ -53,7 +53,7 @@ Design constraints this module is built around:
     the ``after``-loop on the Tk thread reads it and swaps frames. Pillow /
     ``ImageTk`` objects are only ever touched on the Tk thread.
 
-  * Dependencies: stdlib ``tkinter`` plus Pillow (pinned in requirements.txt).
+  * Dependencies: stdlib ``tkinter`` plus Pillow (pinned in pyproject.toml).
 
 Typical use::
 

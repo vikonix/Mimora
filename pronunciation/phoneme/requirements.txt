@@ -15,9 +15,10 @@
 # transitively with kokoro/misaki in the full app; standalone installs without
 # it use the system espeak-ng.
 
-# >=5.3 closes CVE-2026-4372 (config-injection RCE); kept in sync with the root
-# requirements.txt. The markers below relax torch/transformers on Intel macOS
-# (x86_64) - see the "Intel macOS note" in the root requirements.txt.
+# >=5.3 closes CVE-2026-4372 (config-injection RCE); kept in sync with the
+# application's own list in [project.dependencies] (pyproject.toml). The markers
+# below relax torch/transformers on Intel macOS (x86_64) - see the Intel macOS
+# note there. tools/check_markers.py checks both lists together.
 transformers>=5.3; platform_system != 'Darwin' or platform_machine != 'x86_64'
 transformers>=4.44,<5; platform_system == 'Darwin' and platform_machine == 'x86_64'
 torch>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'
@@ -32,10 +33,10 @@ panphon>=0.20.0
 # transformers needs protobuf to parse the sentencepiece model when it builds the
 # wav2vec2 phoneme (fast) tokenizer. Usually pulled in transitively, but pin it so
 # a minimal standalone resolve does not fail with "requires the protobuf library".
-# Kept in sync with the root requirements.txt.
+# Kept in sync with pyproject.toml.
 protobuf>=3.20.0
-# Caps kept in sync with the root requirements.txt: numba (via librosa, above)
-# supports NumPy <= 2.4, so 2.5 breaks librosa at runtime - drop when numba
-# supports 2.5. Intel macOS needs <2 for torch 2.2.2 (see the root note).
+# Caps kept in sync with pyproject.toml: numba (via librosa, above) supports
+# NumPy <= 2.4, so 2.5 breaks librosa at runtime - drop when numba supports 2.5.
+# Intel macOS needs <2 for torch 2.2.2 (see the note above).
 numpy>=1.24.0,<2.5; platform_system != 'Darwin' or platform_machine != 'x86_64'
 numpy>=1.24.0,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'
