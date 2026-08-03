@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: MIT
-# Copyright (c) 2026 Valery Kovalev
+# Copyright (c) 2026 Valeriy Kovalev
 
 """Static IPA phoneme -> example word table for the "WORK ON" badges.
 
