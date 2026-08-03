@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: MIT -->
-<!-- Copyright (c) 2026 Valery Kovalev -->
+<!-- Copyright (c) 2026 Valeriy Kovalev -->
 
 # New Engine - Phoneme-Based Multilingual Scoring
 
