@@ -3,13 +3,13 @@
 **A local, offline pronunciation trainer.** Mimora says a phrase out loud, you repeat it, and it scores how close you were - highlighting the words to work on. Practice the same phrase until you pass, then move on to the next one. Everything runs on your machine: speech synthesis, speech recognition, phrase generation, and acoustic analysis.
 
 <p align="center">
-  <img src="docs/mimora1.gif" width="400"
+  <img src="https://raw.githubusercontent.com/vikonix/Mimora/main/docs/mimora1.gif" width="400"
        alt="Mimora demo: one full practice loop - new phrase, speak, score, highlighted words, replay">
 </p>
 
 | Dark theme | Light theme |
 |:---:|:---:|
-| ![Mimora pronunciation trainer, dark theme](docs/mimora-dark.png) | ![Mimora pronunciation trainer, light theme](docs/mimora-light.png) |
+| ![Mimora pronunciation trainer, dark theme](https://raw.githubusercontent.com/vikonix/Mimora/main/docs/mimora-dark.png) | ![Mimora pronunciation trainer, light theme](https://raw.githubusercontent.com/vikonix/Mimora/main/docs/mimora-light.png) |
 
 *Both themes ship with the app; drop your own `<name>_schema.json` into `config/themes/` to add or replace one.*
 
@@ -125,7 +125,7 @@ TTS) are a notice with **Download** and **Quit**; the local chat model
 on later. The translator is fetched lazily and is never part of that question.
 
 Download sizes below are measured, not estimated, and are kept as data in
-[`mimora/models_info.py`](mimora/models_info.py); re-snap them with
+[`mimora/models_info.py`](https://github.com/vikonix/Mimora/blob/main/mimora/models_info.py); re-snap them with
 `python tools/measure_model_sizes.py`.
 
 | Model | Used by | Download | Notes |
@@ -455,7 +455,7 @@ Several torch models (the active engine's Wav2Vec2 - the `phoneme` recognizer by
 
 ## License
 
-See [`LICENSE`](LICENSE). The reused OpenPronounce components are MIT-licensed; their attribution is retained in `pronunciation/acoustic/speech.py`.
+See [`LICENSE`](https://github.com/vikonix/Mimora/blob/main/LICENSE). The reused OpenPronounce components are MIT-licensed; their attribution is retained in `pronunciation/acoustic/speech.py`.
 
 Model weights have their own licenses. In particular, the Supertonic 3 TTS
 weights are licensed under [OpenRAIL-M](https://huggingface.co/Supertone/supertonic-3/blob/main/LICENSE)
