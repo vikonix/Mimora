@@ -15,10 +15,13 @@ run Mimora on a fresh machine:
   7. Pre-download the Supertonic 3 TTS model into model_cache/supertonic3/
      (the Spanish TTS backend; kept outside the HF hub cache because the
      supertonic package uses its own cache directory).
-  8. Install the LLM stack: the pinned llama-server binary into bin/llama/ and
+  8. Install the spaCy pipeline into model_cache/spacy/ (Kokoro's
+     grapheme-to-phoneme step loads it; see mimora/spacy_model_fetch.py for why
+     it is not simply a dependency).
+  9. Install the LLM stack: the pinned llama-server binary into bin/llama/ and
      the GGUF chat model into models/.
-  9. Run `python -m mimora.detect_hardware` to write config/hardware_config.json.
- 10. Write run_mimora.bat / run_mimora.sh: one-click launchers that activate
+ 10. Run `python -m mimora.detect_hardware` to write config/hardware_config.json.
+ 11. Write run_mimora.bat / run_mimora.sh: one-click launchers that activate
      the project's virtual environment and run main.py.
 
 Design notes
@@ -31,9 +34,10 @@ Design notes
   silently redo it: it says so and asks reinstall vs. skip (defaulting to
   skip). Under --yes such steps are skipped unless --reinstall is also given.
 * Nothing that can be downloaded is downloaded by this script itself: the
-  three fetchers live in the package (mimora/model_fetch.py,
-  mimora/gguf_fetch.py, mimora/llama_server_fetch.py) and the steps below are
-  thin wrappers around them. The app needs the same code for its own first-run
+  four fetchers live in the package (mimora/model_fetch.py,
+  mimora/gguf_fetch.py, mimora/llama_server_fetch.py,
+  mimora/spacy_model_fetch.py) and the steps below are thin wrappers around
+  them. The app needs the same code for its own first-run
   check (mimora/first_run_download.py), and a packaged install has no
   install.py at all. Their log output is bridged into logs/install.log (see
   _LogBridge).
@@ -1228,6 +1232,47 @@ def step_prefetch_supertonic(
     report.add("Supertonic model", DONE)
 
 
+def step_prefetch_spacy_model(
+    log: Logger, confirmer: Confirmer, report: StepReport
+) -> None:
+    """Unpack the spaCy pipeline Kokoro's G2P step loads, into model_cache/spacy/.
+
+    In a clone this step usually finds the model already there, because until
+    now that is the only way it ever arrived: spaCy downloads it by shelling out
+    to pip at the first synthesis, silently, and nothing in this project ever
+    mentioned it. The step exists for the environment where that cannot happen -
+    an installed tool has no pip - and its side benefit is that the model stops
+    being something that simply turns up.
+    """
+    log.banner("Step 8 - spaCy pipeline (Kokoro grapheme-to-phoneme)")
+    fetch = _import_fetcher("mimora.spacy_model_fetch", log, report,
+                            "spaCy model")
+
+    # The app reaches the sidecar through config, which this script never
+    # imports, so it has to be activated here for the report below to describe
+    # what the app will see rather than what this process happens to have.
+    fetch.activate()
+    present = fetch.model_available()
+    desc = (f"Install the {fetch.MODEL.name} {fetch.MODEL.version} spaCy "
+            f"pipeline ({fetch.MODEL.size_mb} MB) into {fetch.SIDECAR_DIR} - "
+            f"Kokoro's grapheme-to-phoneme step loads it, and an installed "
+            f"package has no way to fetch it on demand.")
+    if present:
+        log.log(f"    Already available: {fetch.resolved_location()}")
+    if not confirmer.confirm(desc, installed=present):
+        report.add("spaCy model", SKIPPED,
+                   "already available" if present else "")
+        return
+
+    try:
+        fetch.ensure_spacy_model(force=present)
+    except fetch.SpacyModelFetchError as exc:
+        log.log(f"    -> FAILED: {exc}")
+        report.add("spaCy model", FAILED)
+        raise InstallError("spaCy model")
+    report.add("spaCy model", DONE)
+
+
 def _disable_llm_backend(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
@@ -1304,7 +1349,7 @@ def step_llama_server(
     a binary is a decision about this run, not a fact about the platform, and
     the model may well be wanted for a build they install themselves.
     """
-    log.banner("Step 8 - LLM stack: llama-server binary")
+    log.banner("Step 9 - LLM stack: llama-server binary")
     fetch = _import_fetcher("mimora.llama_server_fetch", log, report,
                             "llama-server binary")
 
@@ -1363,7 +1408,7 @@ def step_download_gguf(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Download the GGUF chat model into models/ if not already present."""
-    log.banner("Step 9 - LLM stack: GGUF chat model")
+    log.banner("Step 10 - LLM stack: GGUF chat model")
     gguf_fetch = _import_fetcher("mimora.gguf_fetch", log, report, "GGUF model")
 
     target = gguf_fetch.DEFAULT_GGUF_PATH
@@ -1389,7 +1434,7 @@ def step_detect_hardware(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
     """Run the hardware probe late, once torch is installed."""
-    log.banner("Step 10 - Hardware detection (writes hardware_config.json)")
+    log.banner("Step 11 - Hardware detection (writes hardware_config.json)")
     # A module, so the check is "can it be imported" rather than "is the file
     # there". importlib.util.find_spec answers without executing it, which
     # matters because the module imports torch and sounddevice when it runs.
@@ -1440,7 +1485,7 @@ def step_create_launchers(
     hints at it (find_local_venv_name()), so the script still works if the
     venv was created under a name other than '.venv'.
     """
-    log.banner("Step 11 - Launcher script")
+    log.banner("Step 12 - Launcher script")
     venv_name = find_local_venv_name()
     target = LAUNCHER_BAT if sys.platform == "win32" else LAUNCHER_SH
 
@@ -1544,7 +1589,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gpu", action="store_true",
                         help="force GPU steps even if no GPU is auto-detected")
     parser.add_argument("--skip-models", action="store_true",
-                        help="skip the Hugging Face model pre-download")
+                        help="skip the model pre-downloads (Hugging Face, "
+                             "Supertonic, spaCy)")
     parser.add_argument("--skip-gguf", action="store_true",
                         help="skip the GGUF chat-model download")
     parser.add_argument("--skip-llm", action="store_true",
@@ -1622,21 +1668,26 @@ def main() -> int:
         # Step 5: espeak-ng.
         step_espeak(log, confirmer, report)
 
-        # Steps 6-7: model caches (HF hub + the Supertonic cache directory).
+        # Steps 6-8: models that are not the LLM's - the HF hub cache, the
+        # Supertonic cache directory and the spaCy pipeline sidecar. All three
+        # go under --skip-models: they are the same kind of thing, a download
+        # somebody may already have or may want to postpone.
         if args.skip_models:
             report.add("HF model cache", SKIPPED, "--skip-models")
             report.add("Supertonic model", SKIPPED, "--skip-models")
+            report.add("spaCy model", SKIPPED, "--skip-models")
         else:
             step_prefetch_models(log, confirmer, report)
             step_prefetch_supertonic(log, confirmer, report)
+            step_prefetch_spacy_model(log, confirmer, report)
 
-        # Steps 8-9: the LLM stack - the llama-server binary and the GGUF model
+        # Steps 9-10: the LLM stack - the llama-server binary and the GGUF model
         # it loads. Both are skipped together under --skip-llm: the lm-studio
-        # and off backends need neither. The binary comes first because step 10
+        # and off backends need neither. The binary comes first because step 11
         # probes it, and both come after pip because a 2.7 GB download is a bad
         # place to discover that the dependency install fails.
         #
-        # Step 8 also decides whether step 9 runs at all. The two used to be
+        # Step 9 also decides whether step 10 runs at all. The two used to be
         # independent, which on a platform with no pinned build offered a 2.7 GB
         # model right after saying that nothing here can load it.
         if args.skip_llm:
@@ -1651,10 +1702,10 @@ def main() -> int:
             else:
                 step_download_gguf(log, confirmer, report)
 
-        # Step 10: hardware detection (after torch exists).
+        # Step 11: hardware detection (after torch exists).
         step_detect_hardware(log, confirmer, report)
 
-        # Step 11: launcher scripts, written last so they reflect the fully
+        # Step 12: launcher scripts, written last so they reflect the fully
         # set-up environment (correct venv folder name).
         step_create_launchers(log, confirmer, report)
     except InstallError as exc:

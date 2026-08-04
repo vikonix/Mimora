@@ -8,7 +8,8 @@ import threading
 from functools import partial
 from pathlib import Path
 
-from mimora import llama_server_fetch, loader, model_fetch, models_info, paths
+from mimora import (llama_server_fetch, loader, model_fetch, models_info,
+                    paths, spacy_model_fetch)
 from mimora.languages import english, spanish
 
 # The two roots this module resolves paths against, frozen for the run. Both
@@ -40,6 +41,17 @@ CONFIG_DIR = paths.config_dir()
 # save_user_setting fail silently (loader.save_setting reports and returns
 # False). Cheap and idempotent, so it runs unconditionally.
 paths.ensure_dirs()
+
+# The spaCy pipeline misaki loads from inside Kokoro. It is unpacked under the
+# data root rather than installed into the environment, so the directory has to
+# be on sys.path before anything imports spaCy - and this module is imported
+# first by all three launch forms, which is what makes it the one place the call
+# can live. A no-op until the model has been downloaded, and it imports no third
+# party code (mimora/spacy_model_fetch.py is stdlib plus paths), so it costs an
+# import and two stat calls. See that module for what happens without it: misaki
+# shells out to a pip that a `uv tool` environment does not have, and the loader
+# thread dies on the SystemExit that follows.
+spacy_model_fetch.activate()
 
 # =====================================================================
 # Settings files (optional overrides)

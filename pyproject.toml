@@ -110,6 +110,15 @@ dependencies = [
 
     # --- speech synthesis -------------------------------------------------
     "kokoro>=0.3.0",
+    # spaCy arrives transitively anyway (kokoro -> misaki[en] -> spacy), and is
+    # named here for one reason: mimora/spacy_model_fetch.py pins the
+    # en_core_web_sm pipeline to an exact version, and explosion pairs a model
+    # version with a spaCy MINOR (3.8.x <-> 3.8.0 in their compatibility table).
+    # Leaving the minor to the resolver would mean a machine that one day gets
+    # spaCy 3.9 and a pinned 3.8.0 model, which spaCy loads with a warning
+    # rather than an error - a quiet degradation of every score, which is the
+    # worst shape a version mismatch can take here. Bump both together.
+    "spacy>=3.8,<3.9",
     # Supertonic 3 (mimora/tts.py SupertonicBackend, Spanish). Pulls
     # onnxruntime and huggingface-hub. The weights (~400 MB, OpenRAIL-M) are
     # NOT bundled: install.py pre-downloads them, or the first run fetches them.

@@ -30,7 +30,8 @@ from mimora import gguf_fetch, llama_server_fetch, model_fetch, models_info
 
 def _all_models():
     """Every record in the catalogue, whatever its type."""
-    return (*models_info.HF_REPOS, models_info.SUPERTONIC, models_info.GGUF_CHAT)
+    return (*models_info.HF_REPOS, models_info.SUPERTONIC,
+            models_info.GGUF_CHAT, models_info.SPACY_EN)
 
 
 class SizeCompletenessTests(unittest.TestCase):

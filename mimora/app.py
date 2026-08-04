@@ -39,7 +39,8 @@ import tkinter as tk
 from tkinter import ttk
 import numpy as np
 
-from mimora import config, detect_hardware, first_run, first_run_window, lifecycle, prosody
+from mimora import (config, detect_hardware, first_run, first_run_window,
+                    lifecycle, prosody, spacy_model_fetch)
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.phrase_source import SourceTextPhraseProvider
@@ -434,9 +435,27 @@ class PronunciationTrainerGUI:
             self.root.after(0, self.make_app_ready)
             logging.info("Mimora initialization complete.")
 
-        except Exception as e:
+        except BaseException as e:
+            # BaseException, not Exception, and that is the whole point of this
+            # clause. A library called from this thread can raise something
+            # outside the Exception hierarchy, and one does: spacy.util.
+            # run_command ends the process with sys.exit when the command it
+            # shells out to fails, which is how misaki reacts to a spacy model
+            # it cannot download. SystemExit derives from BaseException, so the
+            # narrower clause did not see it - the thread died without a log
+            # line, without an error in the window, and the interface sat on
+            # "Loading models..." for as long as the user was willing to wait.
+            #
+            # Catching it here is safe because this is a daemon thread:
+            # SystemExit ends nothing but the thread it is raised in, and
+            # KeyboardInterrupt is delivered to the main thread rather than
+            # this one, so neither is being taken away from anybody.
+            #
+            # The type name is part of the message because str(SystemExit(1))
+            # is "1": without it the window would say "Initialization Error: 1".
             logging.exception("Error during initialization thread:")
-            self.root.after(0, self.view.append_error_msg, f"Initialization Error: {e}")
+            self.root.after(0, self.view.append_error_msg,
+                            f"Initialization Error: {type(e).__name__}: {e}")
             self.root.after(0, self.view.init_failed)
 
     def _server_failure_message(self) -> str:
@@ -1485,6 +1504,44 @@ class PronunciationTrainerGUI:
         self.root.mainloop()
 
 
+def _log_spacy_model_location() -> None:
+    """Record where Kokoro's grapheme-to-phoneme model is going to come from.
+
+    The same idea as ``llm_server_ctl.log_compute_devices()`` one layer down,
+    and for the same reason: what it guards against is silent. ``config``
+    activates the sidecar while it is being imported, which is before
+    ``setup_logging`` above installs the file handler, so that line never
+    reaches logs/main.log and a bug report would say nothing at all about a
+    model the application cannot start without.
+
+    Diagnostic only, and deliberately so - it neither downloads nor refuses.
+    Called after ``ensure_ready()``, because a first run may have just fetched
+    the model and put its directory on sys.path, which would make an earlier
+    answer stale rather than merely early.
+
+    Only asked for Kokoro: Spanish synthesises through Supertonic, which never
+    touches spaCy, and a warning about a model that machine will never load
+    would be noise on every start.
+    """
+    if config.TTS_BACKEND != "kokoro":
+        return
+    located = spacy_model_fetch.resolved_location()
+    if located is not None:
+        logging.info("spaCy pipeline %s resolves from %s.",
+                     spacy_model_fetch.MODEL.name, located)
+        return
+    # Reachable and worth shouting about: misaki reacts to a missing model by
+    # shelling out to pip, which an installed tool's environment does not have.
+    # The loader thread then dies on the SystemExit that follows - visibly now
+    # (load_components catches BaseException), but a line here says which model
+    # and how to fix it before anything has gone wrong.
+    logging.warning(
+        "spaCy pipeline %s was not found. Kokoro's phonemiser will try to "
+        "install it itself, which fails in an environment without pip. Run "
+        "`python -m mimora.spacy_model_fetch` to put it in place.",
+        spacy_model_fetch.MODEL.name)
+
+
 def run():
     """Start the application: logging, the first-run window, then the GUI.
 
@@ -1547,6 +1604,7 @@ def run():
     # read there: detect_hardware must not import config (it rewrites the file
     # config reads at import).
     detect_hardware.warn_if_gpu_unused(config.DEVICE)
+    _log_spacy_model_location()
 
     # Named gui, not app: inside this module "app" is the module itself.
     gui = PronunciationTrainerGUI()

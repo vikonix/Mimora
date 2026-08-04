@@ -35,6 +35,10 @@ How the byte counts are obtained
   at all: that name no longer exists (huggingface_hub 1.24.0 imports tqdm.auto
   directly and builds bars through _get_progress_bar_context), and a patch by
   name would have failed in the worst way - silently, with no updates.
+* **The spaCy pipeline**: reports through the same ProgressFn shape as
+  llama-server, so :func:`_binary_progress` adapts it unchanged. It is a single
+  wheel, so the running sum that function keeps across assets never has more
+  than one term.
 * **Supertonic**: its package downloads through its own loader with no hook at
   all, so that component contributes nothing until it finishes and then jumps by
   its whole size. It is 404 MB and only reached with the Spanish TTS backend.
@@ -49,7 +53,7 @@ import threading
 from typing import NamedTuple, Optional, Sequence
 
 from mimora import (config, first_run, gguf_fetch, llama_server_fetch,
-                    model_fetch, models_info)
+                    model_fetch, models_info, spacy_model_fetch)
 
 log = logging.getLogger(__name__)
 
@@ -385,6 +389,16 @@ def _fetch(component: first_run.Component, state: ProgressState) -> None:
         # reason the plan looked there: gguf_fetch cannot read settings.json.
         gguf_fetch.ensure_gguf(config.EXTERNAL_MODEL_PATH,
                                tqdm_class=make_tqdm_class(state))
+    elif key == models_info.SPACY_EN.name:
+        # _binary_progress, reused rather than duplicated: spacy_model_fetch
+        # reports through the same (name, bytes, total) callback shape as
+        # llama_server_fetch, deliberately so that one adapter serves both.
+        spacy_model_fetch.ensure_spacy_model(progress=_binary_progress(state))
+        # Downloaded after config was imported, so the sys.path entry config
+        # would have added did not exist yet. Adding it here is what lets the
+        # models loaded straight afterwards see it, in this same process -
+        # without it the download would only take effect on the next launch.
+        spacy_model_fetch.activate()
     elif key == models_info.SUPERTONIC.name:
         # No progress hook exists for this one - see the module docstring.
         model_fetch.ensure_supertonic()

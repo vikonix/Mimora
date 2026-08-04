@@ -198,7 +198,7 @@ class LLMManager:
         """
         url = base_url or config.LM_STUDIO_URL
         key = api_key or config.LM_STUDIO_API_KEY
-        logging.info(f"Initializing LLM client → {url}")
+        logging.info(f"Initializing LLM client - {url}")
         self.client = OpenAI(
             base_url=url,
             api_key=key,

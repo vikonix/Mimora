@@ -100,6 +100,30 @@ class HfFile(NamedTuple):
     size_mb: int
 
 
+class WheelModel(NamedTuple):
+    """A model published as a Python wheel on a GitHub release page.
+
+    Unlike everything else here this record carries a sha256 and a version,
+    because there is no index in front of the file: mimora/spacy_model_fetch.py
+    fetches one exact URL, and a wheel that arrived corrupted or was rebuilt
+    upstream has to fail loudly rather than be unpacked. The three fields move
+    together whenever the pin moves, which is why they sit in one record - the
+    same argument that keeps the llama-server asset hashes out of this file
+    applies in reverse here, because this IS a model and the first-run dialog
+    has to name its size.
+
+    name is the distribution name, and it matters twice over: it is what
+    spacy.util.is_package looks up through importlib.metadata, and it is the
+    directory the wheel unpacks into.
+    """
+
+    name: str
+    version: str
+    label: str
+    size_mb: int
+    sha256: str
+
+
 class PackagedModel(NamedTuple):
     """A model some other package downloads into its own cache directory.
 
@@ -192,4 +216,34 @@ GGUF_CHAT = HfFile(
     "llama-3.2-3b-instruct-q4_k_m.gguf",
     "Llama 3.2 3B Instruct Q4_K_M (chat model for llama-server)",
     size_mb=2019,  # measured 2026-07-28
+)
+
+# ---------------------------------------------------------------------------
+# Models published as wheels
+# ---------------------------------------------------------------------------
+
+# Stand-in for a hash nobody has measured yet. spacy_model_fetch refuses to
+# download while a pin still holds this value, so a pin added and then forgotten
+# fails at the first attempt instead of shipping a download nothing verifies.
+# `python -m mimora.spacy_model_fetch --measure` prints the real value.
+UNMEASURED_SHA256 = "0" * 64
+
+# The spaCy pipeline misaki's English G2P loads, and the one model in this file
+# that no Mimora code calls for directly - it is pulled in from inside Kokoro.
+# Left to itself, misaki downloads it by shelling out to pip, which does not
+# exist in a `uv tool` environment; mimora/spacy_model_fetch.py puts it in place
+# first so that call never happens. See that module for the whole chain.
+#
+# The version tracks spaCy's minor release rather than being free to move:
+# explosion's compatibility table pairs spaCy 3.8.x with en_core_web_sm 3.8.0,
+# and pyproject.toml pins spacy>=3.8,<3.9 so the pair cannot come apart.
+SPACY_EN = WheelModel(
+    "en_core_web_sm",
+    "3.8.0",
+    "spaCy English pipeline (grapheme-to-phoneme for Kokoro)",
+    size_mb=13,  # measured 2026-08-04: 12 806 118 bytes
+    # Measured too, with `python -m mimora.spacy_model_fetch --measure`, because
+    # explosion publishes no checksums for these release assets. Re-measure
+    # both numbers together whenever the version above moves.
+    sha256="1932429db727d4bff3deed6b34cfc05df17794f4a52eeb26cf8928f7c1a0fb85",
 )

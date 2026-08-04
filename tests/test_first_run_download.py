@@ -26,7 +26,8 @@ import unittest
 from unittest import mock
 
 from mimora import (config, first_run, first_run_download, gguf_fetch,
-                    llama_server_fetch, model_fetch, models_info)
+                    llama_server_fetch, model_fetch, models_info,
+                    spacy_model_fetch)
 
 MB = first_run_download.BYTES_PER_MB
 
@@ -268,6 +269,18 @@ class DispatchTests(unittest.TestCase):
             first_run_download._fetch(
                 _component(key=models_info.SUPERTONIC.name), self.state)
         ensure.assert_called_once_with()
+
+    def test_the_spacy_pipeline_goes_to_its_own_fetcher_and_is_activated(self):
+        # activate() right after the download is what makes the model usable in
+        # THIS process: config put the directory on sys.path at import, when it
+        # did not exist yet, so without this the download would only take effect
+        # at the next launch - and the models load moments later.
+        with mock.patch.object(spacy_model_fetch, "ensure_spacy_model") as ensure, \
+                mock.patch.object(spacy_model_fetch, "activate") as activate:
+            first_run_download._fetch(
+                _component(key=models_info.SPACY_EN.name), self.state)
+        self.assertIn("progress", ensure.call_args.kwargs)
+        activate.assert_called_once_with()
 
     def test_an_unknown_component_fails_loudly(self):
         # A component added to the plan without a branch here would otherwise

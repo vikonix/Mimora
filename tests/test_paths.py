@@ -190,7 +190,7 @@ class LayoutTests(unittest.TestCase):
     """Every named location is a child of the root, identically in both modes."""
 
     _ACCESSORS = ("config_dir", "themes_dir", "models_dir", "model_cache_dir",
-                  "llama_dir", "log_dir")
+                  "spacy_model_dir", "llama_dir", "log_dir")
 
     def _relative_layout(self):
         root = paths.data_root()
@@ -222,6 +222,16 @@ class LayoutTests(unittest.TestCase):
             self.assertEqual(paths.shipped_themes_dir().parent,
                              paths.shipped_root())
             self.assertNotEqual(paths.shipped_themes_dir(), paths.themes_dir())
+
+    def test_the_spacy_sidecar_sits_with_the_other_downloads(self):
+        # Under the data root, next to the hub cache, and NOT inside the
+        # package: an installed tool's own directory is rebuilt by
+        # `uv tool upgrade`, which would take the model with it.
+        with _clean_env():
+            self.assertEqual(paths.spacy_model_dir().parent,
+                             paths.model_cache_dir())
+            self.assertFalse(paths.spacy_model_dir().is_relative_to(
+                paths.shipped_root()))
 
     def test_logs_sit_beside_the_settings_rather_than_in_an_os_log_directory(self):
         # A separate log convention exists on only two of the three platforms,

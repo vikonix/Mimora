@@ -24,7 +24,7 @@ from pathlib import Path
 from unittest import mock
 
 from mimora import (config, first_run, gguf_fetch, llama_server_fetch, loader,
-                    model_fetch, models_info)
+                    model_fetch, models_info, spacy_model_fetch)
 
 ENGINES = ("phoneme", "acoustic", "none")
 TTS_BACKENDS = ("kokoro", "supertonic")
@@ -38,8 +38,11 @@ class RequiredLevelTests(unittest.TestCase):
     """Which models a run cannot start without."""
 
     def test_default_configuration_is_kokoro_plus_the_phoneme_recognizer(self):
+        # The spaCy pipeline is in there because Kokoro is: its G2P step loads
+        # one, and on an installed tool nothing else can put it in place.
         self.assertEqual(first_run.required_models("phoneme", "kokoro"),
-                         (models_info.KOKORO, models_info.WAV2VEC2_PHONEME))
+                         (models_info.KOKORO, models_info.SPACY_EN,
+                          models_info.WAV2VEC2_PHONEME))
 
     def test_only_the_active_engine_recognizer_is_required(self):
         # The dispatcher never loads the inactive engine's weights, so
@@ -56,12 +59,25 @@ class RequiredLevelTests(unittest.TestCase):
                          first_run.required_models("phoneme", "supertonic"))
 
     def test_the_none_engine_requires_no_recognizer(self):
-        # "none" disables scoring and loads no recognizer at all; only the TTS
-        # model is left.
+        # "none" disables scoring and loads no recognizer at all; the TTS model
+        # and whatever that backend needs alongside it are all that is left.
         for tts_backend in TTS_BACKENDS:
             with self.subTest(tts_backend=tts_backend):
+                expected = ((first_run._TTS_MODEL[tts_backend],)
+                            + first_run._TTS_SUPPORT_MODELS.get(tts_backend, ()))
                 self.assertEqual(first_run.required_models("none", tts_backend),
-                                 (first_run._TTS_MODEL[tts_backend],))
+                                 expected)
+
+    def test_the_spacy_pipeline_follows_the_tts_backend_not_the_engine(self):
+        # Spanish synthesises through Supertonic, which never touches spaCy.
+        # Asking that machine to agree to a download it will never read is the
+        # same mistake as putting NLLB in the required level.
+        for engine in ENGINES:
+            with self.subTest(engine=engine):
+                self.assertIn(models_info.SPACY_EN,
+                              first_run.required_models(engine, "kokoro"))
+                self.assertNotIn(models_info.SPACY_EN,
+                                 first_run.required_models(engine, "supertonic"))
 
     def test_nllb_is_never_required(self):
         # The whole reason this set is built here instead of being taken from
@@ -76,7 +92,8 @@ class RequiredLevelTests(unittest.TestCase):
 
     def test_every_combination_yields_known_catalogue_records(self):
         # A typo in either table would show up as a component with no size.
-        catalogue = {*models_info.HF_REPOS, models_info.SUPERTONIC}
+        catalogue = {*models_info.HF_REPOS, models_info.SUPERTONIC,
+                     models_info.SPACY_EN}
         for engine in ENGINES:
             for tts_backend in TTS_BACKENDS:
                 with self.subTest(engine=engine, tts_backend=tts_backend):
@@ -87,9 +104,9 @@ class RequiredLevelTests(unittest.TestCase):
         # These three numbers are what the dialog reads out to the user, so a
         # re-snap of models_info has to fail here rather than quietly change
         # what the app asks for.
-        cases = {("phoneme", "kokoro"): 1627,     # default configuration
-                 ("acoustic", "kokoro"): 1625,    # the other engine
-                 ("phoneme", "supertonic"): 1668}  # Spanish
+        cases = {("phoneme", "kokoro"): 1640,     # default configuration
+                 ("acoustic", "kokoro"): 1638,    # the other engine
+                 ("phoneme", "supertonic"): 1668}  # Spanish, no spaCy pipeline
         for (engine, tts_backend), expected in cases.items():
             with self.subTest(engine=engine, tts_backend=tts_backend):
                 models = first_run.required_models(engine, tts_backend)
@@ -124,6 +141,24 @@ class PresenceTests(unittest.TestCase):
                                return_value=False) as cached:
             self.assertFalse(first_run.model_present(models_info.SUPERTONIC))
         cached.assert_called_once_with()
+
+    def test_a_wheel_model_asks_whether_the_interpreter_can_find_it(self):
+        # model_available, not model_in_sidecar: a checkout whose environment
+        # already has the pipeline, and an installed tool that was given one
+        # with --with, both need no download. Asking our own directory would
+        # offer one to a machine that is already fine.
+        with mock.patch.object(spacy_model_fetch, "model_available",
+                               return_value=True) as available:
+            self.assertTrue(first_run.model_present(models_info.SPACY_EN))
+        available.assert_called_once_with()
+
+    def test_a_wheel_model_is_keyed_by_its_distribution_name(self):
+        # The key is what first_run_download dispatches on, and a wheel has no
+        # repo id to be identified by.
+        with mock.patch.object(spacy_model_fetch, "model_available",
+                               return_value=True):
+            component = first_run._model_component(models_info.SPACY_EN)
+        self.assertEqual(component.key, models_info.SPACY_EN.name)
 
     def _status(self, path):
         with mock.patch.object(config, "resolve_llama_server_path",
@@ -305,8 +340,9 @@ class BuildPlanTests(unittest.TestCase):
 
         self.assertEqual([c.key for c in plan.required],
                          [models_info.KOKORO.repo_id,
+                          models_info.SPACY_EN.name,
                           models_info.WAV2VEC2_PHONEME.repo_id])
-        self.assertEqual(plan.missing_required_mb, 1627)
+        self.assertEqual(plan.missing_required_mb, 1640)
         self.assertEqual([c.key for c in plan.optional],
                          [first_run.KEY_LLAMA_SERVER, first_run.KEY_GGUF])
         self.assertIsNone(plan.llama_server_blocked)
@@ -347,7 +383,8 @@ class ImportDisciplineTests(unittest.TestCase):
         return names
 
     def test_no_fetcher_imports_this_module(self):
-        for module in (model_fetch, gguf_fetch, llama_server_fetch):
+        for module in (model_fetch, gguf_fetch, llama_server_fetch,
+                       spacy_model_fetch):
             with self.subTest(module=module.__name__):
                 self.assertNotIn("first_run", self._imports(module))
 

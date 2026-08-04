@@ -214,9 +214,14 @@ class WarnIfGpuUnusedTests(unittest.TestCase):
     machine happens to run the suite.
     """
 
-    def _run(self, device, driver_cuda):
+    def _run(self, device, driver_cuda, config_written=False):
+        # config_written is stubbed rather than left to the filesystem: the
+        # machine running the suite may well have a hardware_config.json, and
+        # then the branch under test would be whichever one it happens to have.
         with patch.object(llama_server_fetch, "detect_driver_cuda",
-                          return_value=driver_cuda) as detect:
+                          return_value=driver_cuda) as detect, \
+                patch.object(detect_hardware, "_stored_device_may_be_stale",
+                             return_value=config_written):
             with self.assertLogs(level="WARNING") as captured:
                 detect_hardware.warn_if_gpu_unused(device)
                 # assertLogs fails an empty block, so every path needs one
@@ -228,6 +233,43 @@ class WarnIfGpuUnusedTests(unittest.TestCase):
         warnings, _ = self._run("cpu", (12, 4))
         self.assertEqual(len(warnings), 1)
         self.assertIn("--torch-backend auto", warnings[0])
+        self.assertIn("CPU-only build", warnings[0])
+
+    def test_a_written_hardware_config_makes_the_message_name_both_causes(self):
+        # With that file present, "cpu" can also mean detect_device took its
+        # word without asking torch - which is what `uv tool upgrade` from a
+        # CPU build onto a CUDA one looks like. Telling such a user to
+        # reinstall with --torch-backend auto is telling them to redo what they
+        # just did, so the refresh command has to be named as well.
+        with patch.object(detect_hardware.paths, "repo_mode",
+                          return_value=False):
+            warnings, _ = self._run("cpu", (12, 4), config_written=True)
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("mimora --detect-hardware", warnings[0])
+        self.assertIn("--torch-backend auto", warnings[0])
+
+    def test_the_refresh_command_matches_how_mimora_is_installed(self):
+        # The two forms are not interchangeable. An installed tool has no
+        # interpreter on PATH that can import mimora, and a checkout's venv
+        # that happens to be active would rewrite a different file; out of a
+        # clone the console script may not exist at all.
+        with patch.object(detect_hardware.paths, "repo_mode",
+                          return_value=True):
+            self.assertEqual(detect_hardware._refresh_command(),
+                             "`python -m mimora.detect_hardware`")
+        with patch.object(detect_hardware.paths, "repo_mode",
+                          return_value=False):
+            self.assertEqual(detect_hardware._refresh_command(),
+                             "`mimora --detect-hardware`")
+
+    def test_staleness_is_decided_by_the_file_existing_at_all(self):
+        # Not by what it says: the ambiguity comes from detect_device having
+        # been allowed to short-circuit, which any existing file permits.
+        missing = Path(__file__).with_name("no-such-hardware-config.json")
+        with patch.object(detect_hardware, "OUTPUT_FILE", missing):
+            self.assertFalse(detect_hardware._stored_device_may_be_stale())
+        with patch.object(detect_hardware, "OUTPUT_FILE", Path(__file__)):
+            self.assertTrue(detect_hardware._stored_device_may_be_stale())
 
     def test_a_machine_without_an_nvidia_driver_is_not_warned(self):
         # The overwhelmingly common case: no card, so the CPU is correct.

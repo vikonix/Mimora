@@ -72,7 +72,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional, Sequence, Union
 
 from mimora import (config, gguf_fetch, llama_server_fetch, loader,
-                    model_fetch, models_info)
+                    model_fetch, models_info, spacy_model_fetch)
 
 log = logging.getLogger(__name__)
 
@@ -107,9 +107,11 @@ BLOCKED_BAD_SETTING = "bad-setting"    # llama_server_path names nothing
 # something the app does not.
 LLAMA_SERVER_LABEL = "llama.cpp server (local LLM backend)"
 
-# Either kind of catalogue record can end up in the required level: the English
-# TTS model is a hub repo, the Spanish one is not.
-Model = Union[models_info.HfRepo, models_info.PackagedModel]
+# Any kind of catalogue record can end up in the required level: the English TTS
+# model is a hub repo, the Spanish one is not, and the spaCy pipeline is a wheel
+# off a GitHub release.
+Model = Union[models_info.HfRepo, models_info.PackagedModel,
+              models_info.WheelModel]
 
 # The recognizer each engine loads. "none" is absent on purpose: it loads no
 # recognizer at all, so it requires no model. config validates ENGINE before we
@@ -125,6 +127,19 @@ _ENGINE_RECOGNIZER: dict[str, Model] = {
 _TTS_MODEL: dict[str, Model] = {
     "kokoro": models_info.KOKORO,
     "supertonic": models_info.SUPERTONIC,
+}
+
+# What a TTS backend needs BESIDES its own weights. Only Kokoro has anything:
+# its grapheme-to-phoneme step runs misaki, which loads a spaCy pipeline and
+# would otherwise try to install one itself, through a pip that an installed
+# tool's environment does not have (mimora/spacy_model_fetch.py).
+#
+# A table keyed by backend rather than an unconditional entry, because Spanish
+# synthesises through Supertonic and never touches spaCy: asking that machine to
+# agree to a download it will never read would be the same mistake as putting
+# NLLB in the required level.
+_TTS_SUPPORT_MODELS: dict[str, tuple[Model, ...]] = {
+    "kokoro": (models_info.SPACY_EN,),
 }
 
 
@@ -236,6 +251,7 @@ def required_models(engine: str, tts_backend: str) -> tuple[Model, ...]:
     tts_model = _TTS_MODEL.get(tts_backend)
     if tts_model is not None:
         models.append(tts_model)
+    models.extend(_TTS_SUPPORT_MODELS.get(tts_backend, ()))
     recognizer = _ENGINE_RECOGNIZER.get(engine)
     if recognizer is not None:
         models.append(recognizer)
@@ -244,6 +260,13 @@ def required_models(engine: str, tts_backend: str) -> tuple[Model, ...]:
 
 def model_present(model: Model) -> bool:
     """Is this model already on the machine?"""
+    if isinstance(model, models_info.WheelModel):
+        # "Would the interpreter find it", not "is it in our directory": a
+        # development checkout whose environment already has the model, and an
+        # installed tool that was given one with --with, both need no download.
+        # Same principle as the two branches below - presence is a question
+        # about the app, not about our downloaders.
+        return spacy_model_fetch.model_available()
     if isinstance(model, models_info.PackagedModel):
         # Supertonic keeps its weights in its own directory rather than the hub
         # cache, and its package downloads them atomically (a temp directory
@@ -258,8 +281,11 @@ def model_present(model: Model) -> bool:
 
 
 def _model_component(model: Model) -> Component:
-    key = (model.name if isinstance(model, models_info.PackagedModel)
-           else model.repo_id)
+    # A hub repo is identified by its repo id; the other two kinds have no repo
+    # and carry a name instead. The keys stay distinct across all three, which
+    # is what first_run_download dispatches on.
+    key = (model.repo_id if isinstance(model, models_info.HfRepo)
+           else model.name)
     return Component(key, model.label, model.size_mb, model_present(model))
 
 

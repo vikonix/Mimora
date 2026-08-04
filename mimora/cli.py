@@ -23,6 +23,11 @@ Three launch forms reach :func:`main`, and all three behave identically:
 * ``mimora`` - the console script, which calls it directly;
 * ``python -m mimora`` - via ``mimora/__main__.py``;
 * ``python main.py`` - via the shim in the project root.
+
+``--detect-hardware`` lives here for a reason of the same shape: an installed
+tool's environment is not reachable with ``python -m``, so a maintenance
+command that only existed as a module could not be run by the people who need
+it most. The console script is the only entry an installed package puts on PATH.
 """
 
 import argparse
@@ -39,7 +44,25 @@ def main() -> None:
         prog="mimora", description="Mimora pronunciation trainer.")
     parser.add_argument(
         "--version", action="version", version=f"Mimora {__version__}")
-    parser.parse_args()  # --version exits inside this call
+    parser.add_argument(
+        "--detect-hardware", action="store_true",
+        help="probe this machine, rewrite config/hardware_config.json and "
+             "exit (run it after changing the installed PyTorch build)")
+    args = parser.parse_args()  # --version exits inside this call
+
+    if args.detect_hardware:
+        # Here rather than only as `python -m mimora.detect_hardware`, because
+        # in an installed tool there is no interpreter that can run that: uv
+        # puts this package's console scripts on PATH and nothing else, and the
+        # `python` a user does have is some other environment, which would
+        # rewrite some other hardware_config.json. The advice this refreshes -
+        # detect_hardware.warn_if_gpu_unused - has to name a command that
+        # exists where it is printed.
+        #
+        # Imported inside the branch for the same reason as the application
+        # below: --version must not pay for anything it does not print.
+        from mimora import detect_hardware
+        raise SystemExit(detect_hardware.main())
 
     # Printed before the import rather than after: the import below is the
     # slow part, so this is the first sign of life the user gets. flush=True

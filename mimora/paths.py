@@ -214,6 +214,25 @@ def model_cache_dir() -> Path:
     return data_root() / "model_cache"
 
 
+def spacy_model_dir() -> Path:
+    """The unpacked spaCy pipeline, put on sys.path by spacy_model_fetch.
+
+    A sibling of the hub cache rather than a directory of its own at the top
+    of the data root, because it is the same kind of thing: something
+    downloaded once and read from then on. Supertonic already sits here for
+    the same reason.
+
+    It is NOT unpacked into site-packages, where pip would have put it. That
+    directory belongs to whatever installed the package - ``uv tool upgrade``
+    rebuilds it from scratch and the model would vanish without a word, uv asks
+    outright not to write there by hand, and in a clone it would mean writing
+    into somebody's virtual environment. Here it behaves the same in both
+    modes, survives an upgrade and falls under the same "downloads live under
+    the data root" rule as everything else.
+    """
+    return model_cache_dir() / "spacy"
+
+
 def llama_dir() -> Path:
     """The llama-server binary installed by llama_server_fetch."""
     return data_root() / "bin" / "llama"

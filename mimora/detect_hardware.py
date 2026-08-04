@@ -460,6 +460,19 @@ def warn_if_gpu_unused(device: str) -> None:
 
     A driver present while torch sits on the CPU is equally what a broken CUDA
     installation looks like, so the message names that way out too.
+
+    **The message depends on whether hardware_config.json exists**, because the
+    sentence above - "cpu means torch could not use a GPU" - stops being true
+    once it does. ``loader.detect_device`` short-circuits on a stored ``"cpu"``
+    without asking torch (deliberately: a stale ``"cpu"`` only makes things
+    slower, while a stale ``"cuda"`` kills the app and is therefore re-checked),
+    so with that file present ``cpu`` can equally mean "the file is older than
+    the torch now installed". That is not a corner case: it is what
+    ``uv tool upgrade`` from a CPU build onto a CUDA one looks like, and it was
+    found by exactly that - a run whose warning told the user to reinstall with
+    ``--torch-backend auto`` when they just had. Re-checking a stored ``"cpu"``
+    against torch is NOT the fix: the detector also writes ``cpu`` on a machine
+    that has a card with too little VRAM, and a re-check would overrule it.
     """
     if device != "cpu":
         return
@@ -469,14 +482,56 @@ def warn_if_gpu_unused(device: str) -> None:
         return  # same degradation as _probe_llama_offload: diagnostics only
     if llama_server_fetch.detect_driver_cuda() is None:
         return  # no NVIDIA driver, so the CPU is the correct answer here
+
+    reinstall = ("`uv tool install --reinstall mimora --torch-backend auto` "
+                 "(or set UV_TORCH_BACKEND=auto beforehand), or "
+                 "`python install.py` from a clone")
+    if _stored_device_may_be_stale():
+        logging.warning(
+            "An NVIDIA GPU is present, but this run is on the CPU - "
+            "pronunciation scoring and speech synthesis will be several times "
+            "slower. Two things look like this. Either %s records a machine "
+            "state older than the torch now installed, in which case run "
+            "%s to refresh it; or torch really is a CPU-only build, in which "
+            "case reinstall it: %s.",
+            OUTPUT_FILE, _refresh_command(), reinstall)
+        return
     logging.warning(
         "An NVIDIA GPU is present, but torch is a CPU-only build and will not "
         "use it - pronunciation scoring and speech synthesis will run several "
-        "times slower. To reinstall with a CUDA build: `uv tool install "
-        "--reinstall mimora --torch-backend auto` (or set UV_TORCH_BACKEND=auto "
-        "beforehand), or `python install.py` from a clone. If the install did "
+        "times slower. To reinstall with a CUDA build: %s. If the install did "
         "name a CUDA backend, then the driver and the build disagree - see "
-        "https://pytorch.org/get-started/locally/.")
+        "https://pytorch.org/get-started/locally/.", reinstall)
+
+
+def _refresh_command() -> str:
+    """How to re-run this probe, spelled the way THIS installation allows.
+
+    The two forms are not interchangeable, and printing the wrong one is worse
+    than printing nothing. An installed tool has no interpreter on PATH that
+    can ``import mimora`` - uv puts the package's console scripts there and
+    nothing else - so ``python -m mimora.detect_hardware`` either fails or, if
+    the user happens to have a checkout's virtual environment active, quietly
+    rewrites a DIFFERENT hardware_config.json. Out of a clone the console
+    script may not exist at all, which is the mirror image.
+    """
+    if paths.repo_mode():
+        return "`python -m mimora.detect_hardware`"
+    return "`mimora --detect-hardware`"
+
+
+def _stored_device_may_be_stale() -> bool:
+    """True when a written hardware_config.json could be the reason for "cpu".
+
+    One stat call, and deliberately not a read: what the file SAYS does not
+    matter here. If it exists at all, ``loader.detect_device`` may have taken
+    its word without consulting torch, and that is the whole of the ambiguity
+    the message has to admit to.
+    """
+    try:
+        return OUTPUT_FILE.is_file()
+    except OSError:
+        return False
 
 
 def probe_and_write() -> dict:
