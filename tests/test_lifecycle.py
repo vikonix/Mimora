@@ -180,6 +180,45 @@ class ConsoleScriptLaunchTests(unittest.TestCase):
         self.assertEqual(_command_for(argv), argv)
 
 
+class AppendLogFlagTests(unittest.TestCase):
+    """The replacement is told to continue the log rather than start a new one.
+
+    The flag is added by spawn_replacement(), not by relaunch_command(), so it
+    is only observable through the command handed to Popen - which is what
+    these tests read. What they pin is the difference between "one session,
+    restarts included" and the previous behaviour, where the child truncated
+    main.log and the first-run download vanished from it.
+    """
+
+    def _spawned_command(self, argv):
+        """The command spawn_replacement() would start, with Popen stubbed."""
+        fake_main = types.SimpleNamespace(__spec__=None)
+        with mock.patch.object(sys, "argv", list(argv)), \
+                mock.patch.object(sys, "executable", FAKE_PYTHON), \
+                mock.patch.dict(sys.modules, {"__main__": fake_main}), \
+                mock.patch.object(lifecycle.subprocess, "Popen") as popen:
+            lifecycle.spawn_replacement()
+        # Positional argument 0 of the single call, on either platform branch.
+        return popen.call_args[0][0]
+
+    def test_the_flag_is_added(self):
+        command = self._spawned_command(["main.py"])
+        self.assertEqual(
+            command, [FAKE_PYTHON, "main.py", lifecycle.bootstrap.APPEND_LOG_FLAG])
+
+    def test_an_existing_flag_is_not_repeated(self):
+        # This process was itself started by a restart, so sys.argv already
+        # carries the flag and relaunch_command() copies it over.
+        argv = ["main.py", lifecycle.bootstrap.APPEND_LOG_FLAG]
+        command = self._spawned_command(argv)
+        self.assertEqual(
+            command.count(lifecycle.bootstrap.APPEND_LOG_FLAG), 1)
+
+    def test_the_original_arguments_survive(self):
+        command = self._spawned_command(["main.py", "--flag", "value"])
+        self.assertEqual(command[:3], [FAKE_PYTHON, "main.py", "--flag"])
+
+
 class CommandOwnershipTests(unittest.TestCase):
     """The result is a new list, whoever built it."""
 

@@ -14,6 +14,11 @@ import os
 import subprocess
 import sys
 
+# For APPEND_LOG_FLAG only, which spawn_replacement() passes to the process it
+# starts. bootstrap is stdlib-only itself, so this keeps the module as free of
+# heavy imports as it was.
+from mimora import bootstrap
+
 
 def hard_exit():
     """End the process immediately, bypassing interpreter finalization.
@@ -121,6 +126,20 @@ def spawn_replacement():
     """
     try:
         command = relaunch_command()
+        # The replacement continues this session's logs instead of starting
+        # them over. Added here rather than in relaunch_command(), which
+        # answers "how was this process started" and must keep answering only
+        # that: continuing the log is a property of the restart, not of the
+        # launch form. Without the flag the child opens main.log with mode="w"
+        # and truncates everything this process wrote - the first-run download,
+        # or the setting change that led here, i.e. the reason anyone opens the
+        # file afterwards.
+        #
+        # Guarded because relaunch_command() rebuilds from sys.argv: this
+        # process may itself have been started by a restart, and a second one
+        # within the same session would otherwise repeat the flag.
+        if bootstrap.APPEND_LOG_FLAG not in command:
+            command.append(bootstrap.APPEND_LOG_FLAG)
         logging.info(f"Relaunching: {command}")
         popen_kwargs = {
             "cwd": os.getcwd(),

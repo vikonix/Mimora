@@ -48,6 +48,19 @@ def main() -> None:
         "--detect-hardware", action="store_true",
         help="probe this machine, rewrite config/hardware_config.json and "
              "exit (run it after changing the installed PyTorch build)")
+    # Spelled as bootstrap.APPEND_LOG_FLAG ("--append-log"), because
+    # lifecycle.spawn_replacement() has to produce the same string and one
+    # constant is cheaper than two that must agree. argparse derives the
+    # destination from it as usual, so args.append_log below is unaffected.
+    #
+    # Listed rather than suppressed although the restart is what normally
+    # passes it: a hidden flag surprises the next reader of --help, and
+    # continuing a log by hand across two launches is a fair use of it.
+    parser.add_argument(
+        bootstrap.APPEND_LOG_FLAG, action="store_true",
+        help="append to logs/main.log instead of truncating it (added "
+             "automatically when the app restarts itself, so one session's "
+             "log survives the restart)")
     args = parser.parse_args()  # --version exits inside this call
 
     if args.detect_hardware:
@@ -74,4 +87,4 @@ def main() -> None:
     # application load.
     from mimora import app
 
-    app.run()
+    app.run(append_log=args.append_log)

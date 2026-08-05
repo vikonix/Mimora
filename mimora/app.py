@@ -1542,13 +1542,18 @@ def _log_spacy_model_location() -> None:
         spacy_model_fetch.MODEL.name)
 
 
-def run():
+def run(append_log: bool = False):
     """Start the application: logging, the first-run window, then the GUI.
 
     Called by mimora/cli.py once the arguments are parsed, which is also why
     there is no ``if __name__ == "__main__"`` block here: this module is the
     application, not an entry point, and it is imported by three different
     launch forms (console script, ``python -m mimora``, ``python main.py``).
+
+    ``append_log`` carries the --append-log switch through to the logging
+    setup; the default is what a plain launch does (a fresh main.log). It is
+    a parameter rather than something read from config because logging is
+    configured from the command line, which config knows nothing about.
 
     Nothing follows the GUI's own run(): both exit paths end in
     lifecycle.hard_exit(), so control never returns.
@@ -1558,7 +1563,7 @@ def run():
     # bootstrap.setup_logging for the force=True rationale), and importing a
     # module should not reconfigure the whole process's logging as a side
     # effect. Nothing logs between the import and this call.
-    bootstrap.setup_logging(config.LOG_FILE)
+    bootstrap.setup_logging(config.LOG_FILE, append=append_log)
 
     # First run on a machine where nothing has been downloaded: ask, fetch, and
     # only then build the app. It happens BEFORE the constructor because a

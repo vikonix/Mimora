@@ -43,7 +43,14 @@ ALLOWED_FROM_PACKAGE = {"__version__", "bootstrap"}
 
 
 def _fake_app(run):
-    """A stand-in for mimora.app, which in reality imports the whole stack."""
+    """A stand-in for mimora.app, which in reality imports the whole stack.
+
+    ``run`` is called the way cli.main() calls the real one, with keyword
+    arguments (``append_log``), so a stand-in has to accept them - hence the
+    ``**kwargs`` on every stub below. A stub that took none would turn a
+    changed signature into a TypeError raised from inside the test's own
+    lambda, which says nothing about what broke.
+    """
     module = types.ModuleType("mimora.app")
     module.run = run
     return module
@@ -114,7 +121,7 @@ class VersionFlagTests(unittest.TestCase):
     """--version answers, and answers without waking the application."""
 
     def test_version_prints_the_package_version_and_exits_zero(self):
-        def must_not_run():
+        def must_not_run(**kwargs):
             raise AssertionError("--version reached the application")
 
         app = _fake_app(must_not_run)
@@ -135,7 +142,7 @@ class DetectHardwareFlagTests(unittest.TestCase):
     """The maintenance command that only the console script can reach."""
 
     def test_the_flag_runs_the_probe_and_never_starts_the_application(self):
-        def must_not_run():
+        def must_not_run(**kwargs):
             raise AssertionError("--detect-hardware started the application")
 
         probe = types.ModuleType("mimora.detect_hardware")
@@ -163,7 +170,8 @@ class HandoverTests(unittest.TestCase):
 
     def test_a_normal_launch_hands_over_to_the_application(self):
         calls = []
-        with _launched_as(["mimora"], _fake_app(lambda: calls.append("run"))):
+        with _launched_as(["mimora"],
+                          _fake_app(lambda **kwargs: calls.append("run"))):
             cli.main()
         self.assertEqual(calls, ["run"])
 
@@ -172,7 +180,7 @@ class HandoverTests(unittest.TestCase):
         # and both only take effect while the libraries it configures are still
         # unimported. Order, not merely presence, is what is asserted.
         order = []
-        app = _fake_app(lambda: order.append("run"))
+        app = _fake_app(lambda **kwargs: order.append("run"))
         with mock.patch.object(cli.bootstrap, "early_init",
                                side_effect=lambda: order.append("early_init")), \
                 mock.patch.object(sys, "argv", ["mimora"]), \
@@ -181,6 +189,42 @@ class HandoverTests(unittest.TestCase):
                 redirect_stdout(io.StringIO()):
             cli.main()
         self.assertEqual(order, ["early_init", "run"])
+
+
+class AppendLogFlagTests(unittest.TestCase):
+    """--append-log reaches the application, and is off unless asked for.
+
+    The switch exists for the restart the app performs on itself (see
+    lifecycle.spawn_replacement), so the half tested here is only the wiring:
+    argparse to app.run. What it selects - continuing logs/main.log instead of
+    truncating it - belongs to bootstrap.setup_logging.
+    """
+
+    def _run_kwargs(self, argv):
+        """The keyword arguments cli.main() passes to app.run for a command line."""
+        seen = {}
+        app = _fake_app(lambda **kwargs: seen.update(kwargs))
+        with _launched_as(argv, app):
+            cli.main()
+        return seen
+
+    def test_the_flag_is_passed_through(self):
+        self.assertEqual(
+            self._run_kwargs(["mimora", "--append-log"]),
+            {"append_log": True})
+
+    def test_a_plain_launch_leaves_it_off(self):
+        # The deliberate half: a launch nobody restarted starts a clean log,
+        # so one file holds one session.
+        self.assertEqual(self._run_kwargs(["mimora"]), {"append_log": False})
+
+    def test_the_flag_matches_the_constant_the_relaunch_uses(self):
+        # cli.py declares the argument from bootstrap.APPEND_LOG_FLAG and
+        # lifecycle.spawn_replacement() appends the same constant. This pins
+        # the spelling argparse derives "append_log" from: renaming the
+        # constant alone would keep both sides agreeing with each other and
+        # silently stop matching the destination read in cli.main().
+        self.assertEqual(cli.bootstrap.APPEND_LOG_FLAG, "--append-log")
 
 
 if __name__ == "__main__":

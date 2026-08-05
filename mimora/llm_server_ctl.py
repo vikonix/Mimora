@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from mimora import config, llama_server_fetch
+from mimora import bootstrap, config, llama_server_fetch
 from mimora.llm import LLMManager
 
 # How long to wait for a graceful exit before killing the subprocess.
@@ -187,7 +187,23 @@ class LLMServerController:
             if self._shutdown_requested:
                 logging.info("LLM server start aborted: shutdown requested.")
                 return False
-            self._log_file = open(log_path, "w", encoding="utf-8", buffering=1)
+            # Mode from bootstrap, not a literal "w": after an in-session
+            # restart main.log is continued, and a server log that starts
+            # over would cover only the second half of a session whose app
+            # log covers all of it. Reached on the restart-from-settings
+            # path, where the old process shut this server down and the new
+            # one starts its own; the first-run restart happens before any
+            # server exists.
+            log_mode = bootstrap.log_file_mode()
+            self._log_file = open(log_path, log_mode,
+                                  encoding="utf-8", buffering=1)
+            if log_mode == "a":
+                # The same seam marker main.log gets, in the file's own terms.
+                # This one carries no timestamps of its own (it is the server's
+                # raw stdout), so without a line here the two runs simply abut.
+                self._log_file.write(
+                    "\n----- log continues here: server restarted in-session "
+                    "-----\n")
             try:
                 self._process = subprocess.Popen(
                     cmd, stdout=self._log_file, stderr=self._log_file)
