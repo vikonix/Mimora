@@ -10,7 +10,9 @@ run Mimora on a fresh machine:
   2. Detect an NVIDIA GPU / CUDA version (via nvidia-smi, no extra packages).
   3. (GPU only) install torch/torchaudio as CUDA builds.
   4. pip install the project dependencies (read from pyproject.toml).
-  5. Check for the native espeak-ng binary (optionally help install it).
+  5. Report which espeak-ng shared library phonemizer will use (the bundled
+     espeakng-loader wheel by default), and offer to install a system one only
+     if none is found.
   6. Pre-download the Hugging Face models into model_cache/.
   7. Pre-download the Supertonic 3 TTS model into model_cache/supertonic3/
      (the Spanish TTS backend; kept outside the HF hub cache because the
@@ -98,6 +100,11 @@ SETTINGS_FILE = PROJECT_ROOT / "config" / "settings.json"
 # run on the user's machine, and tools/ is what the maintainer runs. Named as a
 # module because that is how it is invoked - see step_detect_hardware.
 DETECT_HW_MODULE = "mimora.detect_hardware"
+# The espeak-ng probe, run the same way and for the same reason: it has to
+# answer for the environment that will run Mimora, not for this process. It
+# lives under pronunciation/ rather than mimora/ because it is the engines' own
+# registration - see step_espeak.
+ESPEAK_PROBE_MODULE = "pronunciation.common.espeak"
 LAUNCHER_BAT = PROJECT_ROOT / "run_mimora.bat"
 LAUNCHER_SH = PROJECT_ROOT / "run_mimora.sh"
 
@@ -138,7 +145,8 @@ REQUIRED_DISTS = [
     "numpy", "soundfile", "sounddevice", "kokoro", "supertonic", "openai",
     "torch", "transformers",
     "torchaudio", "librosa", "scipy", "scikit-learn", "fastdtw",
-    "phonemizer-fork", "python-Levenshtein", "panphon", "sentencepiece",
+    "phonemizer-fork", "espeakng-loader", "python-Levenshtein", "panphon",
+    "sentencepiece",
     "ttkbootstrap", "pillow", "onnxruntime", "wordfreq",
 ]
 
@@ -1099,14 +1107,27 @@ def step_gpu_torch(
 
 
 def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
-    """Ensure the native espeak-ng binary exists; offer to install it."""
-    log.banner("Step 5 - espeak-ng (native binary for phonemizer)")
-    if shutil.which("espeak-ng") or shutil.which("espeak"):
-        log.log("    espeak-ng found on PATH.")
-        report.add("espeak-ng", DONE, "already present")
+    """Report which espeak-ng the engines will use; offer to install one if none.
+
+    Asks the same question the consumer asks. `shutil.which("espeak-ng")`, what
+    this used to do, is a different question and was wrong in both directions:
+    phonemizer loads a shared LIBRARY, so a machine with the executable on PATH
+    but no library phonemizer can find was reported as done (on Windows that is
+    the *normal* outcome of the official installer, which writes
+    libespeak-ng.dll while phonemizer's search looks for espeak-ng.dll), and a
+    machine with no executable but the bundled espeakng-loader wheel - the
+    default setup since that wheel became a dependency - was reported as
+    needing manual work it does not need.
+    """
+    log.banner("Step 5 - espeak-ng (shared library for phonemizer)")
+    library = _resolve_espeak_library(log)
+    if library:
+        log.log(f"    espeak-ng resolves from {library}")
+        report.add("espeak-ng", DONE, library)
         return
 
-    log.log("    espeak-ng NOT found on PATH (required by the phoneme analyzer).")
+    log.log("    No espeak-ng library found (needed by both pronunciation "
+            "engines).")
     system = platform.system()
 
     if system == "Linux":
@@ -1132,27 +1153,74 @@ def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
         log.log("    Homebrew not found. Install it from https://brew.sh first.")
 
     else:  # Windows and anything else: instructions only.
-        log.log("    Windows: download and run the installer from")
+        log.log("    Simplest fix: reinstall the dependencies (step 4) - the")
+        log.log("    espeakng-loader wheel carries the library and its data.")
+        log.log("    Or install espeak-ng system-wide, from")
         log.log("      https://github.com/espeak-ng/espeak-ng/releases")
-        log.log("    Then ensure espeak-ng is on PATH (you may also need to set")
-        log.log("    PHONEMIZER_ESPEAK_LIBRARY to the installed libespeak-ng DLL).")
+        log.log("    and then set BOTH of these, because phonemizer's own")
+        log.log("    search looks for espeak-ng.dll while the installer writes")
+        log.log("    libespeak-ng.dll, and the data is never found beside it:")
+        log.log("      PHONEMIZER_ESPEAK_LIBRARY   -> ...\\libespeak-ng.dll")
+        log.log("      PHONEMIZER_ESPEAK_DATA_PATH -> ...\\espeak-ng-data")
 
-    report.add("espeak-ng", MANUAL, "install separately, see log")
+    report.add("espeak-ng", MANUAL, "no library found, see log")
+
+
+def _resolve_espeak_library(log: Logger) -> str | None:
+    """The espeak-ng library the app will use, asked of the TARGET environment.
+
+    Runs pronunciation/common/espeak.py as a module in a subprocess rather than
+    importing it here, for the same reason step_detect_hardware does: the
+    answer belongs to the interpreter that will run Mimora, and an import would
+    answer for whichever interpreter happens to be running install.py. That
+    module prints the resolved path on stdout and its explanation on stderr, so
+    nothing has to be parsed out of prose.
+
+    Returns None when nothing was found, when the module is missing (the
+    requirements step was skipped) or when the probe failed for any other
+    reason - all of which mean the same thing to the caller.
+
+    Not gated on --dry-run, like the other detection in this script: it changes
+    nothing, and reporting the truth is exactly what a dry run is for. It only
+    prints and exits, so the subprocess is cheap.
+    """
+    cmd = [sys.executable, "-m", ESPEAK_PROBE_MODULE]
+    log.log(f"    $ {display_command(cmd)}")
+    # The thing being printed is a filesystem path, and a redirected stdout on
+    # Windows is cp1252: a path with a non-Latin-1 character would kill the
+    # child with a UnicodeEncodeError and be indistinguishable from "no espeak
+    # found". Force UTF-8 on both ends.
+    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              cwd=str(PROJECT_ROOT), env=env)
+    except OSError as exc:
+        log.log(f"    ERROR: could not run the espeak probe: {exc}")
+        return None
+
+    for line in (proc.stderr or "").splitlines():
+        log.log(f"    | {line.rstrip()}")
+    if proc.returncode != 0:
+        return None
+    return (proc.stdout or "").strip() or None
 
 
 def _install_espeak_soft(cmd: list[str], log: Logger, report: StepReport) -> None:
     """Run the espeak-ng package install without aborting the installer.
 
-    espeak-ng is only needed by the phoneme engine, and both declining the
-    install and the Windows path merely record SKIPPED/MANUAL - so a package
-    manager failure (no sudo rights, repo trouble) must not kill the whole
-    install either.
+    Declining the install and the Windows path both merely record
+    SKIPPED/MANUAL, so a package manager failure (no sudo rights, repo trouble)
+    must not kill the whole install either. Nothing is lost by carrying on: the
+    bundled espeakng-loader wheel is the default source of the library, and
+    this step only matters on a machine that somehow lacks it.
     """
     if run_command(cmd, log):
         report.add("espeak-ng", DONE)
         return
-    log.log("    Package install failed. Install espeak-ng manually later;")
-    log.log("    everything except the phoneme engine works without it.")
+    log.log("    Package install failed. Install espeak-ng manually later, or")
+    log.log("    reinstall the dependencies so the espeakng-loader wheel is")
+    log.log("    in place; both pronunciation engines need one of the two.")
     report.add("espeak-ng", MANUAL, "package install failed, see log")
 
 

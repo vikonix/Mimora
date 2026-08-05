@@ -58,6 +58,12 @@ from pronunciation.common.audio import (
     waveform_digest,
 )
 
+# Bundled espeak-ng registration, shared with the phoneme engine. This engine
+# had none of its own and reached espeak through whatever the process happened
+# to have registered - a system install, or Kokoro/misaki's import side effect,
+# neither of which is guaranteed. See that module.
+from pronunciation.common.espeak import ensure_espeak
+
 
 # =====================================================================
 # Configuration.
@@ -261,6 +267,10 @@ def load_models() -> None:
 
         from pronunciation.common.compat import allow_torch_load_for_trusted_models
 
+        # Registered here as well as in _phonemize_word so the log line lands
+        # at startup, next to the other loading messages, rather than in the
+        # middle of the first analysis. Idempotent, so the second call is free.
+        ensure_espeak()
         allow_torch_load_for_trusted_models()
         cfg = get_config()
         _processor = Wav2Vec2Processor.from_pretrained(cfg.model_name)
@@ -342,6 +352,11 @@ def _phonemize_word(word: str) -> tuple:
     espeak accent: configure() clears this cache whenever the language
     changes, so a stale-accent entry can never be served.
     """
+    # The load-bearing call, not the one in load_models(): get_word_phonemes()
+    # is reachable without ever loading the recognizer, and this engine had no
+    # registration at all until now - it worked only where something else in
+    # the process (a system install, or importing Kokoro) had provided one.
+    ensure_espeak()
     try:
         return tuple(phonemize(word, language=get_config().espeak_language,
                                backend="espeak",

@@ -88,7 +88,7 @@ Work on:    colder
 - **Windows** is the primary target (TTS playback uses `winsound`); a `sounddevice` fallback exists for other platforms.
 - A microphone and speakers.
 - For GPU acceleration: an NVIDIA GPU with a CUDA-enabled PyTorch build.
-- **espeak-ng** (native binary, required by the phonemizer) - installed separately, see below.
+- **espeak-ng** - needed by `phonemizer`, but **not a separate install**: the shared library and its data ship in the `espeakng-loader` wheel, which comes with the dependencies. A system install stays a valid fallback, see below.
 - **PortAudio** (Linux only) - the native library `sounddevice` binds to for recording and playback (`libportaudio2` on Debian/Ubuntu). The Windows and macOS `sounddevice` wheels bundle it; the Linux ones do not. See below.
 
 ### macOS notes
@@ -154,8 +154,9 @@ or CUDA toolkit for the standard setup.
 ### Quick install (script, recommended)
 
 `install.py` automates the whole setup: it checks the native pieces pip cannot
-supply (`espeak-ng`, plus `tkinter` and PortAudio on Linux and the MSVC runtime
-on Windows), installs the Python dependencies, auto-detects an NVIDIA GPU and
+supply (`tkinter` and PortAudio on Linux, the MSVC runtime on Windows),
+installs the Python dependencies, reports which `espeak-ng` library the
+pronunciation engines will use, auto-detects an NVIDIA GPU and
 installs the matching CUDA build of `torch`, pre-downloads the Hugging Face
 models into `model_cache/`, installs the pinned llama-server binary into
 `bin/llama/` and downloads the GGUF chat model into `models/`.
@@ -189,8 +190,9 @@ Useful flags:
 - `--cpu` - skip the GPU (CUDA) installs
 - `--skip-models` / `--skip-gguf` - skip the model / GGUF downloads
 
-`espeak-ng` (a native binary, see below) is checked but not installed on Windows -
-follow the printed instructions if it is missing. On Windows, enabling
+Step 5 reports the `espeak-ng` library the engines resolve to, which on a normal
+install is the bundled one; it only offers a system install if none is found
+(and on Windows it just prints instructions, see below). On Windows, enabling
 **Developer Mode** lets the model cache use symlinks; without it the installer
 falls back to copying files (more disk use, but it always works).
 
@@ -221,13 +223,47 @@ On Windows with an NVIDIA card, add the CUDA build of `torch` afterwards (see
 [GPU support](#gpu-support-recommended)): PyPI's `torch` is CPU-only there. On
 Linux PyPI already serves a CUDA build, and macOS has no CUDA at all.
 
-### Install espeak-ng (required for phoneme analysis)
+### espeak-ng (no separate install needed)
 
-`phonemizer` needs the native **espeak-ng** binary on your `PATH`:
+Both pronunciation engines phonemize the target text with **espeak-ng**, through
+`phonemizer`. It arrives with the dependencies: the `espeakng-loader` wheel
+carries the espeak-ng shared library and its data, and Mimora registers both
+with `phonemizer` before the first phonemization. Nothing to install by hand,
+and nothing to put on `PATH`.
 
-- **Windows** - download and run the installer from the [espeak-ng releases](https://github.com/espeak-ng/espeak-ng/releases).
+To see which one your environment will use:
+
+```bash
+python -m pronunciation.common.espeak
+```
+
+Run it **with the virtual environment activated**, or call the interpreter by
+path (`.venv\Scripts\python.exe -m ...`). It answers for the interpreter that
+runs it, so a bare `python` outside the environment reports on a different
+Python than the one that runs Mimora. `install.py` reports the same thing in
+its step 5 and is immune to this, because it invokes its own interpreter
+explicitly.
+
+Note also that `phonemizer` loads a shared **library**, not the `espeak-ng`
+executable, so `espeak-ng --version` answering on the command line says nothing
+about whether Mimora can use it.
+
+**A system espeak-ng is still a valid setup** - it is the fallback when the
+wheel is missing, which is how a standalone install of `pronunciation/phoneme/`
+or `pronunciation/acoustic/` can work:
+
 - **macOS** - `brew install espeak-ng`
 - **Linux** - `sudo apt-get install espeak-ng`
+- **Windows** - download and run the installer from the [espeak-ng releases](https://github.com/espeak-ng/espeak-ng/releases), then set **both** of these environment variables. One is not enough: `phonemizer`'s own search looks for `espeak-ng.dll` while the installer writes `libespeak-ng.dll`, and the data directory is never found beside the library, because `phonemizer` copies the DLL to a temporary directory before loading it.
+
+  ```
+  PHONEMIZER_ESPEAK_LIBRARY   = C:\Program Files\eSpeak NG\libespeak-ng.dll
+  PHONEMIZER_ESPEAK_DATA_PATH = C:\Program Files\eSpeak NG\espeak-ng-data
+  ```
+
+Switching espeak-ng versions is not free: the scoring calibration was fitted
+against the transcription of the bundled build, which is why `espeakng-loader`
+is pinned to a minor in `pyproject.toml`.
 
 ### Audio on Linux (PortAudio)
 

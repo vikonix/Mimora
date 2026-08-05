@@ -137,6 +137,25 @@ dependencies = [
     # and must not be installed together, and only the fork has the
     # EspeakWrapper.set_data_path() that Kokoro/misaki call.
     "phonemizer-fork>=3.3.0",
+    # The espeak-ng shared library and its data, as a wheel. It used to arrive
+    # transitively (kokoro -> misaki) and is named here for two reasons.
+    #
+    # First, it is what makes espeak-ng stop being a manual install step:
+    # pronunciation/common/espeak.py registers it with phonemizer, and a system
+    # espeak-ng is only the fallback.
+    #
+    # Second, and the reason for the upper bound: the espeak-ng build inside
+    # this wheel IS the reference transcription. phoneme_good, the five
+    # cutpoints and the whole bucket scale in
+    # pronunciation/phoneme/en_model_calibration.json were fitted against it, so
+    # a version that transcribes differently moves every score - silently, since
+    # nothing compares the two. Same argument as the spaCy pin above, except
+    # that a spaCy mismatch at least warns. Bump deliberately, and re-run the
+    # transcription diff against a reference espeak-ng before you do
+    # (prototypes-pronunciation/tasks/espeak-bundled.md). 0.2.4 is what the
+    # calibration was taken with; 0.2.x has shown no transcription difference
+    # against a system espeak-ng 1.51.0 on ordinary prose.
+    "espeakng-loader>=0.2.4,<0.3",
     # Articulatory feature distance for the phoneme substitution cost - the one
     # dependency the acoustic engine does not share.
     "panphon>=0.20.0",

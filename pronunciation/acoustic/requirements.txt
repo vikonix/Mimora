@@ -2,9 +2,18 @@
 # Reused from OpenPronounce (MIT). Install on top of the project root requirements.
 #   pip install -r pronunciation/acoustic/requirements.txt
 #
-# NOTE: phonemizer needs the native espeak-ng binary, which is NOT a pip package.
-# Install it separately and ensure it is on PATH:
+# NOTE: phonemizer needs espeak-ng, and it no longer has to be installed by
+# hand. espeakng-loader (below) ships the shared library and its data as a
+# wheel, and pronunciation/common/espeak.py registers both with phonemizer
+# before this engine's first phonemization.
+#
+# A system espeak-ng remains a valid setup and is the fallback when the wheel
+# is absent - install it and put it on PATH:
 #   Windows : download the installer from https://github.com/espeak-ng/espeak-ng/releases
+#             and set PHONEMIZER_ESPEAK_LIBRARY to the installed libespeak-ng.dll
+#             plus PHONEMIZER_ESPEAK_DATA_PATH to its espeak-ng-data directory
+#             (phonemizer's own search looks for espeak-ng.dll, which is not the
+#             name the official installer writes)
 #   macOS   : brew install espeak-ng
 #   Linux   : sudo apt-get install espeak-ng
 
@@ -27,6 +36,12 @@ fastdtw>=0.3.4
 # the "phonemizer" import namespace and must not be installed together, so installing
 # plain phonemizer will break Kokoro. (from phonemizer import phonemize still works.)
 phonemizer-fork>=3.3.0
+# The espeak-ng shared library and its data, as a wheel - see the NOTE above.
+# The upper bound is not routine hygiene: the espeak-ng build inside this wheel
+# is the reference transcription the pronunciation scoring was calibrated
+# against, so a version that transcribes differently moves scores with nothing
+# to announce it. Kept in sync with pyproject.toml, where the reasoning lives.
+espeakng-loader>=0.2.4,<0.3
 python-Levenshtein>=0.21.0
 soundfile>=0.12.0
 # Cap kept in sync with pyproject.toml: numba (via librosa) supports NumPy

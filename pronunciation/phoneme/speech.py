@@ -72,6 +72,11 @@ from pronunciation.common.audio import (
     waveform_digest,
 )
 
+# Bundled espeak-ng registration, shared with the acoustic engine (this engine
+# used to hold its own copy). See that module for why the engines register it
+# themselves rather than relying on Kokoro/misaki's import side effect.
+from pronunciation.common.espeak import ensure_espeak
+
 
 # =====================================================================
 # Constants and config.
@@ -140,14 +145,25 @@ def _model_calibration_path(lang: str) -> Path:
     return _DIR / f"{lang}_model_calibration.json"
 
 
-def _load_model_calibration(lang: str) -> dict:
-    """Read the model calibration for *lang*, falling back to English when absent."""
-    data = _read_json(_model_calibration_path(lang))
+def _load_model_calibration(lang: str) -> Tuple[dict, Path]:
+    """Read the model calibration for *lang*, falling back to English when absent.
+
+    Returns the constants together with the file they came from. The path is
+    part of the result rather than recomputed by the caller because the two can
+    differ: on the fallback the data is English while *lang* is not, and a
+    caller that spelled the name itself would report a file that does not
+    exist. That is precisely what the startup log used to do for Spanish -
+    "no model calibration for 'es'" immediately followed by
+    "file=es_model_calibration.json".
+    """
+    path = _model_calibration_path(lang)
+    data = _read_json(path)
     if not data and lang != _DEFAULT_LANG:
         logging.warning("[phoneme] no model calibration for %r; using %r defaults",
                         lang, _DEFAULT_LANG)
-        data = _read_json(_model_calibration_path(_DEFAULT_LANG))
-    return data
+        path = _model_calibration_path(_DEFAULT_LANG)
+        data = _read_json(path)
+    return data, path
 
 
 def _user_phoneme_good(lang: str, user_name: str) -> Optional[float]:
@@ -246,7 +262,7 @@ def _apply_model_calibration(calib: dict) -> None:
 # Import-time English defaults so the module is usable standalone (and the offline
 # unit tests have concrete values). _ensure_calibration() reloads per language and
 # applies the user override once a host injects its config via configure().
-_apply_model_calibration(_load_model_calibration(_DEFAULT_LANG))
+_apply_model_calibration(_load_model_calibration(_DEFAULT_LANG)[0])
 # Language/user the constants above currently reflect; None forces the first
 # _ensure_calibration() to (re)load even when the language is the default.
 _loaded_lang: Optional[str] = None
@@ -278,7 +294,7 @@ def _ensure_calibration_locked() -> None:
     user = cfg.user_name
     if lang == _loaded_lang and user == _loaded_user:
         return
-    model = _load_model_calibration(lang)
+    model, model_file = _load_model_calibration(lang)
     _apply_model_calibration(model)
     user_good = _user_phoneme_good(lang, user)
     if user_good is not None:
@@ -287,9 +303,11 @@ def _ensure_calibration_locked() -> None:
     # recoverable from logs/main.log. The model and the user override go on
     # separate lines. Logged only on a (re)load -- i.e. once at startup and again
     # if the language/user changes -- so it never floods the per-take analysis lines.
+    # `file` is the file actually read, which on the English fallback is NOT the
+    # one named after `lang` -- see _load_model_calibration.
     logging.info(
         "[phoneme] model calibration loaded (lang=%s, file=%s): %s",
-        lang, _model_calibration_path(lang).name,
+        lang, model_file.name,
         json.dumps(model, ensure_ascii=False),
     )
     logging.info(
@@ -478,12 +496,7 @@ def load_models() -> None:
         # Register the bundled espeak-ng BEFORE the processor loads: the
         # wav2vec2-phoneme tokenizer builds a phonemizer EspeakBackend inside
         # from_pretrained, which raises "espeak not installed" otherwise.
-        # Historically this was masked by a side effect - importing Kokoro
-        # (misaki.espeak) registered espeak at app startup - but since the TTS
-        # backends import lazily (mimora/tts.py), a non-Kokoro run (e.g.
-        # Spanish on Supertonic) never imports Kokoro, so the engine must
-        # register espeak itself.
-        _ensure_espeak()
+        ensure_espeak()
         allow_torch_load_for_trusted_models()
         cfg = get_config()
         _processor = AutoProcessor.from_pretrained(cfg.model_name)
@@ -513,35 +526,9 @@ def _ensure_loaded() -> None:
         load_models()
 
 
-# =====================================================================
-# espeak registration (autonomy: mirrors how Kokoro/misaki registers espeak-ng).
-# =====================================================================
-_espeak_registered = False
-
-
-def _ensure_espeak() -> None:
-    """Point phonemizer at the bundled espeak-ng once (no system install needed).
-
-    This is the engine's OWN registration - it must not rely on the host:
-    since Mimora's TTS backends import lazily, a non-Kokoro run (Spanish on
-    Supertonic) never imports Kokoro/misaki, whose import used to register
-    espeak as a side effect. Called from load_models() (the tokenizer builds
-    an EspeakBackend inside from_pretrained) and before reference
-    phonemization. Any failure falls through to a system-installed espeak,
-    matching the acoustic core's assumption.
-    """
-    global _espeak_registered
-    if _espeak_registered:
-        return
-    try:
-        import espeakng_loader
-        from phonemizer.backend.espeak.wrapper import EspeakWrapper
-
-        EspeakWrapper.set_library(espeakng_loader.get_library_path())
-        EspeakWrapper.set_data_path(espeakng_loader.get_data_path())
-    except Exception:
-        pass  # rely on a system espeak / host-side registration
-    _espeak_registered = True
+# espeak registration lives in pronunciation.common.espeak (ensure_espeak is
+# imported above), shared with the acoustic engine so a fix to it reaches both.
+# It used to be a private copy here, which left the acoustic engine with none.
 
 
 # Audio preparation lives in pronunciation.common.audio (_prepare_waveform is
@@ -660,7 +647,7 @@ def reference_word_phonemes(text: str, espeak_lang: str) -> List[List[str]]:
     from phonemizer import phonemize
     from phonemizer.separator import Separator
 
-    _ensure_espeak()
+    ensure_espeak()
     # A list input phonemizes each token independently in a single backend call;
     # word="" because each item is already one token (no internal boundary needed).
     ipa_list = phonemize(

@@ -6,14 +6,13 @@
 # recognizer, phonemizer-fork for the espeak reference). The one addition over the
 # acoustic core is panphon, used for the articulatory feature distance.
 #
-# NOTE: phonemizer needs espeak-ng. The engine registers the bundled
-# espeakng_loader itself (speech._ensure_espeak, called from load_models and
-# before reference phonemization) and falls back to a system espeak-ng on
-# PATH. Do not rely on Kokoro/misaki registering it as an import side effect:
-# Mimora's TTS backends import lazily, so a non-Kokoro run (Spanish on
-# Supertonic) never imports Kokoro. espeakng_loader itself arrives
-# transitively with kokoro/misaki in the full app; standalone installs without
-# it use the system espeak-ng.
+# NOTE: phonemizer needs espeak-ng, and it is NOT a separate install any more.
+# espeakng-loader (below) ships the shared library and its data as a wheel, and
+# pronunciation/common/espeak.py registers both with phonemizer before the
+# first phonemization. A system espeak-ng is now only the fallback. Do not rely
+# on Kokoro/misaki registering it as an import side effect: Mimora's TTS
+# backends import lazily, so a non-Kokoro run (Spanish on Supertonic) never
+# imports Kokoro.
 
 # >=5.3 closes CVE-2026-4372 (config-injection RCE); kept in sync with the
 # application's own list in [project.dependencies] (pyproject.toml). The markers
@@ -27,6 +26,13 @@ librosa>=0.10.0
 # Use phonemizer-fork, NOT plain "phonemizer" (shares the import namespace; the fork
 # adds EspeakWrapper.set_data_path() that Kokoro/misaki rely on).
 phonemizer-fork>=3.3.0
+# The espeak-ng shared library and its data, as a wheel - see the NOTE above.
+# The upper bound is not routine hygiene: the espeak-ng build inside this wheel
+# IS the reference transcription this engine's calibration was fitted against
+# (<lang>_model_calibration.json), so a version that transcribes differently
+# moves every score with nothing to announce it. Kept in sync with
+# pyproject.toml, where the full reasoning lives.
+espeakng-loader>=0.2.4,<0.3
 # Articulatory feature distance for the phoneme substitution cost (the one dep the
 # acoustic core does not need).
 panphon>=0.20.0
