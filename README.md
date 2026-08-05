@@ -84,7 +84,7 @@ Work on:    colder
 ## Requirements
 
 - **Hardware** - runs on a typical laptop or desktop: **16 GB RAM and no GPU required** (CPU-only works; the first few phrases are slower). An NVIDIA GPU is optional and speeds up pronunciation analysis and phrase generation.
-- **Python 3.11 or 3.12** (developed and tested on 3.11 and 3.12). Python 3.13 and newer are not yet supported (as of June 2026).
+- **Python 3.11 or 3.12** (developed and tested on 3.11 and 3.12). Python 3.13 and newer are not supported (as of August 2026). The limit is the install, not the application: a full 3.14 run works, but `editdistance` and `curated-tokenizers` publish no cp314 wheels, so both are compiled from source and the install needs a C++ compiler. `pip` refuses 3.14 by itself; `uv` does not, so pass `--python 3.12` to it explicitly (see below).
 - **Windows** is the primary target (TTS playback uses `winsound`); a `sounddevice` fallback exists for other platforms.
 - A microphone and speakers.
 - For GPU acceleration: an NVIDIA GPU with a CUDA-enabled PyTorch build.
@@ -297,13 +297,22 @@ just several times slower.
   With **uv** this is one flag instead - it reads the installed driver and picks
   the matching PyTorch index itself, falling back to CPU when there is no GPU:
   ```powershell
-  uv tool install mimora --torch-backend auto
+  uv tool install mimora --python 3.12 --torch-backend auto
   # or, equivalently:
-  # UV_TORCH_BACKEND=auto uv tool install mimora
+  # UV_TORCH_BACKEND=auto uv tool install mimora --python 3.12
   ```
   Needs uv 0.9.20 or newer. There is no equivalent for `pipx`: an index cannot be
   named in a published package's metadata, so a pipx install gets the CPU wheel
   and the manual step above.
+
+  `--python 3.12` is not optional. A tool environment "will ignore non-global
+  Python version requests like `.python-version` files and the `requires-python`
+  value" ([uv docs](https://docs.astral.sh/uv/concepts/tools/#python-versions)),
+  so without the flag uv installs into whatever interpreter it finds first. On a
+  machine where that is 3.14 the install compiles `editdistance` and
+  `curated-tokenizers` from source, because neither publishes a cp314 wheel - and
+  fails outright without a C++ compiler. uv downloads a 3.12 itself if there is
+  none.
 - **The LLM** needs no pip package at all: it runs in the official llama.cpp
   binary, and the fetcher below picks the GPU build for your platform
   automatically - CUDA on Windows, Vulkan on Linux, where llama.cpp publishes

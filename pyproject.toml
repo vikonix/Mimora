@@ -12,14 +12,22 @@ name = "mimora"
 dynamic = ["version"]
 description = "Local, offline pronunciation trainer: Kokoro TTS prompts, Wav2Vec2 scoring, local LLM phrase generation."
 readme = "README.md"
-# Tested on 3.11 and 3.12, and bounded rather than left open. The old reasoning
-# ("a newer interpreter gets install.py's WHEEL_TESTED_MAX warning, and the
-# binary-only install fails loudly") holds only inside install.py: `pip install
-# mimora` and `uv tool install mimora` see neither the warning nor
-# --only-binary, so on 3.14 the resolver walks into sdists (numpy, then spacy)
-# and the install dies in a Cython traceback from somebody else's package -
-# the worst possible failure for the audience a published package is for. With
-# the bound, uv simply fetches a 3.12 to install into.
+# Tested on 3.11 and 3.12, and bounded rather than left open. The bound is not a
+# statement about the application: a full 3.14 run on 2026-08-05 passed end to
+# end, pronunciation analysis and llama-server included. It is a statement about
+# the INSTALL. Two dependencies publish no cp314 wheels and are therefore
+# compiled from source - editdistance (via panphon) and curated-tokenizers (via
+# kokoro -> misaki[en] -> spacy-curated-transformers 0.3.1) - and both are C
+# extensions, so the install needs a C++ compiler the audience for a published
+# package does not have. Both lines end upstream: raising
+# spacy-curated-transformers to 2.x wants thinc 9, while misaki pins spacy 3.8 to
+# thinc 8.
+#
+# With the bound, `pip install mimora` on 3.14 refuses in one line instead of
+# dying in somebody else's Cython. Raising it would REMOVE that refusal and gain
+# nothing in exchange, because `uv tool install` ignores requires-python outright
+# (documented behaviour) - which is why README passes --python 3.12 explicitly
+# rather than relying on this value.
 #
 # Raising the ceiling is a deliberate act, together with WHEEL_TESTED_MAX in
 # install.py and the requirements section of README.md, once a newer minor is
