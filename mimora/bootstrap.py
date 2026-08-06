@@ -97,18 +97,38 @@ def setup_logging(log_file, append=False):
     whole first-run download or the setting that caused the restart. A fresh
     launch still starts from an empty file, so the log stays one session
     long, restarts included.
+
+    A log file that cannot be opened costs the file and not the application.
+    The console handler is installed either way, which is the half that keeps
+    the failure visible, and the condition this covers is precisely a data root
+    the machine cannot write to: an unhandled OSError here would end the
+    startup with a traceback naming a FileHandler rather than a sentence naming
+    MIMORA_HOME. paths.ensure_dirs() reports the same condition earlier and
+    also carries on - the two together are what make a bad data root a bad run
+    instead of a crash during an import.
     """
     global _append_logs
     _append_logs = append
+    handlers = [logging.StreamHandler(sys.stdout)]
+    file_error = None
+    try:
+        handlers.insert(0, logging.FileHandler(
+            log_file, mode=log_file_mode(), encoding="utf-8"))
+    except OSError as exc:
+        file_error = exc
     logging.basicConfig(
         level=logging.INFO,
         format=LOG_FORMAT,
-        handlers=[
-            logging.FileHandler(log_file, mode=log_file_mode(), encoding="utf-8"),
-            logging.StreamHandler(sys.stdout)
-        ],
+        handlers=handlers,
         force=True,
     )
+    if file_error is not None:
+        # After basicConfig, so it travels through the console handler that was
+        # just installed and reads like every other line of the run.
+        logging.error("No log file this session: %s could not be opened (%s). "
+                      "Logging to the console only. If MIMORA_HOME is set, "
+                      "check that it names a writable directory.",
+                      log_file, file_error)
     if append:
         # Mark the seam. Two processes write around it, and for a moment they
         # write at the same time: the parent lives on until its hard_exit(),

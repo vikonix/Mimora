@@ -77,8 +77,15 @@ def _env_root() -> Path | None:
     """The MIMORA_HOME override, or None when unset or empty.
 
     ``~`` is expanded so the variable can be written the way a shell would
-    accept it, and the result is made absolute so a relative value cannot make
-    the app's files depend on the working directory at launch.
+    accept it, and the result is resolved: a relative value is anchored once,
+    and ``..`` segments are normalised away so two spellings of one directory
+    do not read as two directories in logs and error messages.
+
+    ``resolve()`` rather than ``absolute()``, which was the first version and
+    did not do what the line above claims. ``absolute()`` prepends the working
+    directory without normalising, so a relative value stayed relative in
+    substance - it silently followed wherever the app happened to be launched
+    from, and the paths it produced were unreadable besides.
 
     One matching pair of surrounding quotes is dropped: ``set MIMORA_HOME="D:\\x"``
     in cmd keeps the quotes inside the value, unlike a POSIX shell, and a quote
@@ -91,7 +98,7 @@ def _env_root() -> Path | None:
         value = value[1:-1].strip()
     if not value:
         return None
-    return Path(value).expanduser().absolute()
+    return Path(value).expanduser().resolve()
 
 
 def _os_data_root() -> Path:
@@ -265,6 +272,24 @@ def ensure_dirs() -> None:
     persist and nothing would say why. ``config/themes/`` is the exception the
     criterion is worded for: nothing writes a theme, but it is where the user
     is told to put one.
+
+    A failure is reported and swallowed rather than raised, because of WHERE
+    this runs: config.py calls it while being imported, before logging is
+    configured and before any window exists, so an exception surfaces as a
+    traceback from an import and the app never starts. The usual cause is a
+    MIMORA_HOME pointing somewhere unusable - a drive that is not there, a
+    read-only location, a file where a directory is expected - and that
+    variable exists to be the easy way out of a bad automatic choice, which a
+    traceback is the opposite of. The same reasoning already shaped
+    :func:`_env_root`, where a quoted value was fixed for exactly this reason;
+    this covers the rest of the class. Carrying on is honest: whatever needed
+    the directory reports its own failure (loader.save_setting already does),
+    and the app is usable without saved settings.
     """
     for directory in (config_dir(), themes_dir(), model_cache_dir(), log_dir()):
-        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            print(f"Mimora: could not create {directory} ({exc}). Settings and "
+                  f"downloads may not persist. If {HOME_ENV_VAR} is set, check "
+                  f"that it names a writable directory.", file=sys.stderr)

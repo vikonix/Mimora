@@ -89,10 +89,23 @@ classifiers = [
 #
 # Intel macOS (x86_64) runs on relaxed pins throughout: PyTorch published no
 # wheel newer than 2.2.2 for it, that build wants NumPy 1.x, and transformers
-# 5.x requires torch>=2.7. So torch, torchaudio, transformers and numpy each
-# carry a pair of markers. This accepts CVE-2026-4372 on Intel Mac (a local
-# desktop app loading only trusted models) in exchange for a working stack;
-# every other platform keeps the hardened pins.
+# 5.x requires torch>=2.7. So torch, transformers and numpy each carry a pair
+# of markers. This accepts CVE-2026-4372 on Intel Mac (a local desktop app
+# loading only trusted models) in exchange for a working stack; every other
+# platform keeps the hardened pins.
+#
+# torchaudio is NOT a dependency, and re-adding it breaks Linux. Nothing in
+# this project imports it - the last caller is long gone - but transformers
+# imports it at module level in audio_utils.py whenever
+# is_torchaudio_available() says yes, and that predicate asks the environment's
+# METADATA rather than whether the import works. On Linux the recommended
+# install resolves torch and torchaudio to different CUDA series
+# (2.13.0+cu132 against 2.11.0+cu130), so that import raises RuntimeError and
+# the default pronunciation engine never loads - surfacing as an unrelated
+# "Could not import module 'AutoProcessor'". A version pin cannot fix it: the
+# +cuXXX suffix is a local version and PEP 508 specifiers do not see it.
+# Found on Ubuntu 2026-08-06; Windows never showed it because the pair agreed
+# there. See tasks/release-1.1.0.md, finding 1 of stage 2.
 dependencies = [
     # --- core runtime -----------------------------------------------------
     # NumPy upper bound: numba (via librosa) supports NumPy <= 2.4, and without
@@ -102,8 +115,7 @@ dependencies = [
     "numpy>=1.24.0,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
     "torch>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'",
     "torch==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
-    "torchaudio>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'",
-    "torchaudio==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+    # torchaudio is deliberately NOT here - see the note above.
     # transformers>=5.3 closes CVE-2026-4372 (config-injection RCE; no 4.x fix
     # exists). 5.x needs torch>=2.7 for torch.float8_e8m0fnu.
     "transformers>=5.3; platform_system != 'Darwin' or platform_machine != 'x86_64'",

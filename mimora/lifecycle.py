@@ -157,9 +157,16 @@ def spawn_replacement():
                     command,
                     creationflags=flags | subprocess.CREATE_BREAKAWAY_FROM_JOB,
                     **popen_kwargs)
-            except OSError:
-                logging.info("Job breakaway denied; relaunching attached "
-                             "to the current job.")
+            except OSError as exc:
+                # The reason is reported rather than assumed. Denied breakaway
+                # is the expected failure here, but every other OSError lands
+                # in this clause too (a command that is not there, for one),
+                # and a line that names a cause it did not check sends the next
+                # reader after the wrong thing. The retry is worth making
+                # either way: if breakaway was not the problem, the second
+                # attempt fails as well and the outer handler says so.
+                logging.info("Relaunch with job breakaway failed (%s); "
+                             "retrying attached to the current job.", exc)
                 subprocess.Popen(command, creationflags=flags,
                                  **popen_kwargs)
         else:

@@ -39,7 +39,12 @@ Design notes
   cannot be established before the download (Vulkan needs a loader, an ICD and
   a device the driver publishes through them). The substitution is logged with
   the reason and recorded in the stamp, so it stays the opposite of the silent
-  CPU fallback above: visible, and visible afterwards.
+  CPU fallback above: visible, and visible afterwards. "Afterwards" means the
+  stamp specifically - the log lives one session, because setup_logging
+  truncates main.log on a fresh launch - and it is also what stops the GPU
+  build from being downloaded again on every run: is_current() accepts a
+  recorded substitution as the answer for the variant that was asked for.
+  An explicit `--variant` (or `--force`) is how that answer is reconsidered.
 * The install is staged: assets are unpacked into bin/llama.new/ and only
   swapped onto bin/llama/ once every archive is verified, so an interrupted
   run cannot leave a half-written installation behind. The stamp file that
@@ -580,26 +585,61 @@ def read_stamp(dest: Path = INSTALL_DIR) -> Optional[dict]:
         return None
 
 
-def is_current(dest: Path, tag: str, variant: str) -> bool:
-    """True when dest holds exactly this tag+variant and the binary is there.
+def is_current(dest: Path, tag: str, variant: str, *,
+               allow_substituted: bool = True) -> bool:
+    """True when dest already holds the answer for this tag+variant.
 
     Comparing the variant as well as the tag matters: switching a machine from
     the CPU build to the CUDA build keeps the same tag, and only the variant
     tells the two apart.
+
+    A stamp that records a device-check substitution also answers for the
+    variant that was ASKED for, and that is the half this used to be missing.
+    Without it, a machine whose Vulkan build had descended to CPU looked like a
+    machine with no Vulkan build: every `install.py` run downloaded the 32 MB
+    GPU asset again, failed the same device check again and descended again,
+    because nothing on disk remembered that the question had already been
+    answered.
+
+    ``allow_substituted=False`` asks the narrow question instead - is exactly
+    this build installed - which is what an explicit ``--variant`` passes.
+    Naming a build by hand is how a user says the previous answer should be
+    reconsidered, and the usual reason is that they have just installed the
+    driver whose absence caused the substitution.
     """
     stamp = read_stamp(dest)
     if stamp is None:
         return False
-    return (stamp.get("tag") == tag
-            and stamp.get("variant") == variant
-            and (dest / EXE_NAME).is_file())
+    if stamp.get("tag") != tag or not (dest / EXE_NAME).is_file():
+        return False
+    if stamp.get("variant") == variant:
+        return True
+    return allow_substituted and stamp.get("requested_variant") == variant
 
 
 def _write_stamp(dest: Path, tag: str, variant: str,
-                 assets: tuple[Asset, ...]) -> None:
+                 assets: tuple[Asset, ...],
+                 requested: Optional[str] = None,
+                 reason: Optional[str] = None) -> None:
+    """Record what was installed and, when it is not what was asked for, why.
+
+    ``requested_variant`` and ``fallback_reason`` are the memory of a device-
+    check substitution. Without them the stamp written after a Vulkan build
+    descended to CPU is byte-for-byte identical to the stamp of an explicit
+    ``--variant linux-cpu-x64``, which cost twice: the module docstring's
+    promise that the substitution stays "visible afterwards" rested on a log
+    that does not survive the next launch, and is_current() had nothing to
+    compare against (see there).
+
+    Both fields are written even when nothing was substituted, as nulls: a
+    stamp with a stable set of keys is easier to read by hand than one whose
+    shape says something on its own.
+    """
     payload = {
         "tag": tag,
         "variant": variant,
+        "requested_variant": requested,
+        "fallback_reason": reason,
         "assets": {asset.name.format(tag=tag): asset.sha256 for asset in assets},
         "installed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
@@ -888,9 +928,23 @@ def verify_devices(exe: Path, variant_name: str) -> None:
         # the user is told what to look at, so it names the backend's own
         # failure mode rather than a generic "no device".
         if variant.backend == "Vulkan":
-            remedy = ("To get the GPU build instead, install the Vulkan loader "
-                      "(package libvulkan1) and check that the driver "
-                      "publishes an ICD in /usr/share/vulkan/icd.d.")
+            # The previous wording named two conditions - install libvulkan1,
+            # look for an ICD in /usr/share/vulkan/icd.d - and on the machine
+            # this was first run on, both were already satisfied: the loader was
+            # installed and the directory was full of Mesa manifests. It sent
+            # the user to install an installed package and to look at a
+            # non-empty directory, while the actual cause went unnamed. What
+            # matters is WHOSE manifest is there, which is why the text now says
+            # that rather than how many.
+            remedy = ("A Vulkan loader and a driver ICD are both needed, and "
+                      "the loader being installed says nothing about the ICD: "
+                      "look in /usr/share/vulkan/icd.d for a manifest "
+                      "belonging to YOUR driver. Mesa's manifests are usually "
+                      "present and are not it - lvp is a software rasteriser "
+                      "and publishes no device that ggml enumerates. NVIDIA "
+                      "under WSL2 is the known case of a driver that ships no "
+                      "ICD at all, and nothing installs one: the CPU build is "
+                      "the answer there.")
         elif variant.backend == "CUDA":
             remedy = (f"Check that the cudart DLLs sit next to {exe.name} and "
                       f"that their major version matches the build.")
@@ -923,6 +977,7 @@ def ensure_llama_server(*, variant: Optional[str] = None,
                         tag: str = RELEASE_TAG,
                         force: bool = False,
                         verify: bool = True,
+                        reconsider: bool = False,
                         progress: Optional[ProgressFn] = None) -> Path:
     """Make sure llama-server of the pinned build sits in ``dest``; return it.
 
@@ -937,9 +992,21 @@ def ensure_llama_server(*, variant: Optional[str] = None,
     still ends up with a working CPU build instead of a failed install. Only
     the device check is retried, and only downwards: every other failure is
     raised as it happens, and the chain is finite because a variant is never
-    tried twice.
+    tried twice. What was originally asked for is written into the stamp
+    together with the reason, so the next call can tell "the GPU build is not
+    installed" from "the GPU build was tried and this is what came of it".
+
+    *reconsider* asks for a recorded substitution to be ignored, so the GPU
+    build is downloaded and device-checked again. The CLI sets it when the user
+    named ``--variant`` by hand, because the reason anyone does that is usually
+    that they have changed the machine the earlier decision was made on. It is
+    deliberately NOT inferred from ``variant`` being non-None: install.py
+    resolves the variant early to name the download size in its prompt, and
+    would otherwise ask for a reconsideration it never meant.
     """
     variant_name = variant or select_variant()
+    requested = variant_name
+    reason: Optional[str] = None
     tried: list[str] = []
     while True:
         if variant_name not in VARIANTS:
@@ -947,9 +1014,14 @@ def ensure_llama_server(*, variant: Optional[str] = None,
                 f"Unknown variant {variant_name!r}. "
                 f"Known: {', '.join(sorted(VARIANTS))}.")
         try:
-            return _install_variant(variant_name, dest=dest, tag=tag,
-                                    force=force, verify=verify,
-                                    progress=progress)
+            return _install_variant(
+                variant_name, dest=dest, tag=tag, force=force, verify=verify,
+                progress=progress,
+                # None rather than the same string twice: a stamp that records
+                # a request identical to what was installed records nothing.
+                requested=requested if variant_name != requested else None,
+                reason=reason,
+                allow_substituted=not reconsider)
         except DeviceCheckError as exc:
             fallback = VARIANTS[variant_name].fallback
             if fallback is None or fallback in tried:
@@ -961,6 +1033,11 @@ def ensure_llama_server(*, variant: Optional[str] = None,
             # it without needing force.
             log.info("%s\nFalling back to %s.", exc, fallback)
             tried.append(variant_name)
+            # A short, stable sentence rather than str(exc): the exception
+            # carries the whole --list-devices output, which belongs in the log
+            # and not in a JSON field that has to stay readable a year later.
+            reason = (f"the device check for {variant_name} found no "
+                      f"{VARIANTS[variant_name].backend} device")
             variant_name = fallback
 
 
@@ -969,19 +1046,38 @@ def _install_variant(variant_name: str, *,
                      tag: str,
                      force: bool,
                      verify: bool,
-                     progress: Optional[ProgressFn]) -> Path:
+                     progress: Optional[ProgressFn],
+                     requested: Optional[str] = None,
+                     reason: Optional[str] = None,
+                     allow_substituted: bool = True) -> Path:
     """Download, unpack and verify exactly one variant. No fallback here.
 
     Split out of ensure_llama_server so that the retry loop above stays a loop
     over variants and this stays a single install: mixing the two made it hard
     to see which failures are final.
+
+    ``requested`` and ``reason`` are passed straight to the stamp and describe
+    the caller's own history, which this function has no way to know: from here
+    a fallback install and a first attempt look the same.
     """
     spec = VARIANTS[variant_name]
     exe = dest / EXE_NAME
 
-    if not force and is_current(dest, tag, variant_name):
-        log.info("llama-server %s (%s) is already installed in %s.",
-                 tag, variant_name, dest)
+    if not force and is_current(dest, tag, variant_name,
+                                allow_substituted=allow_substituted):
+        stamp = read_stamp(dest) or {}
+        installed_as = stamp.get("variant", variant_name)
+        if installed_as != variant_name:
+            # The interesting half of the answer: what is on disk is not what
+            # was asked for, and the record of why is the only thing left of a
+            # decision made in some earlier session.
+            log.info("llama-server %s is installed in %s as %s, which is the "
+                     "standing answer for %s: %s.",
+                     tag, dest, installed_as, variant_name,
+                     stamp.get("fallback_reason") or "reason not recorded")
+        else:
+            log.info("llama-server %s (%s) is already installed in %s.",
+                     tag, variant_name, dest)
         return exe
 
     existing = read_stamp(dest)
@@ -1040,8 +1136,13 @@ def _install_variant(variant_name: str, *,
 
     # Written last: an installation that failed verification stays unstamped
     # and is therefore reinstalled on the next call instead of being trusted.
-    _write_stamp(dest, tag, variant_name, spec.assets)
-    log.info("llama-server %s (%s) installed in %s.", tag, variant_name, dest)
+    _write_stamp(dest, tag, variant_name, spec.assets, requested, reason)
+    if requested:
+        log.info("llama-server %s (%s) installed in %s, as a substitute for "
+                 "%s: %s.", tag, variant_name, dest, requested, reason)
+    else:
+        log.info("llama-server %s (%s) installed in %s.",
+                 tag, variant_name, dest)
     return exe
 
 
@@ -1124,6 +1225,13 @@ def _print_plan(variant_name: str, dest: Path, tag: str) -> None:
     if stamp:
         print(f"Installed: {stamp.get('tag')} ({stamp.get('variant')}), "
               f"{stamp.get('installed_at')}")
+        requested = stamp.get("requested_variant")
+        if requested and requested != stamp.get("variant"):
+            # Without this line the plan above reads as a contradiction on any
+            # machine that has fallen back: it announces a Vulkan download
+            # while the directory holds the CPU build for a stated reason.
+            print(f"           substituted for {requested}: "
+                  f"{stamp.get('fallback_reason') or 'reason not recorded'}")
     else:
         print("Installed: nothing (or an incomplete install)")
 
@@ -1189,8 +1297,13 @@ def main(argv: Optional[list[str]] = None) -> int:
         if args.dry_run:
             _print_plan(variant_name, args.dest, RELEASE_TAG)
             return 0
+        # reconsider follows args.variant rather than variant_name: naming a
+        # build by hand is how a user says an earlier device-check substitution
+        # should be tried again, and variant_name cannot express that - it is
+        # filled in by select_variant() when nothing was named.
         ensure_llama_server(variant=variant_name, dest=args.dest,
                             force=args.force, verify=not args.skip_verify,
+                            reconsider=args.variant is not None,
                             progress=_cli_progress())
     except LlamaServerFetchError as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)

@@ -324,11 +324,8 @@ just several times slower.
 
 - **PyTorch** - install a CUDA build (other CUDA versions: see [pytorch.org](https://pytorch.org/get-started/locally/)):
   ```powershell
-  python -m pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
+  python -m pip install torch --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
   ```
-  Reinstall `torch` and `torchaudio` **together**: force-reinstalling `torch` alone
-  leaves a `torchaudio` built against the previous torch, which then fails to
-  import (`OSError: [WinError 127]`) and breaks pronunciation analysis.
 
   With **uv** this is one flag instead - it reads the installed driver and picks
   the matching PyTorch index itself, falling back to CPU when there is no GPU:
@@ -340,6 +337,11 @@ just several times slower.
   Needs uv 0.9.20 or newer. There is no equivalent for `pipx`: an index cannot be
   named in a published package's metadata, so a pipx install gets the CPU wheel
   and the manual step above.
+
+  **Do not add this flag on Linux or macOS.** PyPI's `torch` is already a CUDA
+  build on Linux, so the flag changes nothing you wanted; what it does change is
+  the index every other package in the resolution is taken from, and the result
+  is not even stable between runs. macOS has no CUDA at all.
 
   `--python 3.12` is not optional. A tool environment "will ignore non-global
   Python version requests like `.python-version` files and the `requires-python`

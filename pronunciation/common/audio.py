@@ -37,9 +37,9 @@ def prepare_waveform(waveform: np.ndarray, orig_sr: int) -> np.ndarray:
 
     wav = np.asarray(waveform, dtype=np.float32)
 
-    # Down-mix to mono. torchaudio gives [channels, samples] while soundfile
-    # gives [samples, channels], so average along whichever axis is smaller
-    # (the channels).
+    # Down-mix to mono. Loaders disagree about layout: soundfile returns
+    # [samples, channels] while torch-based ones return [channels, samples],
+    # so average along whichever axis is smaller (the channels).
     if wav.ndim > 1:
         wav = wav.mean(axis=int(np.argmin(wav.shape)))
 

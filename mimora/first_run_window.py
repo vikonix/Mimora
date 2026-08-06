@@ -486,15 +486,30 @@ def _detect_hardware_once() -> bool:
     config keeps its conservative defaults, which is exactly the state every
     packaged install was in before this call existed, and it is not worth
     refusing to start over.
+
+    The probe's own warnings are logged here, and this is the only place they
+    can be. Each failed sub-probe degrades into a string instead of raising -
+    "torch has no CUDA (CPU-only build)", "No audio input device (microphone)
+    found", "the installed llama-server is the 'linux-cpu-x64' build" - and
+    those strings are the whole diagnostic value of the module. They used to
+    reach nothing on this path: the returned dict was dropped, and
+    detect_hardware's own logs/hwdetect.log is set up by its CLI entry point,
+    which a packaged install never runs. So the findings sat in
+    hardware_config.json, where nobody looks until they already suspect
+    something, on the one code path that actually executes on a user's machine.
     """
     if detect_hardware.OUTPUT_FILE.exists():
         return False
     log.info("First run finished - probing the hardware to tune the defaults.")
     try:
-        detect_hardware.probe_and_write()
+        result = detect_hardware.probe_and_write()
     except Exception:  # noqa: BLE001 - any probe failure must not block startup
         log.exception("Hardware detection failed; keeping the default settings:")
         return False
+    for warning in result.get("warnings", ()):
+        log.warning("Hardware detection: %s", warning)
+    log.info("Hardware detection wrote %s: %s",
+             detect_hardware.OUTPUT_FILE, result.get("config"))
     return True
 
 

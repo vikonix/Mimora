@@ -22,6 +22,7 @@ Run from the project root with:
 """
 
 import re
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -295,6 +296,108 @@ class MacosVariantShapeTests(unittest.TestCase):
             for asset in variant.assets:
                 with self.subTest(variant=name, asset=asset.name):
                     self.assertTrue(asset.name.endswith(".tar.gz"))
+
+
+class StampRemembersTheSubstitutionTests(unittest.TestCase):
+    """What the stamp records when a device check sends the install downwards.
+
+    The fallback itself was covered by nothing until a Linux run exercised it
+    for the first time, and it exposed two costs of a stamp that only named the
+    build that ended up installed. The reason for the substitution lived in the
+    log, which is truncated on the next launch, so by the following day nothing
+    on the machine said why the CPU build was there. And is_current() had no
+    way to tell "the Vulkan build is missing" from "the Vulkan build was tried
+    and this is what came of it", so install.py re-downloaded the GPU asset on
+    every run, failed the same check and descended again.
+
+    No network and no subprocess: the stamp is written directly, and the two
+    tests that need the retry loop stub the single-variant install under it.
+    """
+
+    TAG = fetch.RELEASE_TAG
+    VULKAN = "linux-vulkan-x64"
+    CPU = "linux-cpu-x64"
+
+    def setUp(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.dest = Path(tmp.name)
+        # is_current() asks for the binary as well as the stamp: a stamp
+        # describing an install whose executable has gone is not an install.
+        (self.dest / fetch.EXE_NAME).write_bytes(b"")
+
+    def _stamp(self, variant, requested=None, reason=None):
+        fetch._write_stamp(self.dest, self.TAG, variant,
+                           fetch.VARIANTS[variant].assets, requested, reason)
+
+    def test_a_plain_install_answers_only_for_itself(self):
+        self._stamp(self.CPU)
+        self.assertTrue(fetch.is_current(self.dest, self.TAG, self.CPU))
+        self.assertFalse(fetch.is_current(self.dest, self.TAG, self.VULKAN))
+
+    def test_a_substitution_answers_for_the_variant_that_was_asked_for(self):
+        # The whole point: bin/llama holds the CPU build, and "is the Vulkan
+        # build installed?" is honestly answered by "it was tried; this is the
+        # result", which is what stops the 32 MB asset from being fetched again.
+        self._stamp(self.CPU, requested=self.VULKAN, reason="no Vulkan device")
+        self.assertTrue(fetch.is_current(self.dest, self.TAG, self.VULKAN))
+
+    def test_an_explicit_variant_reconsiders_the_substitution(self):
+        # Naming a build by hand is how a user says the earlier answer should
+        # be revisited - usually because they have just installed the driver
+        # whose absence caused it. Without this the memory would be permanent.
+        self._stamp(self.CPU, requested=self.VULKAN, reason="no Vulkan device")
+        self.assertFalse(fetch.is_current(self.dest, self.TAG, self.VULKAN,
+                                          allow_substituted=False))
+
+    def test_the_reason_outlives_the_session_that_recorded_it(self):
+        self._stamp(self.CPU, requested=self.VULKAN, reason="no Vulkan device")
+        stamp = fetch.read_stamp(self.dest)
+        self.assertEqual(stamp["variant"], self.CPU)
+        self.assertEqual(stamp["requested_variant"], self.VULKAN)
+        self.assertEqual(stamp["fallback_reason"], "no Vulkan device")
+
+    def test_a_stamp_from_another_release_is_never_current(self):
+        # The substitution is remembered per release, not forever: a new pinned
+        # tag is a different binary and has to be device-checked on its own.
+        self._stamp(self.CPU, requested=self.VULKAN, reason="no Vulkan device")
+        self.assertFalse(fetch.is_current(self.dest, "b00000", self.VULKAN))
+
+    def test_a_fallback_records_what_was_asked_for_and_why(self):
+        calls = []
+
+        def fake_install(name, **kwargs):
+            calls.append((name, kwargs["requested"], kwargs["reason"]))
+            if name == self.VULKAN:
+                raise fetch.DeviceCheckError("no matching device")
+            return self.dest / fetch.EXE_NAME
+
+        with patch.object(fetch, "_install_variant", side_effect=fake_install):
+            fetch.ensure_llama_server(variant=self.VULKAN, dest=self.dest)
+
+        self.assertEqual([call[0] for call in calls], [self.VULKAN, self.CPU])
+        # The first attempt asked for what it installed, so it records nothing.
+        self.assertIsNone(calls[0][1])
+        self.assertIsNone(calls[0][2])
+        self.assertEqual(calls[1][1], self.VULKAN)
+        self.assertIn("Vulkan", calls[1][2])
+
+    def test_reconsider_reaches_the_install_as_allow_substituted(self):
+        seen = {}
+
+        def fake_install(name, **kwargs):
+            seen.update(kwargs)
+            return self.dest / fetch.EXE_NAME
+
+        with patch.object(fetch, "_install_variant", side_effect=fake_install):
+            fetch.ensure_llama_server(variant=self.CPU, dest=self.dest,
+                                      reconsider=True)
+        self.assertFalse(seen["allow_substituted"])
+
+        seen.clear()
+        with patch.object(fetch, "_install_variant", side_effect=fake_install):
+            fetch.ensure_llama_server(variant=self.CPU, dest=self.dest)
+        self.assertTrue(seen["allow_substituted"])
 
 
 if __name__ == "__main__":

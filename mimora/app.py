@@ -1286,10 +1286,23 @@ class PronunciationTrainerGUI:
             # trigger_recording_stop; see PlaybackController.new_event). Skipped
             # when self-playback is turned off in Settings - go straight to
             # analysis then.
+            #
+            # Logged on both sides, and that is not decoration. play_with_face
+            # blocks for as long as the take lasts, and the analysis timer
+            # below starts after it, so the log used to jump from "Stopping
+            # audio recording" straight to "analysis done in 277ms" with a
+            # silent seven-to-twelve second hole in between. Three separate
+            # runs on two operating systems recorded that hole as an
+            # unexplained stall before anyone noticed it was simply the length
+            # of the phrase being played back.
             if config.PLAYBACK_OWN_RECORDING:
+                playback_seconds = len(self.last_user_audio) / config.AUDIO_SAMPLE_RATE
+                logging.info("Playing the take back to the user (%.1fs) before "
+                             "analysis.", playback_seconds)
                 self.root.after(0, self.view.enter_playing, "Playing your recording...")
                 self.playback.play_with_face(self.last_user_audio,
                                              config.AUDIO_SAMPLE_RATE, stop_event)
+                logging.info("Playback finished; starting analysis.")
             self.root.after(0, self.view.enter_analyzing)
 
             analyze_start = time.perf_counter()
@@ -1460,21 +1473,42 @@ class PronunciationTrainerGUI:
         (lifecycle.hard_exit) does NOT terminate children, so without this
         the llama-server process would leak, keep holding VRAM, and (on restart)
         still occupy the server port the new process needs.
+
+        Every step is best-effort and none may prevent the exit. What this
+        guards against is specific: an exception here used to propagate into
+        the Tk callback that called it, which skipped hard_exit() while
+        _closing was already True - so the window stayed open and every further
+        attempt to close it returned on the first line. The app became
+        unquittable by an audio device that raised on the way out, and
+        restart_app additionally never reached spawn_replacement(), turning a
+        settings restart into a hang. Leaking a subprocess is the lesser
+        failure, and the log says which step leaked it.
         """
         self.shutdown_event.set()
-        self.playback.stop()
-        self.recorder.stop()
-        self.recorder.join()
-        self.llm_server.shutdown()
+        for name, action in (("playback", self.playback.stop),
+                             ("recorder", self.recorder.stop),
+                             ("record thread", self.recorder.join),
+                             ("LLM server", self.llm_server.shutdown)):
+            try:
+                action()
+            except Exception:  # noqa: BLE001 - see the docstring
+                logging.exception("Shutting down %s failed; continuing:", name)
 
     def quit_app(self):
         if self._closing:
             return  # Escape and the window-close button can both land here
         self._closing = True
         logging.info("Shutting down Mimora...")
-        self._shutdown_runtime()
-        logging.info("quit_app: cleanup done, hard-exiting now.")
-        lifecycle.hard_exit()
+        try:
+            self._shutdown_runtime()
+        finally:
+            # finally, not a plain call: _shutdown_runtime already swallows the
+            # failure of any single step, so reaching here with an exception
+            # means something unforeseen - and that is exactly when the process
+            # must still end rather than leave a half-shut-down window nobody
+            # can close.
+            logging.info("quit_app: cleanup done, hard-exiting now.")
+            lifecycle.hard_exit()
 
     def restart_app(self):
         """Relaunch the app in a new process (settings-window restart).
@@ -1490,10 +1524,16 @@ class PronunciationTrainerGUI:
             return
         self._closing = True
         logging.info("Restarting Mimora to apply changed settings...")
-        self._shutdown_runtime()
-        lifecycle.spawn_replacement()
-        logging.info("restart_app: cleanup done, hard-exiting now.")
-        lifecycle.hard_exit()
+        try:
+            self._shutdown_runtime()
+        finally:
+            # Same reason as in quit_app, with one more consequence: without
+            # the finally an exception during cleanup skipped the relaunch as
+            # well, so a settings restart left the user with a window that
+            # would neither restart nor close.
+            lifecycle.spawn_replacement()
+            logging.info("restart_app: cleanup done, hard-exiting now.")
+            lifecycle.hard_exit()
 
     def run(self):
         # No code after mainloop(): both exit paths (quit_app, restart_app)

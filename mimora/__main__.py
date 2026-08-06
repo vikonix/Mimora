@@ -19,4 +19,10 @@ longer there. ``python -m mimora`` works in both cases.
 
 from mimora.cli import main
 
-main()
+# The guard costs nothing and closes the remaining way to start the application
+# by accident: both supported forms (``python -m mimora`` and
+# ``python -m mimora.__main__``) run this file AS ``__main__`` and are
+# unaffected, while a plain ``import mimora.__main__`` - a documentation tool
+# walking the package, a stray editor auto-import - no longer opens a window.
+if __name__ == "__main__":
+    main()

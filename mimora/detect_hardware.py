@@ -72,15 +72,37 @@ def _setup_logging() -> None:
     Kept independent of the console output: the terminal stays concise while the
     log file preserves a timestamped, complete record for later inspection.
     Idempotent, because the CLI is no longer the only entry point.
+
+    An unwritable log directory costs the file and nothing else. This runs
+    before the probe, on a path that does NOT import config - so nothing has
+    called paths.ensure_dirs() and its own reporting cannot help here - and an
+    unreachable MIMORA_HOME used to end `mimora --detect-hardware` in a
+    three-deep pathlib traceback about a drive letter, from a command the user
+    was told to run by some other message. The probe itself needs no log file:
+    every line below is printed as well.
     """
     if logger.handlers:
         return
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    handler = logging.FileHandler(LOG_FILE, mode="w", encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     logger.setLevel(logging.INFO)
-    logger.addHandler(handler)
+    # Set before the file handler is attempted, so it holds on both paths.
     logger.propagate = False
+    try:
+        LOG_DIR.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(LOG_FILE, mode="w", encoding="utf-8")
+    except OSError as exc:
+        print(f"Note: no log file this run - could not open {LOG_FILE} "
+              f"({exc}). The probe still runs and prints its result below.",
+              file=sys.stderr)
+        # A NullHandler, and propagate=False above is NOT enough on its own:
+        # when callHandlers finds no handler ANYWHERE it falls back to
+        # logging.lastResort, which prints every warning and error to stderr.
+        # main() already prints its own message there, so without this the
+        # reader gets the same failure twice, in two slightly different
+        # wordings, and reasonably wonders whether it happened twice.
+        logger.addHandler(logging.NullHandler())
+        return
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    logger.addHandler(handler)
 
 # llama-3.2-3b-instruct has 28 transformer layers; -1 below means "offload all".
 MODEL_TOTAL_LAYERS = 28
@@ -312,7 +334,11 @@ def _query_nvidia_smi(warnings: list) -> dict | None:
              "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10,
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+    # OSError rather than FileNotFoundError alone: an nvidia-smi that exists
+    # but cannot be executed (no permission bit, a broken driver package that
+    # left a stub) raises PermissionError, and killing the whole probe over a
+    # diagnostic optional command is the wrong trade in either case.
+    except (OSError, subprocess.TimeoutExpired):
         return None
     if out.returncode != 0 or not out.stdout.strip():
         return None
@@ -416,6 +442,14 @@ def build_config(hardware: dict) -> dict:
 
     # torch side (pronunciation/acoustic/Wav2Vec2): needs a CUDA-enabled torch build, plus
     # VRAM headroom so it does not fight the LLM for the same card.
+    #
+    # Only WAV2VEC2_DEVICE carries the headroom rule, and DEVICE deliberately
+    # does not, because the two name models an order of magnitude apart: DEVICE
+    # places Kokoro (~360 MB, and it is unloaded between phrases), while the
+    # recognizer is ~1.2 GB resident for the whole session next to a GGUF that
+    # already claimed most of the card. A small card can carry the first and
+    # not the second, so one threshold for both would either strand Kokoro on
+    # the CPU or push the recognizer onto a card with no room.
     torch_vram = (gpu["vram_gb"] or 0) if gpu["torch_cuda"] else 0
 
     return {
@@ -483,9 +517,22 @@ def warn_if_gpu_unused(device: str) -> None:
     if llama_server_fetch.detect_driver_cuda() is None:
         return  # no NVIDIA driver, so the CPU is the correct answer here
 
-    reinstall = ("`uv tool install --reinstall mimora --torch-backend auto` "
-                 "(or set UV_TORCH_BACKEND=auto beforehand), or "
-                 "`python install.py` from a clone")
+    # The uv flag is named on Windows only, for the reason the docstring above
+    # already gives: PyPI's torch is a CUDA build on Linux and CUDA does not
+    # exist on macOS, so the gap this warning covers is one platform wide. The
+    # advice used to be printed everywhere, which on Linux sent the user to a
+    # flag that cannot help and does harm - it moves the WHOLE resolution onto
+    # the PyTorch index, and did so with results that differed between runs
+    # (tasks/release-1.1.0.md, finding 2 of stage 2). A message is only as good
+    # as the machine it is read on.
+    if sys.platform == "win32":
+        reinstall = ("`uv tool install --reinstall mimora --torch-backend auto` "
+                     "(or set UV_TORCH_BACKEND=auto beforehand), or "
+                     "`python install.py` from a clone")
+    else:
+        reinstall = ("reinstall torch from the CUDA index matching this driver "
+                     "(https://pytorch.org/get-started/locally/), or run "
+                     "`python install.py` from a clone")
     if _stored_device_may_be_stale():
         logging.warning(
             "An NVIDIA GPU is present, but this run is on the CPU - "
@@ -577,7 +624,17 @@ def main() -> int:
 
     print("Detecting hardware...")
     logger.info("Detecting hardware...")
-    result = probe_and_write()
+    try:
+        result = probe_and_write()
+    except OSError as exc:
+        # The one failure probe_and_write does not degrade into a warning is
+        # not being able to write its own output, and it reaches a user who
+        # typed `mimora --detect-hardware` because some other message told them
+        # to. A traceback there answers a question they did not ask; the path
+        # and the reason answer the one they did.
+        print(f"ERROR: could not write {OUTPUT_FILE}: {exc}", file=sys.stderr)
+        logger.error("Could not write %s: %s", OUTPUT_FILE, exc)
+        return 1
     hardware = result["hardware"]
     warnings = result["warnings"]
 

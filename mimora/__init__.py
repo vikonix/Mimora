@@ -28,4 +28,4 @@ Pronunciation analysis lives in the separate top-level ``pronunciation`` package
 # true the moment 1.1.0 ships; until then an rc that turns out wrong can be
 # yanked, which leaves it installable by exact pin but out of the resolver's
 # reach.
-__version__ = "1.1.0rc3"
+__version__ = "1.1.0rc4"

@@ -12,6 +12,8 @@ root with:
     python -m unittest tests.test_detect_hardware
 """
 
+import contextlib
+import io
 import logging
 import unittest
 from pathlib import Path
@@ -205,6 +207,78 @@ class BuildConfigTorchTests(unittest.TestCase):
         self.assertEqual(config["WAV2VEC2_DEVICE"], "cpu")
 
 
+class UnwritableDataRootTests(unittest.TestCase):
+    """`mimora --detect-hardware` on a data root the machine cannot write to.
+
+    This command is named to the user by warn_if_gpu_unused, so it is run by
+    people following advice rather than by people debugging. It also does NOT
+    import config, which means paths.ensure_dirs() never runs on this path and
+    its own reporting cannot cover it: everything here has to be handled where
+    it happens. An unreachable MIMORA_HOME used to end the command in a
+    three-deep pathlib traceback about a drive letter.
+    """
+
+    def setUp(self):
+        # The module logger is process-global and this test empties it, which
+        # is also what makes _setup_logging's idempotence guard let us in.
+        logger = detect_hardware.logger
+        saved = logger.handlers[:]
+        logger.handlers.clear()
+        self.addCleanup(lambda: (logger.handlers.clear(),
+                                 logger.handlers.extend(saved)))
+
+    def test_an_unwritable_log_directory_costs_the_file_and_nothing_else(self):
+        stderr = io.StringIO()
+        with patch.object(detect_hardware.Path, "mkdir",
+                          side_effect=OSError(3, "no such drive")), \
+                contextlib.redirect_stderr(stderr):
+            detect_hardware._setup_logging()  # must not raise
+
+        self.assertIn("no such drive", stderr.getvalue())
+        # The probe is the point of the command and does not need the file.
+        self.assertEqual(detect_hardware.logger.level, logging.INFO)
+        # No file handler, but not an empty handler list either: logging falls
+        # back to lastResort when it finds no handler anywhere, which printed
+        # main()'s failure to stderr a second time in different words.
+        self.assertFalse(any(isinstance(handler, logging.FileHandler)
+                             for handler in detect_hardware.logger.handlers))
+        self.assertTrue(any(isinstance(handler, logging.NullHandler)
+                            for handler in detect_hardware.logger.handlers))
+
+    def test_the_failure_is_not_reported_twice(self):
+        # One failure, one message. The duplicate this guards against was not
+        # cosmetic: two spellings of one error read as two errors.
+        stderr = io.StringIO()
+        with patch.object(detect_hardware.Path, "mkdir",
+                          side_effect=OSError(3, "no such drive")), \
+                patch.object(detect_hardware, "probe_and_write",
+                             side_effect=OSError(3, "no such drive")), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(stderr):
+            detect_hardware.main()
+
+        # Lower-cased before counting: the print and the log record differ in
+        # capitalisation, and a case-sensitive count would match only one of
+        # them and pass while the duplicate was still there.
+        self.assertEqual(stderr.getvalue().lower().count("could not write"), 1)
+
+    def test_an_unwritable_output_file_is_reported_not_raised(self):
+        stderr = io.StringIO()
+        # _setup_logging is stubbed rather than allowed to run: the real one
+        # opens the project's own logs/hwdetect.log with mode="w", and a test
+        # that truncates a log file is a test with a side effect.
+        with patch.object(detect_hardware, "_setup_logging"), \
+                patch.object(detect_hardware, "probe_and_write",
+                             side_effect=OSError(3, "no such drive")), \
+                contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(stderr):
+            exit_code = detect_hardware.main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertIn("no such drive", stderr.getvalue())
+        self.assertIn(str(detect_hardware.OUTPUT_FILE), stderr.getvalue())
+
+
 class WarnIfGpuUnusedTests(unittest.TestCase):
     """The startup warning for a CPU-only torch on a machine with a card.
 
@@ -214,12 +288,20 @@ class WarnIfGpuUnusedTests(unittest.TestCase):
     machine happens to run the suite.
     """
 
-    def _run(self, device, driver_cuda, config_written=False):
+    def _run(self, device, driver_cuda, config_written=False,
+             platform="win32"):
         # config_written is stubbed rather than left to the filesystem: the
         # machine running the suite may well have a hardware_config.json, and
         # then the branch under test would be whichever one it happens to have.
-        with patch.object(llama_server_fetch, "detect_driver_cuda",
-                          return_value=driver_cuda) as detect, \
+        #
+        # platform is pinned for the same class of reason: the reinstall advice
+        # differs by it, because the uv flag it names is only meaningful on
+        # Windows. Left to the machine running the suite, the assertions below
+        # would pass or fail according to who ran them. Windows is the default
+        # here because it is the platform this warning exists for.
+        with patch.object(detect_hardware.sys, "platform", platform), \
+                patch.object(llama_server_fetch, "detect_driver_cuda",
+                             return_value=driver_cuda) as detect, \
                 patch.object(detect_hardware, "_stored_device_may_be_stale",
                              return_value=config_written):
             with self.assertLogs(level="WARNING") as captured:
@@ -247,6 +329,22 @@ class WarnIfGpuUnusedTests(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIn("mimora --detect-hardware", warnings[0])
         self.assertIn("--torch-backend auto", warnings[0])
+
+    def test_the_uv_flag_is_advised_on_windows_only(self):
+        # PyPI already serves a CUDA build of torch on Linux and macOS has no
+        # CUDA at all, so --torch-backend auto cannot fix what this warning is
+        # about anywhere but Windows - and on Linux it does harm, moving the
+        # whole resolution onto the PyTorch index with results that differed
+        # between runs. See tasks/release-1.1.0.md, finding 2 of stage 2.
+        for platform in ("linux", "darwin"):
+            with self.subTest(platform=platform):
+                warnings, _ = self._run("cpu", (12, 4), platform=platform)
+                self.assertEqual(len(warnings), 1)
+                self.assertNotIn("--torch-backend", warnings[0])
+                self.assertNotIn("UV_TORCH_BACKEND", warnings[0])
+                # Still actionable: the advice that does apply everywhere.
+                self.assertIn("pytorch.org", warnings[0])
+                self.assertIn("install.py", warnings[0])
 
     def test_the_refresh_command_matches_how_mimora_is_installed(self):
         # The two forms are not interchangeable. An installed tool has no

@@ -8,7 +8,7 @@ run Mimora on a fresh machine:
 
   1. Verify the Python version.
   2. Detect an NVIDIA GPU / CUDA version (via nvidia-smi, no extra packages).
-  3. (GPU only) install torch/torchaudio as CUDA builds.
+  3. (GPU only) install torch as a CUDA build.
   4. pip install the project dependencies (read from pyproject.toml).
   5. Report which espeak-ng shared library phonemizer will use (the bundled
      espeakng-loader wheel by default), and offer to install a system one only
@@ -144,7 +144,7 @@ PIP = [sys.executable, "-m", "pip"]
 REQUIRED_DISTS = [
     "numpy", "soundfile", "sounddevice", "kokoro", "supertonic", "openai",
     "torch", "transformers",
-    "torchaudio", "librosa", "scipy", "scikit-learn", "fastdtw",
+    "librosa", "scipy", "scikit-learn", "fastdtw",
     "phonemizer-fork", "espeakng-loader", "python-Levenshtein", "panphon",
     "sentencepiece",
     "ttkbootstrap", "pillow", "onnxruntime", "wordfreq",
@@ -522,8 +522,12 @@ def run_command(cmd: list[str], log: Logger) -> bool:
             bufsize=1,
             cwd=str(PROJECT_ROOT),
         )
-    except FileNotFoundError as exc:
-        log.log(f"    ERROR: command not found: {exc}")
+    # OSError, not FileNotFoundError alone: a command present but not
+    # executable raises PermissionError, and this function's contract is that a
+    # command that will not run becomes a FAILED row rather than a traceback
+    # out of the installer's own reporting.
+    except OSError as exc:
+        log.log(f"    ERROR: could not run the command: {exc}")
         return False
 
     # proc.stdout is guaranteed non-None given stdout=PIPE above.
@@ -1082,7 +1086,14 @@ def step_gpu_torch(
     log: Logger, confirmer: Confirmer, report: StepReport,
     driver_cuda: tuple[int, int] | None,
 ) -> None:
-    """Reinstall torch + torchaudio as a matching CUDA build (together)."""
+    """Reinstall torch as a matching CUDA build.
+
+    torchaudio used to be reinstalled in the same command, because replacing
+    torch alone left a torchaudio built against the previous one. That pairing
+    problem went away with the package itself: torchaudio is no longer a
+    dependency (see the note in pyproject.toml), so there is nothing here to
+    keep in step with torch.
+    """
     series = pick_cu_series(TORCH_CU_SERIES, driver_cuda)
     if series is None:
         log.log("    No compatible torch CUDA wheel series for this driver.")
@@ -1090,12 +1101,9 @@ def step_gpu_torch(
         return
 
     index = TORCH_INDEX_URL.format(series=series)
-    # torch and torchaudio are reinstalled together on purpose: replacing torch
-    # alone leaves torchaudio built against the old torch (import crashes).
-    cmd = PIP + ["install", "--force-reinstall", "torch", "torchaudio",
-                 "--index-url", index]
+    cmd = PIP + ["install", "--force-reinstall", "torch", "--index-url", index]
     installed = torch_is_cuda_build()
-    desc = (f"Install CUDA build of torch + torchaudio for {series} "
+    desc = (f"Install CUDA build of torch for {series} "
             f"(used by Wav2Vec2 pronunciation analysis).")
     if installed:
         log.log(f"    torch already a CUDA build ({dist_version('torch')}).")
@@ -1422,7 +1430,6 @@ def step_llama_server(
                             "llama-server binary")
 
     installed_exe = fetch.installed_exe()
-    installed = installed_exe is not None
 
     # Resolve the variant BEFORE asking. Two reasons: the prompt can then name
     # the real download size (a single hardcoded number fits only the CUDA
@@ -1439,11 +1446,24 @@ def step_llama_server(
         _disable_llm_backend(log, confirmer, report)
         return False
 
+    # "Already installed" is the stamp's answer for THIS variant, not the mere
+    # presence of a binary. The difference is a device-check substitution: on a
+    # machine where linux-vulkan-x64 was tried and descended to linux-cpu-x64,
+    # a presence test says "no Vulkan build here" and this step re-downloaded
+    # the 32 MB asset on every run, failed the same check and descended again.
+    # is_current() honours the recorded substitution, so the question stays
+    # answered until --reinstall (force below) or an explicit --variant asks
+    # for it to be reconsidered.
+    installed = fetch.is_current(fetch.INSTALL_DIR, fetch.RELEASE_TAG, variant)
+
     desc = (f"Download the pinned llama.cpp release {fetch.RELEASE_TAG} "
             f"({variant}, {fetch.variant_size_mb(variant)} MB) into "
             f"{fetch.INSTALL_DIR.parent.name}/{fetch.INSTALL_DIR.name}/ and "
             f"verify that its GPU backend actually comes up.")
-    if installed:
+    # Reported whenever a binary is there, including when it does NOT count as
+    # current (a stamp from an older release tag): "something is installed and
+    # is about to be replaced" is exactly what the reader needs at that point.
+    if installed_exe is not None:
         # Name the installed build, not just its path. The confirmer prints
         # *desc* right after this line, and desc describes what a reinstall
         # would fetch - which after a device-check fallback is a different

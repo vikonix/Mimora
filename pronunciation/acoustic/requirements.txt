@@ -19,14 +19,17 @@
 
 # >=5.3 closes CVE-2026-4372 (config-injection RCE); kept in sync with the
 # application's own list in [project.dependencies] (pyproject.toml). The markers
-# below relax torch/transformers/torchaudio/numpy on Intel macOS (x86_64) - see
-# the Intel macOS note there. tools/check_markers.py checks both lists together.
+# below relax torch/transformers/numpy on Intel macOS (x86_64) - see the Intel
+# macOS note there. tools/check_markers.py checks both lists together.
+#
+# torchaudio is deliberately absent, and re-adding it breaks Linux: nothing
+# imports it, while transformers imports it at module level whenever the
+# environment merely has it installed, which fails when pip resolves torch and
+# torchaudio to different CUDA series. The reasoning lives in pyproject.toml.
 transformers>=5.3; platform_system != 'Darwin' or platform_machine != 'x86_64'
 transformers>=4.44,<5; platform_system == 'Darwin' and platform_machine == 'x86_64'
 torch>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'
 torch==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'
-torchaudio>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'
-torchaudio==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'
 librosa>=0.10.0
 scipy>=1.10.0
 scikit-learn>=1.2.0

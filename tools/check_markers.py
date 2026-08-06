@@ -34,7 +34,14 @@ ENVIRONMENTS = {
 }
 
 # The packages that carry platform-conditional markers.
-MARKED_PACKAGES = ("numpy", "torch", "torchaudio", "transformers")
+#
+# torchaudio was here until it stopped being a dependency, and removing the
+# name was part of that change rather than tidying: coverage below is built
+# only from the lines that were FOUND, so a package named here but absent from
+# every list simply drops out of the report - no "missing", no "overlapping",
+# and no hint that the check has nothing left to say about it. A name kept here
+# out of habit would be a check that silently stopped checking.
+MARKED_PACKAGES = ("numpy", "torch", "transformers")
 
 DEPENDENCY_SOURCES = (
     "pyproject.toml",

@@ -30,6 +30,8 @@ from the project root with:
     python -m unittest tests.test_paths
 """
 
+import contextlib
+import io
 import os
 import unittest
 from pathlib import Path
@@ -78,13 +80,17 @@ class RepoModeTests(unittest.TestCase):
 class EnvOverrideTests(unittest.TestCase):
     """MIMORA_HOME beats both automatic answers."""
 
+    # resolve(), not absolute(), because that is what _env_root does and the
+    # two differ where it matters: on macOS /tmp is a symlink to /private/tmp,
+    # so a test written against absolute() would compare the resolved answer
+    # with an unresolved expectation and fail on one platform only.
     def test_override_wins_in_repo_mode(self):
         with _with_marker(), _clean_env(**{paths.HOME_ENV_VAR: "/tmp/elsewhere"}):
-            self.assertEqual(paths.data_root(), Path("/tmp/elsewhere").absolute())
+            self.assertEqual(paths.data_root(), Path("/tmp/elsewhere").resolve())
 
     def test_override_wins_in_package_mode(self):
         with _no_marker(), _clean_env(**{paths.HOME_ENV_VAR: "/tmp/elsewhere"}):
-            self.assertEqual(paths.data_root(), Path("/tmp/elsewhere").absolute())
+            self.assertEqual(paths.data_root(), Path("/tmp/elsewhere").resolve())
 
     def test_blank_override_is_ignored(self):
         # An exported-but-empty variable is the shell's normal way of saying
@@ -96,16 +102,25 @@ class EnvOverrideTests(unittest.TestCase):
         with _with_marker(), _clean_env(**{paths.HOME_ENV_VAR: "relative/dir"}):
             self.assertTrue(paths.data_root().is_absolute())
 
+    def test_override_is_normalised(self):
+        # resolve() rather than absolute(), so ".." collapses instead of being
+        # carried around. Two spellings of one directory that do not compare
+        # equal are a bug waiting for the first code that compares them, and
+        # they read badly in every log line and error message meanwhile.
+        with _with_marker(), _clean_env(**{paths.HOME_ENV_VAR: "/tmp/a/../b"}):
+            self.assertEqual(paths.data_root(), Path("/tmp/b").resolve())
+
     def test_surrounding_quotes_are_dropped(self):
         # `set MIMORA_HOME="D:\dir"` in cmd keeps the quotes IN the value,
         # unlike a POSIX shell, and a quote cannot appear in a Windows
-        # filename - so keeping them turns ensure_dirs() into an OSError raised
-        # while config is being imported.
+        # filename - so keeping them sends ensure_dirs() to an OSError while
+        # config is being imported, which is the one outcome this variable
+        # exists to avoid.
         for quoted in ('"/tmp/elsewhere"', "'/tmp/elsewhere'"):
             with self.subTest(value=quoted):
                 with _with_marker(), _clean_env(**{paths.HOME_ENV_VAR: quoted}):
                     self.assertEqual(paths.data_root(),
-                                     Path("/tmp/elsewhere").absolute())
+                                     Path("/tmp/elsewhere").resolve())
 
     def test_quotes_alone_are_treated_as_unset(self):
         with _with_marker(), _clean_env(**{paths.HOME_ENV_VAR: '"  "'}):
@@ -116,7 +131,7 @@ class EnvOverrideTests(unittest.TestCase):
         # or, on a POSIX filesystem, a legal part of the name. Stripping one
         # side would silently point the data root somewhere else.
         with _with_marker(), _clean_env(**{paths.HOME_ENV_VAR: '"/tmp/odd'}):
-            self.assertEqual(paths.data_root(), Path('"/tmp/odd').absolute())
+            self.assertEqual(paths.data_root(), Path('"/tmp/odd').resolve())
 
     def test_override_does_not_move_the_resources(self):
         # It redirects what this machine writes; it cannot move files that
@@ -332,6 +347,27 @@ class EnsureDirsTests(unittest.TestCase):
         created = self._created_by_ensure_dirs()
         self.assertNotIn(paths.shipped_themes_dir(), created)
         self.assertNotIn(paths.shipped_root(), created)
+
+    def test_an_unusable_data_root_is_reported_and_not_raised(self):
+        # WHERE this runs is the whole argument: config.py calls it during its
+        # own import, before logging exists and before any window does, so an
+        # exception surfaces as a traceback out of an import and the app never
+        # starts. The usual cause is a MIMORA_HOME naming somewhere unusable -
+        # and that variable exists to be the way OUT of a bad automatic choice.
+        def refuse(self, parents=False, exist_ok=False):
+            raise OSError(13, "Permission denied")
+
+        stderr = io.StringIO()
+        with _with_marker(), _clean_env(), \
+                mock.patch.object(paths.Path, "mkdir", refuse), \
+                contextlib.redirect_stderr(stderr):
+            paths.ensure_dirs()  # must not raise
+
+        message = stderr.getvalue()
+        self.assertIn("Permission denied", message)
+        # Naming the variable is the actionable half: it is what the reader can
+        # change, and the failure is silent about it otherwise.
+        self.assertIn(paths.HOME_ENV_VAR, message)
 
 
 if __name__ == "__main__":
