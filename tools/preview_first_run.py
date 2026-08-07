@@ -4,6 +4,7 @@
 """Show the first-run window in a chosen state, without a first run.
 
     python tools/preview_first_run.py --state both
+    python tools/preview_first_run.py --tour
     python tools/preview_first_run.py --list
 
 The window (mimora/first_run_window.py) appears only on a machine that is
@@ -63,13 +64,53 @@ network mid-run. half-failure is the one mixed case: its first component is a
 real repo, chosen because this machine already has it, so fetching it returns
 without touching the network; only the second is fabricated. In --state real
 the keys are real and Download downloads.
+
+--tour shows the eight fabricated states one after another, each announced by
+name and by what has to be pressed and seen in it, waiting for Enter between
+them. It exists because --state answers "show me this one" and the question
+before a release is the other one, "show me all of them": nine separate
+commands are nine chances to skip the state nobody remembers the point of, and
+the point of each is written down here rather than remembered. The states run
+in one process, which the window supports by construction - it owns a
+short-lived root and Tk takes a second one after the first is destroyed (see
+mimora/first_run_window.py) - and no ttk widget, cached image or registered
+font survives a window to make the second showing differ from the first.
+
+Two things that sentence got wrong, both found by the first tour of 2026-08-07
+and both worth keeping written down.
+
+The harmless one is the log: model_fetch.prepare_hf_env() probes for symlink
+privileges once per process, so its INFO line appears in the first state that
+presses Download and in none of the others. Under one command per state it
+would be in every transcript. Nothing depends on it, but a line that moves
+between runs is worth knowing about before it is read as a finding.
+
+The other one aborted the process at state six. Tk VARIABLES do survive a
+window: FirstRunWindow sits in a reference cycle (a bound method per button in
+Tcl's callback registry, the registry on the root, the root on self), so its
+graph waits for a cyclic collection rather than being freed on the spot - and
+that collection runs on whichever thread allocates at the time, which in a
+state that presses Download is the worker thread. Variable.__del__ then calls
+into a destroyed interpreter from the wrong thread and Tcl aborts the process:
+"Tcl_AsyncDelete: async handler deleted by the wrong thread". The variables
+that killed it had been waiting since state one. The fix is in the window
+itself (_close() drops them while the interpreter is alive), because the app
+runs the same sequence - window, then a loader thread - and would abort the
+same way; the gc.collect() in the tour below only keeps the rest of the graph
+from crossing a state boundary.
+
+--state real is deliberately NOT in the tour. Its keys are real, so one stray
+click downloads gigabytes, and a walkthrough is exactly where a stray click
+happens. It stays a single command, run on purpose.
 """
 
 from __future__ import annotations
 
 import argparse
+import gc
 import logging
 import sys
+import textwrap
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -80,7 +121,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from mimora import first_run, llama_server_fetch, models_info  # noqa: E402
-from mimora.first_run_window import FirstRunWindow  # noqa: E402
+from mimora.first_run_window import FirstRunWindow, Outcome  # noqa: E402
 
 # A key no downloader claims, so Download lands in the failure branch instead of
 # fetching gigabytes because somebody previewed a window. The prefix is what
@@ -178,6 +219,89 @@ def _plan(state: str) -> first_run.Plan | None:
 STATES = ("required", "optional", "translator", "both", "all-levels",
           "half-failure", "no-build", "bad-setting", "real")
 
+# Everything except real, whose keys are real and whose Download button costs
+# gigabytes. Order follows STATES: the two blocked states last, because they
+# are the only ones whose point is a paragraph of text rather than a layout.
+TOUR_STATES = tuple(state for state in STATES if state != "real")
+
+# Per state: what to press, and what has to be true. Two fields rather than one
+# paragraph, because the paragraph is read after the window is already on
+# screen and the button has already been pressed - by which time the only line
+# that mattered is the first one. Whatever explains WHY a check exists belongs
+# in the docstring above; what is printed is the instruction alone.
+#
+# One table rather than a branch per state: --state and --tour say the same
+# thing, and a second copy drifts on the first edit.
+#
+# LOOK comes before PRESS in the window's own order of events. Pressing
+# Download rewrites the secondary button to "Quit" (first_run_window
+# _on_primary), so in the states whose point is that it reads "Skip", a
+# download taken first destroys the evidence. That is why "press Download
+# everywhere first" is not the shortcut it looks like.
+CHECKS = {
+    "required": (
+        "Quit",
+        "It must read 'Quit', never 'Skip': refusing the required level "
+        "leaves nothing to run. Outcome: quit_requested=True, nothing "
+        "declined."),
+    "optional": (
+        "Skip",
+        "It must read 'Skip', not 'Quit'. Outcome: optional_declined=True. "
+        "Clearing the checkbox and pressing Download is the same path, worth "
+        "one extra showing."),
+    "translator": (
+        "Skip",
+        "The only state an installed machine reaches, so read it as the first "
+        "thing on screen: the title may not claim a first run, and the "
+        "block's top padding has to look right with nothing above it. "
+        "Outcome: translator_declined=True, optional_declined False."),
+    "both": (
+        "Download with the box checked, then Quit",
+        "The primary button must become 'Retry' and the failure must name the "
+        "component. This is the 'Download failed' branch, otherwise reachable "
+        "only by pulling the network mid-run."),
+    "all-levels": (
+        "both checkboxes on and off, then Quit",
+        "'Total download' must follow every toggle. Three blocks stacked is "
+        "the only case where all the leading padding is exercised at once, so "
+        "read the vertical rhythm rather than the words."),
+    "half-failure": (
+        "Download, then the second button",
+        "'{label}' is real and on disk, so it completes without a request; "
+        "the second component is fabricated and fails. The second button must "
+        "turn from 'Quit' into 'Skip' once the required level is banked. "
+        "Outcome: quit_requested=False, optional_declined=True."),
+    "no-build": (
+        "Quit",
+        "No checkbox at all: there must be no way to ask for a chat model "
+        "here. The note has to name a way out (a self-built llama-server, or "
+        "LM Studio), neither being guessable. optional_declined must be "
+        "False - a level never offered cannot be declined."),
+    "bad-setting": (
+        "Quit",
+        "Same shape as no-build, and the difference is the point: the note "
+        "must say a download is not offered BECAUSE it would land in "
+        "bin/llama/ while \"llama_server_path\" kept winning, not merely that "
+        "the file is missing."),
+    "real": (
+        "Quit, unless you mean it",
+        "Real keys: Download really downloads. This is the plan this machine "
+        "would produce."),
+}
+
+# Printed ONCE per run rather than before every state: it says the same thing
+# each time, and repeating it is what buried the two lines that differ.
+#
+# The last sentence is here because the failure the fabricated keys arrange
+# arrives as a traceback reading "A component was added to the plan without a
+# branch here", which sounds like a defect in the code rather than the intended
+# path. The one thing telling them apart is the "preview:" prefix in the key.
+_PREFACE = (
+    "Nothing is written to settings.json whatever you press. Outside "
+    "--state real the component keys are fabricated, so Download fails by "
+    "design and fetches nothing: the traceback it logs names a key starting "
+    "with 'preview:', which is what tells it from a real defect.")
+
 _NO_CACHED_REPO = (
     "half-failure needs one catalogue repo already downloaded, so that "
     "fetching it can succeed without touching the network. This machine has "
@@ -195,13 +319,106 @@ def _describe(plan: first_run.Plan) -> str:
             f"blocked: {plan.llama_server_blocked or 'no'}")
 
 
+def _field(label: str, text: str) -> str:
+    """One labelled line, wrapped so continuations hang under the text."""
+    return textwrap.fill(text, width=78, initial_indent=f"  {label:<7}",
+                         subsequent_indent=" " * 9)
+
+
+def _announce(state: str, plan: first_run.Plan) -> None:
+    """Everything printed before the window goes up."""
+    press, look = CHECKS[state]
+    if state == "half-failure":
+        look = look.format(label=plan.required[0].label)
+    print(_field("PLAN", _describe(plan)))
+    print(_field("LOOK", look))
+    # Last, and in that order on purpose: it is the line to still have in view
+    # when the window appears, and looking comes before pressing anyway.
+    print(_field("PRESS", press))
+    if (not plan.missing_required and not plan.missing_optional
+            and not plan.missing_translator):
+        # Reachable through --state real on a machine that has everything, i.e.
+        # the first thing anyone tries. The window below is shown regardless
+        # because looking at it is the whole point, but saying so keeps the
+        # preview from implying the app would ever put it on screen.
+        print(_field("NOTE", "With nothing missing, ensure_ready() returns "
+                             "immediately and shows no window at all. This "
+                             "one is shown anyway, to look at."))
+    print()
+
+
+def _report(outcome: Outcome) -> None:
+    """Everything printed once the window is gone."""
+    print(f"\n{outcome}")
+    # The flags are already per level and already guarded against a level that
+    # was never offered (_on_secondary asks what is still missing rather than
+    # assuming), so these two lines can be printed straight off the outcome.
+    if outcome.optional_declined:
+        print("ensure_ready() would have written llm_backend \"off\" here.")
+    if outcome.translator_declined:
+        print("ensure_ready() would have written translation_language \"\" here.")
+
+
+def _pause(position: str) -> None:
+    """Wait for Enter between states, unless there is no console to wait on."""
+    try:
+        input(f"\n[{position}] Enter for the next state, Ctrl+C to stop. ")
+    except EOFError:
+        # Output redirected to a file: the windows still have to appear, so
+        # this walks on rather than treating a closed stdin as a refusal.
+        print("\n(stdin is closed, continuing without pauses)")
+
+
+def _tour() -> int:
+    """Show every fabricated state in turn, announcing each one."""
+    total = len(TOUR_STATES)
+    print(f"Walking {total} states in order. --state real is not among them: "
+          f"its keys are real, so its Download button downloads.")
+    print(textwrap.fill(_PREFACE, width=78))
+    skipped = []
+    for number, state in enumerate(TOUR_STATES, start=1):
+        position = f"{number}/{total} {state}"
+        print(f"\n{'=' * 72}\n  {position}\n{'=' * 72}")
+        plan = _plan(state)
+        if plan is None:
+            # Only half-failure can land here, and only on a machine with no
+            # catalogue repo cached. Skipping is the whole handling: the state
+            # would otherwise start a real download, which is what the tour
+            # exists to avoid.
+            print(f"Skipped. {_NO_CACHED_REPO}")
+            skipped.append(state)
+            continue
+        _announce(state, plan)
+        _report(FirstRunWindow(plan).run())
+        # Collect the closed window here, on the main thread, instead of
+        # letting it happen inside the next state - possibly on a download
+        # worker, which is where a stale Tk object aborts the process (see the
+        # note in the module docstring). first_run_window._close() now drops
+        # the two Tcl variables itself, so this is belt and braces for the rest
+        # of the graph; a tour that dies at state six loses the transcript of
+        # the five that passed, which is worth one collection per window.
+        gc.collect()
+        if number < total:
+            _pause(position)
+    print(f"\n{'=' * 72}")
+    if skipped:
+        print(f"Not shown: {', '.join(skipped)}.")
+    print("Tour done. The ninth state is 'real' and runs on its own: "
+          "python tools/preview_first_run.py --state real")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Show the first-run window in a chosen state.")
     parser.add_argument("--state", choices=STATES, default="both",
                         help="which situation to fabricate (default: both)")
-    parser.add_argument("--list", action="store_true",
-                        help="print each state's plan and exit, showing nothing")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--list", action="store_true",
+                      help="print each state's plan and exit, showing nothing")
+    mode.add_argument("--tour", action="store_true",
+                      help="show every state except 'real' in turn, saying "
+                           "what to press in each; ignores --state")
     args = parser.parse_args()
 
     # The window's own log lines (and, in --state real, the plan's) are half the
@@ -216,44 +433,18 @@ def main() -> int:
             print(f"  {state:<13} {summary}")
         return 0
 
+    if args.tour:
+        return _tour()
+
     plan = _plan(args.state)
     if plan is None:
         print(_NO_CACHED_REPO, file=sys.stderr)
         return 1
 
-    print(f"State '{args.state}': {_describe(plan)}")
-    if args.state == "real":
-        print("This is the real plan with real component keys: pressing "
-              "Download really downloads.")
-    elif args.state == "half-failure":
-        print(f"Press Download. '{plan.required[0].label}' is real and "
-              f"already on disk, so it completes without a request; the "
-              f"second component is fabricated and fails. Watch the second "
-              f"button: it must read 'Skip', not 'Quit', and pressing it must "
-              f"report a decline rather than a quit.")
-    else:
-        print("Fabricated keys: pressing Download shows the failure branch and "
-              "fetches nothing.")
-    if (not plan.missing_required and not plan.missing_optional
-            and not plan.missing_translator):
-        # Reachable through --state real on a machine that has everything, i.e.
-        # the first thing anyone tries. The window below is shown regardless
-        # because looking at it is the whole point, but saying so keeps the
-        # preview from implying the app would ever put it on screen.
-        print("Note: with nothing missing, ensure_ready() returns immediately "
-              "and shows no window at all. This one is shown anyway, to look "
-              "at.")
-    print("Nothing is written to settings.json whatever you press.\n")
-
-    outcome = FirstRunWindow(plan).run()
-    print(f"\n{outcome}")
-    # The flags are already per level and already guarded against a level that
-    # was never offered (_on_secondary asks what is still missing rather than
-    # assuming), so these two lines can be printed straight off the outcome.
-    if outcome.optional_declined:
-        print("ensure_ready() would have written llm_backend \"off\" here.")
-    if outcome.translator_declined:
-        print("ensure_ready() would have written translation_language \"\" here.")
+    print(textwrap.fill(_PREFACE, width=78))
+    print(f"\n{'=' * 72}\n  {args.state}\n{'=' * 72}")
+    _announce(args.state, plan)
+    _report(FirstRunWindow(plan).run())
     return 0
 
 

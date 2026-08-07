@@ -498,6 +498,23 @@ class FirstRunWindow:
 
     def _close(self) -> None:
         self._closed = True
+        # Drop the Tcl variables HERE, on the Tk thread and while the
+        # interpreter still answers, rather than leaving them to the garbage
+        # collector. They cannot be freed by reference counting: this object is
+        # part of a cycle (a bound method per button lives in Tcl's callback
+        # registry, the registry belongs to the root, the root is an attribute
+        # of self), so the whole graph waits for a cyclic collection - which
+        # runs on whichever thread happens to allocate at the time. When that
+        # is a worker thread, Variable.__del__ calls "info exists" into this
+        # already-destroyed interpreter from the wrong thread, and Tcl does not
+        # raise: it aborts the process with "Tcl_AsyncDelete: async handler
+        # deleted by the wrong thread". The window is followed by exactly such
+        # a thread every time - loading models is the next thing that happens.
+        #
+        # Assignment rather than del: nothing reads these after _close(), but
+        # None is a defined state and a missing attribute is not.
+        self._wants_optional = None
+        self._wants_translator = None
         self.root.destroy()
 
     def _downloading(self) -> bool:
