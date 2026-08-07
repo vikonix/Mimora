@@ -336,6 +336,7 @@ def ensure_hf_models(repos: Optional[Sequence[models_info.HfRepo]] = None, *,
         log.info("Fetching %s, %d MB [%s] ...", repo.label, repo.size_mb, repo_id)
         try:
             snapshot_download(repo_id=repo_id, **progress_arg)
+            _sweep_incomplete_blobs(repo_id)
             log.info("-> done: %s", repo_id)
         except Exception as exc:  # noqa: BLE001 - record which repo failed
             log.error("-> FAILED: %s: %s", repo_id, exc)
@@ -345,6 +346,40 @@ def ensure_hf_models(repos: Optional[Sequence[models_info.HfRepo]] = None, *,
         raise ModelFetchError(
             f"Could not download: {', '.join(failures)}. Check the network / "
             f"proxy and re-run; finished repos are not fetched again.")
+
+
+def _sweep_incomplete_blobs(repo_id: str) -> None:
+    """Remove leftover *.incomplete blobs from a repo we have just completed.
+
+    Only ever called right after a successful snapshot_download, and that is
+    what makes it safe: the download has just fetched every file of the
+    revision, so anything still marked incomplete is not a file we are waiting
+    for. It is a partial download of something else - in practice transformers'
+    auto-conversion thread, killed by the app exiting mid-flight.
+
+    Without this the leftovers are permanent, and they are not cosmetic:
+    loader.models_cached treats any *.incomplete as "this repo is not cached",
+    which is right for an interrupted first run and wrong here. The repo is
+    complete and loads fine, but every start reports it missing and offers a
+    download that cannot help - it does not need that file, so nothing removes
+    it. bootstrap.early_init() now stops the thread that produced these
+    (DISABLE_SAFETENSORS_CONVERSION); this is what heals the caches that
+    already have them, and the backstop if anything else leaves one.
+
+    Best-effort by design: a file that cannot be deleted (another process is
+    writing it, Windows has it open) leaves the cache exactly as it was, which
+    is the state this function exists to improve rather than to guarantee.
+    """
+    repo_dir = hf_hub_dir() / ("models--" + repo_id.replace("/", "--"))
+    for stale in repo_dir.glob("blobs/*.incomplete"):
+        try:
+            stale.unlink()
+        except OSError as exc:
+            log.info("Could not remove the stale partial file %s (%s); the "
+                     "repo may keep being reported as not cached.", stale, exc)
+        else:
+            log.info("Removed a stale partial file left in the cache: %s",
+                     stale.name)
 
 
 def ensure_supertonic(*, force: bool = False) -> None:

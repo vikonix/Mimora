@@ -6,12 +6,17 @@
 No network and no downloads: every predicate is patched out, so what is under
 test is the decision, not the machine the tests run on.
 
-The decision worth testing is which components each level contains. Getting it
-wrong does not crash anything - it makes the first-run dialog ask for the wrong
-number of gigabytes, which is the one thing the dialog exists to state
-honestly. The specific trap is NLLB: config._CACHED_REPOS requires it
-unconditionally, and reusing that constant would have the dialog ask for 4110 MB
-where a default run needs 1627.
+The decision worth testing is which components each level contains, and which
+level they land in. Getting the first wrong makes the first-run dialog ask for
+the wrong number of gigabytes, which is the one thing the dialog exists to
+state honestly; getting the second wrong makes one Skip switch off a feature
+the user never refused, because the level is what ensure_ready maps to a
+settings.json write.
+
+The specific trap is NLLB. It must not be in the required level (translation is
+off by default, and asking for 2483 MB would nearly double what a default run
+needs), and it must not be folded into the optional one either (that level
+already means "the chat model", and its refusal writes llm_backend "off").
 
 Run from the project root with:
 
@@ -80,9 +85,10 @@ class RequiredLevelTests(unittest.TestCase):
                                  first_run.required_models(engine, "supertonic"))
 
     def test_nllb_is_never_required(self):
-        # The whole reason this set is built here instead of being taken from
-        # config._CACHED_REPOS. Translation is off by default and the app runs
-        # without its 2483 MB.
+        # It has a level of its own (see TranslatorLevelTests). Even with
+        # translation on, the app starts perfectly well while the model is
+        # missing - the phrase is simply shown without a translation - so it
+        # cannot be part of the level whose refusal means "quit".
         for engine in ENGINES:
             for tts_backend in TTS_BACKENDS:
                 with self.subTest(engine=engine, tts_backend=tts_backend):
@@ -120,6 +126,53 @@ class RequiredLevelTests(unittest.TestCase):
             with self.subTest(engine=engine):
                 self.assertEqual(config._ENGINE_MODEL_REPO[engine],
                                  model.repo_id)
+
+
+class TranslatorLevelTests(unittest.TestCase):
+    """The level that exists only when translation is on."""
+
+    def test_no_translation_language_means_no_download(self):
+        # The default. A machine that never enables translation is never asked
+        # for the 2483 MB, and - the other half of the same fact - its offline
+        # gate does not wait for a model it will not load.
+        self.assertEqual(first_run.translator_models(""), ())
+
+    def test_a_selected_language_requires_nllb(self):
+        for language in ("Russian", "Japanese"):
+            with self.subTest(language=language):
+                self.assertEqual(first_run.translator_models(language),
+                                 (models_info.NLLB,))
+
+    def test_the_model_is_the_one_config_loads(self):
+        # config binds NLLB_TRANSLATOR_MODEL_NAME from the same record. If the
+        # two ever named different repos, the window would download one model
+        # and the app would then look for another.
+        self.assertEqual(first_run._TRANSLATOR_MODEL.repo_id,
+                         config.NLLB_TRANSLATOR_MODEL_NAME)
+
+    def test_the_offline_gate_asks_for_it_on_the_same_condition(self):
+        # The two decisions are made in different modules and must agree, in
+        # both directions. Requiring NLLB with translation off would leave the
+        # Hub online at every start for a model that is never loaded (which is
+        # what it used to do); not requiring it with translation on would flip
+        # the process offline while the model is still missing, and then the
+        # download could not happen at all.
+        self.assertEqual(
+            models_info.NLLB.repo_id in config._CACHED_REPOS,
+            bool(config.TRANSLATION_LANGUAGE))
+
+    def test_the_level_follows_the_setting(self):
+        with mock.patch.object(config, "TRANSLATION_LANGUAGE", ""), \
+                mock.patch.object(first_run, "model_present",
+                                  return_value=False):
+            self.assertEqual(first_run._translator_components(), ())
+        with mock.patch.object(config, "TRANSLATION_LANGUAGE", "Russian"), \
+                mock.patch.object(first_run, "model_present",
+                                  return_value=False):
+            components = first_run._translator_components()
+        self.assertEqual([c.key for c in components],
+                         [models_info.NLLB.repo_id])
+        self.assertEqual(components[0].size_mb, models_info.NLLB.size_mb)
 
 
 class PresenceTests(unittest.TestCase):
@@ -304,6 +357,22 @@ class PlanTests(unittest.TestCase):
                               llama_server_blocked=None)
         self.assertEqual(plan.missing_required_mb, 0)
         self.assertEqual(plan.missing_optional_mb, 0)
+        # Also the default value of the field, which every construction that
+        # predates the translator level relies on.
+        self.assertEqual(plan.translator, ())
+        self.assertEqual(plan.missing_translator_mb, 0)
+
+    def test_the_translator_level_is_counted_on_its_own(self):
+        # Separately from the optional one, because the window offers them as
+        # separate choices and each total is quoted next to its own checkbox.
+        plan = first_run.Plan(
+            required=(),
+            optional=(_component("gguf", size_mb=2019, present=False),),
+            llama_server_blocked=None,
+            translator=(_component("nllb", size_mb=2483, present=False),))
+        self.assertEqual(plan.missing_optional_mb, 2019)
+        self.assertEqual(plan.missing_translator_mb, 2483)
+        self.assertEqual([c.key for c in plan.missing_translator], ["nllb"])
 
     def test_a_present_binary_never_reaches_a_total(self):
         # size_mb is None there, and a None slipping into the denominator would
@@ -322,12 +391,13 @@ class PlanTests(unittest.TestCase):
 
 
 class BuildPlanTests(unittest.TestCase):
-    """The two levels assembled, with the machine patched out."""
+    """The levels assembled, with the machine patched out."""
 
     def test_a_bare_machine_needs_both_levels(self):
         with mock.patch.object(config, "ENGINE", "phoneme"), \
                 mock.patch.object(config, "TTS_BACKEND", "kokoro"), \
                 mock.patch.object(config, "LLM_BACKEND", "llama-server"), \
+                mock.patch.object(config, "TRANSLATION_LANGUAGE", ""), \
                 mock.patch.object(first_run, "model_present",
                                   return_value=False), \
                 mock.patch.object(first_run, "llama_server_status",
@@ -346,9 +416,32 @@ class BuildPlanTests(unittest.TestCase):
         self.assertEqual([c.key for c in plan.optional],
                          [first_run.KEY_LLAMA_SERVER, first_run.KEY_GGUF])
         self.assertIsNone(plan.llama_server_blocked)
+        # A first run is a machine with translation off, so the third level is
+        # empty even here. It is what keeps the default first run at 1640 MB.
+        self.assertEqual(plan.translator, ())
+
+    def test_translation_on_adds_the_third_level_and_nothing_else(self):
+        # The state the app restarts into after the user turns translation on:
+        # everything else is already installed, so this level appears alone.
+        with mock.patch.object(config, "LLM_BACKEND", "llama-server"), \
+                mock.patch.object(config, "TRANSLATION_LANGUAGE", "Russian"), \
+                mock.patch.object(first_run, "model_present",
+                                  side_effect=lambda m: m is not models_info.NLLB), \
+                mock.patch.object(first_run, "llama_server_status",
+                                  return_value=first_run.SERVER_PRESENT), \
+                mock.patch.object(gguf_fetch, "gguf_present",
+                                  return_value=True):
+            plan = first_run.build_plan()
+
+        self.assertEqual(plan.missing_required, ())
+        self.assertEqual(plan.missing_optional, ())
+        self.assertEqual([c.key for c in plan.missing_translator],
+                         [models_info.NLLB.repo_id])
+        self.assertEqual(plan.missing_translator_mb, models_info.NLLB.size_mb)
 
     def test_a_fully_installed_machine_needs_nothing(self):
         with mock.patch.object(config, "LLM_BACKEND", "llama-server"), \
+                mock.patch.object(config, "TRANSLATION_LANGUAGE", "Russian"), \
                 mock.patch.object(first_run, "model_present",
                                   return_value=True), \
                 mock.patch.object(first_run, "llama_server_status",
@@ -359,8 +452,10 @@ class BuildPlanTests(unittest.TestCase):
 
         self.assertEqual(plan.missing_required, ())
         self.assertEqual(plan.missing_optional, ())
+        self.assertEqual(plan.missing_translator, ())
         self.assertEqual(plan.missing_required_mb, 0)
         self.assertEqual(plan.missing_optional_mb, 0)
+        self.assertEqual(plan.missing_translator_mb, 0)
 
 
 class ImportDisciplineTests(unittest.TestCase):
@@ -452,6 +547,225 @@ class StillMissingTests(unittest.TestCase):
         three = (_component("a"), _component("b"), _component("c"))
         self.assertEqual([c.key for c in self.still_missing(three, {"b"})],
                          ["a", "c"])
+
+
+class EnsureReadyTests(unittest.TestCase):
+    """What app.run is told once the window has closed.
+
+    The rule: if the machine changed, config is stale and the app restarts.
+    config read the machine while it was being imported - what was cached, what
+    the hardware probe had written - and the window then changes exactly that.
+    The offline gate is the sharp one: decided before the download, it would
+    leave a session that just fetched the last missing model revalidating over
+    the network everything it loads.
+
+    "Changed" is asked of the plan rather than of the window having run, and
+    that difference is a loop guard. A download can report success while the
+    plan still calls the component missing, and restarting there would reopen
+    the same window forever.
+    """
+
+    def _window_outcome(self, **kwargs):
+        """An Outcome with everything false except what the caller names.
+
+        Not spelled `_outcome`: unittest.TestCase.run() assigns an _Outcome
+        object to self._outcome, and an instance attribute shadows a method of
+        the same name, so every call died with "'_Outcome' object is not
+        callable".
+        """
+        from mimora import first_run_window
+
+        fields = dict(quit_requested=False, optional_declined=False,
+                      translator_declined=False)
+        fields.update(kwargs)
+        return first_run_window.Outcome(**fields)
+
+    def _ensure_ready(self, outcome, plan, after=None, probed=False):
+        """Run ensure_ready with the window and the machine stubbed out.
+
+        *plan* is what build_plan answers before the window runs and *after*
+        what it answers once it has; the default is "everything it wanted is
+        now on disk". The two are separate because the decision under test is
+        precisely the difference between them.
+        """
+        from mimora import first_run_window
+
+        if after is None:
+            after = first_run.Plan(required=(), optional=(),
+                                   llama_server_blocked=None)
+        with mock.patch.object(first_run, "build_plan",
+                               side_effect=[plan, after]), \
+                mock.patch.object(first_run_window, "FirstRunWindow") as window, \
+                mock.patch.object(first_run_window, "_detect_hardware_once",
+                                  return_value=probed) as probe, \
+                mock.patch.object(config, "save_user_setting") as saved, \
+                mock.patch.object(config, "LLM_BACKEND", config.LLM_BACKEND), \
+                mock.patch.object(config, "TRANSLATION_LANGUAGE",
+                                  config.TRANSLATION_LANGUAGE):
+            # The last two patches only save and restore: the decline branches
+            # assign to them, and a unit test must not leave the live config
+            # (or, through save_user_setting, settings.json) changed.
+            window.return_value.run.return_value = outcome
+            result = first_run_window.ensure_ready()
+            # Read while the patches are still in place: they restore the real
+            # values on the way out, so a test that looked afterwards would be
+            # asserting about this machine's settings.json instead.
+            self.live_backend = config.LLM_BACKEND
+            self.live_translation = config.TRANSLATION_LANGUAGE
+        return result, window, probe, saved
+
+    def _translator_plan(self):
+        return first_run.Plan(
+            required=(), optional=(), llama_server_blocked=None,
+            translator=(_component("nllb", size_mb=2483),))
+
+    def test_nothing_missing_never_builds_the_window(self):
+        from mimora import first_run_window
+
+        plan = first_run.Plan(required=(), optional=(),
+                              llama_server_blocked=None)
+        result, window, _probe, saved = self._ensure_ready(
+            self._window_outcome(), plan)
+        self.assertEqual(result, first_run_window.READY)
+        window.assert_not_called()
+        saved.assert_not_called()
+
+    def test_a_completed_download_restarts(self):
+        from mimora import first_run_window
+
+        result, _window, probe, saved = self._ensure_ready(
+            self._window_outcome(), self._translator_plan())
+        self.assertEqual(result, first_run_window.RESTART)
+        # The probe has to run here whatever it answers: this is the moment
+        # the llama-server binary exists.
+        probe.assert_called_once_with()
+        saved.assert_not_called()
+
+    def test_nothing_actually_fetched_starts_instead_of_looping(self):
+        # The state that makes "the window ran, so restart" wrong: a stray
+        # *.incomplete blob keeps loader.models_cached answering "not cached",
+        # the download fetches nothing because it needs nothing, and the plan
+        # comes back identical. Restarting there would reopen the same window
+        # forever, so the app starts and says so instead.
+        from mimora import first_run_window
+
+        plan = self._translator_plan()
+        # assertLogs rather than letting it through: the warning is half of
+        # what this test is about (a machine in this state has to say which
+        # repo, or nobody will ever find the stray file), and capturing it also
+        # keeps logging's last-resort handler from printing it into the middle
+        # of an otherwise quiet test run.
+        with self.assertLogs("mimora.first_run_window", "WARNING") as logs:
+            result, _window, _probe, _saved = self._ensure_ready(
+                self._window_outcome(), plan, after=plan)
+        self.assertEqual(result, first_run_window.READY)
+        self.assertIn("nllb", logs.output[0])
+        self.assertIn("incomplete", logs.output[0])
+
+    def test_the_hardware_probe_still_forces_a_restart_on_its_own(self):
+        # A true first run whose plan happens to come back unchanged (the case
+        # above) still has to restart, because the probe has just rewritten the
+        # file config read at import.
+        from mimora import first_run_window
+
+        plan = self._translator_plan()
+        result, _window, _probe, _saved = self._ensure_ready(
+            self._window_outcome(), plan, after=plan, probed=True)
+        self.assertEqual(result, first_run_window.RESTART)
+
+    def test_quitting_is_the_one_path_that_does_not_restart(self):
+        from mimora import first_run_window
+
+        result, _window, _probe, saved = self._ensure_ready(
+            self._window_outcome(quit_requested=True), self._translator_plan())
+        self.assertEqual(result, first_run_window.CANCELLED)
+        # Nothing is recorded on the way out: the question returns next time.
+        saved.assert_not_called()
+
+    def test_a_declined_translator_is_written_back_and_restarts(self):
+        from mimora import first_run_window
+
+        result, _window, _probe, saved = self._ensure_ready(
+            self._window_outcome(translator_declined=True), self._translator_plan())
+        self.assertEqual(result, first_run_window.RESTART)
+        saved.assert_called_once_with("translation_language", "")
+        # Applied live as well, because this process goes on to build the plan
+        # and the settings window from the same constant.
+        self.assertEqual(self.live_translation, "")
+
+    def test_a_declined_optional_level_is_written_back_and_restarts(self):
+        from mimora import first_run_window
+
+        plan = first_run.Plan(
+            required=(), optional=(_component("gguf", size_mb=2019),),
+            llama_server_blocked=None)
+        result, _window, _probe, saved = self._ensure_ready(
+            self._window_outcome(optional_declined=True), plan)
+        self.assertEqual(result, first_run_window.RESTART)
+        saved.assert_called_once_with("llm_backend", "off")
+        self.assertEqual(self.live_backend, "off")
+
+
+class RefusalTests(unittest.TestCase):
+    """"Skip" refuses exactly the levels that are still missing, and no others.
+
+    Each flag is mapped to a settings.json write by ensure_ready, so a flag set
+    for a level that was never on screen turns a feature off that nobody
+    declined. That was reachable: the window used to record the refusal as a
+    single unconditional boolean, which was harmless only as long as there was
+    one refusable level and it could not be empty whenever this ran.
+
+    The window is built without __init__ on purpose. What is under test is the
+    bookkeeping, the constructor is entirely Tk, and a test that needed a
+    display would not run in CI.
+    """
+
+    def _window(self, plan, fetched=()):
+        from mimora import first_run_window
+        window = object.__new__(first_run_window.FirstRunWindow)
+        window.plan = plan
+        window._fetched = set(fetched)
+        window._thread = None      # nothing running, so _downloading() is False
+        window._state = None
+        window._closed = False
+        window.root = mock.Mock()  # _close() only calls destroy()
+        window._outcome = first_run_window.Outcome(True, False, False)
+        return window
+
+    def test_an_empty_level_is_not_refused(self):
+        plan = first_run.Plan(
+            required=(), optional=(), llama_server_blocked=None,
+            translator=(_component("nllb", size_mb=2483),))
+        window = self._window(plan)
+        window._on_secondary()
+        self.assertFalse(window._outcome.quit_requested)
+        self.assertTrue(window._outcome.translator_declined)
+        # The one that matters: no chat model was ever offered here, so
+        # ensure_ready must not switch the LLM backend off.
+        self.assertFalse(window._outcome.optional_declined)
+
+    def test_a_level_that_arrived_is_not_refused(self):
+        # Skip after a partial download: what was fetched is not a refusal.
+        plan = first_run.Plan(
+            required=(), optional=(_component("gguf"),),
+            llama_server_blocked=None,
+            translator=(_component("nllb"),))
+        window = self._window(plan, fetched={"nllb"})
+        window._on_secondary()
+        self.assertTrue(window._outcome.optional_declined)
+        self.assertFalse(window._outcome.translator_declined)
+
+    def test_a_missing_required_level_is_a_quit_not_a_refusal(self):
+        plan = first_run.Plan(
+            required=(_component("kokoro"),), optional=(),
+            llama_server_blocked=None,
+            translator=(_component("nllb"),))
+        window = self._window(plan)
+        window._on_secondary()
+        self.assertTrue(window._outcome.quit_requested)
+        # Nothing is recorded on the way out: the question returns next time.
+        self.assertFalse(window._outcome.optional_declined)
+        self.assertFalse(window._outcome.translator_declined)
 
 
 if __name__ == "__main__":

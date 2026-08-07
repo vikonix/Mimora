@@ -199,6 +199,9 @@ def make_tqdm_class(state: ProgressState) -> type:
       is not an hf_tqdm subclass, so no positional surprises);
     * ``cls(iterable, desc=...)`` by tqdm.contrib.concurrent.thread_map, which
       then iterates the result - hence __iter__;
+    * ``cls.get_lock()`` / ``cls.set_lock()`` by the same thread_map, BEFORE it
+      constructs anything - hence the two classmethods at the bottom, and see
+      the note there for why they are the one thing that may not be faked;
     * attribute reads and writes from huggingface_hub's own helpers, which set
       ``total`` and read ``n`` and ``format_dict``.
 
@@ -265,6 +268,33 @@ def make_tqdm_class(state: ProgressState) -> type:
             # Only reached for names not set in __init__ or defined above.
             log.debug("Progress stand-in: ignoring tqdm attribute %r.", name)
             return _noop
+
+        # tqdm's lock protocol: the one part of its API that callers reach
+        # through the CLASS rather than through an instance. __getattr__ above
+        # is defined ON the class and therefore answers for INSTANCES only, so
+        # it cannot serve a class-level lookup - which is how a stand-in that
+        # looked complete died with "type object '_ProgressTqdm' has no
+        # attribute 'get_lock'" the first time a real snapshot download reached
+        # it. huggingface_hub's _snapshot_download hands tqdm_class straight to
+        # tqdm.contrib.concurrent.thread_map, unconditionally, so this was on
+        # the path of every hub component of every first-run plan.
+        #
+        # Implemented for real rather than as another no-op, because
+        # ensure_lock() is stateful and not merely chatty: it calls get_lock(),
+        # passes the result to set_lock(), and does `del tqdm_class._lock` on
+        # the way out. A no-op get_lock returns None, a no-op set_lock stores
+        # nothing, and that delete then raises AttributeError - the same crash
+        # three lines later. So the lock is genuinely created on demand and
+        # genuinely stored, exactly as tqdm does it.
+        @classmethod
+        def get_lock(cls):
+            if not hasattr(cls, "_lock"):
+                cls._lock = threading.RLock()
+            return cls._lock
+
+        @classmethod
+        def set_lock(cls, lock):
+            cls._lock = lock
 
     return _ProgressTqdm
 

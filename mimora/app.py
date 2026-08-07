@@ -29,18 +29,18 @@ import threading
 from typing import Optional
 import os
 
-# __version__ for the window title and the startup log line, bootstrap for
-# setup_logging() in run(). early_init() is NOT called here: it has to precede
-# the heavy imports below, and cli.py has already run it.
+# __version__ for the window title (the log states it in its own header now),
+# bootstrap for setup_logging() in run(). early_init() is NOT called here: it
+# has to precede the heavy imports below, and cli.py has already run it.
 from mimora import __version__, bootstrap
 
 import logging
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, ttk
 import numpy as np
 
 from mimora import (config, detect_hardware, first_run, first_run_window,
-                    lifecycle, prosody, spacy_model_fetch)
+                    lifecycle, models_info, prosody, spacy_model_fetch)
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.phrase_source import SourceTextPhraseProvider
@@ -93,7 +93,10 @@ class PronunciationTrainerGUI:
     """
 
     def __init__(self):
-        logging.info("Starting Mimora Pronunciation Trainer v%s...", __version__)
+        # No version here any more: bootstrap._log_header states it on the
+        # first line of every log, and repeating it three lines later was the
+        # kind of duplication that makes two sources of one fact.
+        logging.info("Starting Mimora Pronunciation Trainer...")
 
         # Core Tkinter setup
         self.root = tk.Tk()
@@ -194,6 +197,10 @@ class PronunciationTrainerGUI:
         # Offline phrase translator (NLLB-200). Loaded lazily: only when a
         # translation language is selected (see load_components / translate).
         self.translator_mgr = TranslatorManager()
+        # Whether the "translator could not be loaded" line has been shown.
+        # Written only from the generation thread, which is serialized against
+        # itself by the is_generating guard, and read nowhere else.
+        self._translator_failure_reported = False
 
         # LLM backend (used only to generate practice phrases)
         self.llm_backend = config.LLM_BACKEND
@@ -390,10 +397,12 @@ class PronunciationTrainerGUI:
 
             # Translator (NLLB) is loaded only when a language is selected at
             # startup, so a session with translation off pays no RAM/time cost.
-            # If the user enables a language later, translate() loads on demand.
+            # If the user enables a language later, translate() loads on demand
+            # - from disk, because enabling it is what triggered the restart
+            # that downloaded the model (_offer_translator_download).
             if config.TRANSLATION_LANGUAGE:
                 self.root.after(0, self.view.append_system_msg,
-                                "Loading translator (NLLB, ~2.4 GB)...")
+                                "Loading translator (NLLB) from disk...")
                 # load_model() logs the success itself - do not repeat it here.
                 self.translator_mgr.load_model()
 
@@ -688,9 +697,20 @@ class PronunciationTrainerGUI:
         voice/length changes behave); the current phrase is not re-translated, so
         the panel shows '-' until then. Only the panel visibility and the saved
         setting change here.
+
+        Turning translation on for the first time is the exception: the NLLB
+        model may still have to be downloaded, and this process cannot do that
+        - config decided at import time whether huggingface_hub may reach the
+        network, and the first-run window is the one place a multi-gigabyte
+        download is shown with a progress bar. So that case restarts into it
+        (see _offer_translator_download), which is also why translate() can no
+        longer be reached with the model absent.
         """
         language = self.view.get_translation_language()
         logging.info(f"Translation language changed to {language!r}.")
+        if language and not first_run.model_present(models_info.NLLB):
+            self._offer_translator_download(language)
+            return
         self.settings_ctl.persist("translation_language", language)
         self.settings_ctl.sync_window("translation_language", language)
         # The cached translation belonged to the previous language, so drop it and
@@ -702,6 +722,40 @@ class PronunciationTrainerGUI:
         # Return focus to the window so the spacebar record toggle keeps working
         # (a focused combobox would otherwise capture the spacebar).
         self.root.focus_set()
+
+    def _offer_translator_download(self, language: str):
+        """Ask before restarting to download the translator model.
+
+        The setting is persisted only when the user agrees, and that ordering
+        is the point: the plan the next process builds is read from
+        settings.json, so persisting first is what puts NLLB into the first-run
+        window's translator level. Declining leaves settings.json untouched and
+        puts the live value back, because a saved language with no model on
+        disk is exactly the split state this whole change removes - a setting
+        that is on, does nothing, and says nothing.
+
+        Not offered as a background download in this window: the process is
+        already past config's offline decision, and a second progress UI for
+        the same 2.5 GB the first-run window already knows how to show would be
+        two implementations of one thing.
+        """
+        size_mb = models_info.NLLB.size_mb
+        if not messagebox.askyesno(
+                "Mimora",
+                f"Translation needs the offline translator model "
+                f"({size_mb / 1000:.1f} GB), which is not downloaded yet.\n\n"
+                f"Mimora will restart to download it. The current session "
+                f"(phrase and score) is lost.\n\nRestart and download now?",
+                parent=self.root):
+            logging.info("Translator download declined; translation stays off.")
+            config.TRANSLATION_LANGUAGE = ""
+            self.settings_ctl.sync_window("translation_language", "")
+            self.view.refresh_translation_ui()
+            self.root.focus_set()
+            return
+        logging.info("Restarting to download the translator for %r.", language)
+        self.settings_ctl.persist("translation_language", language)
+        self.restart_app()
 
     def on_prosody_toggled(self):
         """Apply the prosody collapse toggle and persist the show_prosody flag."""
@@ -947,12 +1001,40 @@ class PronunciationTrainerGUI:
         "translation off" choice is skipped. Guards against a stale result: if a
         newer phrase has replaced this one while the (CPU) translation ran, the
         result is dropped, so the panel never shows a translation that does not
-        match the phrase on screen. A translator failure returns "" and simply
-        leaves the placeholder in place.
+        match the phrase on screen.
+
+        An empty result is reported rather than left as a placeholder, because
+        the two reasons for it are indistinguishable on screen: translate()
+        swallows every failure and returns "" exactly as it does when there is
+        nothing to translate. is_loaded() tells them apart - the model is on
+        disk by the time this runs (see mimora/translator.py), so a load that
+        did not happen is a real fault worth naming, while a loaded model that
+        returned nothing is a per-phrase miss not worth a message.
         """
         if not language:
             return
+        if not self.translator_mgr.is_loaded() \
+                and not self._translator_failure_reported:
+            # The lazy load reads 2.5 GB off disk on the first translated
+            # phrase of a session that enabled translation after startup. The
+            # download is gone from this path, the wait is not: it measured
+            # 1.3 s on an SSD with a warm cache, and a slow disk turns that
+            # into a silent window again, which is the finding this whole
+            # change came from. Announced only while a load still looks
+            # possible - after a reported failure every phrase would repeat it.
+            self.root.after(0, self.view.append_system_msg,
+                            "Loading translator (NLLB) from disk...")
         translated = self.translator_mgr.translate(phrase, language)
+        if not translated and not self.translator_mgr.is_loaded():
+            # Once per session: the load is retried on every phrase (the
+            # manager stays retryable by design), and a machine that is out of
+            # RAM would otherwise repeat this line for the rest of the run.
+            if not self._translator_failure_reported:
+                self._translator_failure_reported = True
+                self.root.after(0, self.view.append_system_msg,
+                                "Translation unavailable: the translator model "
+                                "could not be loaded (see logs/main.log).")
+            return
         # current_phrase is replaced by a fresh generation; if it no longer
         # matches, this translation is for a superseded phrase - drop it.
         if not translated or self.current_phrase != phrase:
@@ -1632,14 +1714,17 @@ def run(append_log: bool = False):
         lifecycle.hard_exit()
 
     if first_run_outcome == first_run_window.RESTART:
-        # The first run just wrote hardware_config.json, and config read its
-        # own copy of those values at import - long before this line. Starting
-        # over is what makes them apply, and it is cheap exactly here: unlike
-        # restart_app there is no runtime to shut down first (no models, no
-        # recorder, no LLM subprocess, no Tk root of the app), so the pair
-        # below is the whole procedure. Happens at most once per installation;
-        # ensure_ready will not ask again once the file exists.
-        logging.info("Restarting to apply the detected hardware settings.")
+        # The first-run window ran, so the machine no longer matches what
+        # config read while it was being imported: models arrived, a refusal
+        # rewrote a setting, the hardware probe wrote its file. Above all, the
+        # offline gate was decided before the download and would keep this
+        # session on the network for models that are now on disk (see the tail
+        # of ensure_ready). Starting over is what applies all of it, and it is
+        # cheap exactly here: unlike restart_app there is no runtime to shut
+        # down first (no models, no recorder, no LLM subprocess, no Tk root of
+        # the app), so the pair below is the whole procedure. It cannot loop:
+        # the next process finds nothing missing and returns before the window.
+        logging.info("Restarting to apply what the first-run window changed.")
         lifecycle.spawn_replacement()
         lifecycle.hard_exit()
 

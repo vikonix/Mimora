@@ -117,12 +117,19 @@ You do not have to run it: on the first start Mimora checks what is missing and
 offers to fetch it, naming the exact volume before anything is downloaded. Each
 model also has its own command, listed per row below.
 
-The first-run window asks about two levels separately. The models a session
+The first-run window asks about each level separately. The models a session
 cannot run without (the active engine's recognizer plus the active language's
-TTS) are a notice with **Download** and **Quit**; the local chat model
+TTS) are a notice with **Download** and **Quit**. The local chat model
 (llama-server plus the GGUF) is a real choice, and declining it writes
 `"llm_backend": "off"` into `config/settings.json`, where you can turn it back
-on later. The translator is fetched lazily and is never part of that question.
+on later. The offline translator is the third level, and it appears only when
+a translation language is selected: declining it writes
+`"translation_language": ""` the same way.
+
+Turning translation on later restarts Mimora into that same window, because
+whether the process may reach the network is decided once, at startup. That is
+also what keeps the promise above honest: with translation off, nothing about
+the translator is downloaded and nothing is checked over the network.
 
 Download sizes below are measured, not estimated, and are kept as data in
 [`mimora/models_info.py`](https://github.com/vikonix/Mimora/blob/main/mimora/models_info.py); re-snap them with
@@ -134,7 +141,7 @@ Download sizes below are measured, not estimated, and are kept as data in
 | `facebook/wav2vec2-large-960h` | pronunciation analysis (**acoustic** engine) | 1262 MB | `python -m mimora.model_fetch --hf` |
 | Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech (English) | 363 MB | `python -m mimora.model_fetch --hf` |
 | Supertonic 3 (`Supertone/supertonic-3`) | text-to-speech (Spanish) | 404 MB | into `model_cache/supertonic3/`; `python -m mimora.model_fetch --supertonic`. Weights are **OpenRAIL-M** licensed (code MIT), so they are downloaded, never bundled |
-| `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | 2483 MB | NLLB-200 200-language translator; fetched on demand when translation is switched on |
+| `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | 2483 MB | NLLB-200 200-language translator; not downloaded until a translation language is selected, which restarts into the first-run window |
 | A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | 2019 MB | `python -m mimora.gguf_fetch`. Not needed with `"llm_backend": "off"` (phrases come verbatim from the practice text) |
 | llama-server binary (pinned llama.cpp release) | phrase generation | 641 MB CUDA, 18 MB CPU | most of the CUDA figure is NVIDIA's runtime (391 MB), not llama.cpp; `python -m mimora.llama_server_fetch` |
 

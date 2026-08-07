@@ -30,28 +30,45 @@ destroyed". Classic Tk widgets are unaffected (ui_theme disables the classic
 autostyle hook on import), so the progress bar here is drawn on a Canvas -
 which is what ProgressRing and FaceWidget do anyway.
 
-What the two levels mean here
------------------------------
+What the levels mean here
+-------------------------
 * The required level is a statement, not a question: without it there is no
   reference audio or no scoring, so the alternatives are "Download" and "Quit".
-* The optional level is the one real choice, and refusing it is a working
-  configuration. The refusal is written as ``llm_backend: "off"`` in
-  settings.json - the outcome itself rather than a "the user said no" marker,
-  so the settings window shows exactly how the app now behaves and the same
-  control that already edits llm_backend is where the user changes their mind.
+* The optional and translator levels are the real choices, and refusing either
+  is a working configuration. Each has its own checkbox because each writes a
+  different setting back: ``llm_backend: "off"`` and ``translation_language:
+  ""``. Both are written as the outcome itself rather than as a "the user said
+  no" marker, so the settings window shows exactly how the app now behaves and
+  the control that already edits the setting is where the user changes their
+  mind.
 
-Why it can ask for a restart
-----------------------------
-A finished first run is also the moment the machine is worth probing: the
-llama-server binary has just been installed, and asking whether it can reach
-the GPU is the one question mimora/detect_hardware.py cannot answer before it
-exists. But ``config`` reads hardware_config.json when it is imported, which
-happened long before this window opened, so the values the probe writes cannot
-reach the constants of this process. Rather than re-applying them live - they
-are read once, all over the code - ensure_ready reports RESTART and main.py
-relaunches. Nothing heavy is loaded at that point (no models, no CUDA context,
-no Tk root of the app itself), so the relaunch costs the imports and nothing
-else, and it happens at most once per installation.
+A refusal is per level, never per window: one Skip means "none of what is still
+missing", and ensure_ready then writes back exactly the settings whose level
+was left unfetched. That is why Outcome carries one flag per refusable level
+instead of a single boolean - the flags are not interchangeable, they name
+different features.
+
+Why it usually ends in a restart
+--------------------------------
+When this window has changed the machine, ``config`` is stale. It read the
+machine while it was being imported - what was cached, what the hardware probe
+had written, and so whether huggingface_hub may reach the network - and this
+window then changed exactly those things. Those values are read once and all
+over the code, so the honest way to apply them is a fresh process: ensure_ready
+reports RESTART and app.py relaunches. Nothing heavy is loaded at that point
+(no models, no CUDA context, no Tk root of the app itself), so the relaunch
+costs the imports and nothing else.
+
+Two facts go stale, and they arrived here in that order. The first is the
+hardware probe: a finished first run is the moment the machine is worth
+probing, because the llama-server binary has just been installed and whether it
+reaches the GPU is the one question mimora/detect_hardware.py cannot answer
+before it exists. The second is the offline gate - see the comment at the end
+of ensure_ready for what it cost when it was missed.
+
+"Changed" is asked of the plan, not of the window having run, and that is the
+loop guard: a component can be reported as fetched while the plan still calls
+it missing, and a restart there would reopen this window forever.
 """
 
 from __future__ import annotations
@@ -111,14 +128,21 @@ _BLOCKED_TEXT = {
 class Outcome(NamedTuple):
     """What the window ended up doing, for ensure_ready() to act on.
 
-    Deliberately only the two facts a caller acts on. The list of components
-    actually fetched is not among them: nothing downstream needs it, because
-    where the binary ended up is answered by config.resolve_llama_server_path()
-    at the moment the command line is built, not by remembering the download.
+    Deliberately only the facts a caller acts on: whether to start at all, and
+    which refusable level was left unfetched. The list of components actually
+    fetched is not among them: nothing downstream needs it, because where the
+    binary ended up is answered by config.resolve_llama_server_path() at the
+    moment the command line is built, not by remembering the download.
+
+    One flag per refusable level rather than one "declined" for the window,
+    because the two consequences are unrelated settings. Folding them together
+    would mean that skipping a translator download this machine was asked about
+    also switched the chat model off.
     """
 
     quit_requested: bool
     optional_declined: bool
+    translator_declined: bool
 
 
 def _format_size(size_mb: Optional[int]) -> str:
@@ -161,7 +185,8 @@ class FirstRunWindow:
         # not an explicit answer - the close button, Escape, a killed window
         # manager - has to end in "do not start", never in a silent start with
         # half the models missing.
-        self._outcome = Outcome(quit_requested=True, optional_declined=False)
+        self._outcome = Outcome(quit_requested=True, optional_declined=False,
+                                translator_declined=False)
         # Keys of the components fetched since this window opened. Accumulated
         # across attempts rather than read from the current ProgressState,
         # because Retry starts a fresh one: without this, a component that
@@ -172,7 +197,13 @@ class FirstRunWindow:
         self._closed = False
 
         self.root = tk.Tk()
-        self.root.title("Mimora - first run")
+        # "First run" is a lie on the one path that reaches this window from an
+        # installed machine: turning translation on restarts into it with
+        # nothing else missing. The header and the blocks read correctly either
+        # way, but the title has to be told which situation it is in.
+        self.root.title("Mimora - first run"
+                        if plan.missing_required or plan.missing_optional
+                        else "Mimora - download")
         self.root.configure(bg=THEME["bg_main"])
         self.root.resizable(False, False)
         # Closing the window is a supported action at every moment, including
@@ -187,6 +218,11 @@ class FirstRunWindow:
             # stays a deliberate act rather than the result of not noticing a
             # checkbox.
             value=bool(plan.missing_optional))
+        # Same reasoning, and it applies even harder here: this level is
+        # non-empty only because the user has just selected a translation
+        # language, so leaving it unchecked would undo what they came to do.
+        self._wants_translator = tk.BooleanVar(
+            value=bool(plan.missing_translator))
 
         self._build()
         self._centre()
@@ -263,47 +299,81 @@ class FirstRunWindow:
 
     def _build_question(self, parent) -> None:
         plan = self.plan
+        # Whether anything has been rendered above. It is the only thing the
+        # leading padding depends on, and it is tracked rather than derived
+        # from plan.missing_required because any of the three blocks can be the
+        # first one on screen: the translator level in particular usually
+        # appears on its own, on a machine where everything else is present.
+        rendered = False
+
         if plan.missing_required:
             self._label(parent,
                         f"Required before the app can start: "
                         f"{_format_size(plan.missing_required_mb)}",
                         bold=True).pack(fill=tk.X)
             self._bullets(parent, plan.missing_required)
+            rendered = True
 
         if plan.missing_optional:
-            pad = (14, 0) if plan.missing_required else (0, 0)
-            box = tk.Frame(parent, bg=THEME["bg_main"])
-            box.pack(fill=tk.X, pady=pad)
-            tk.Checkbutton(
-                box, variable=self._wants_optional, command=self._update_total,
-                text=("Also download the local chat model "
-                      f"({_format_size(plan.missing_optional_mb)})"),
-                bg=THEME["bg_main"], fg=THEME["text"],
-                activebackground=THEME["bg_main"],
-                activeforeground=THEME["text_bright"],
-                selectcolor=THEME["bg_panel"], anchor="w",
-                highlightthickness=0, bd=0,
-                font=(FONT_FAMILY, FONT_SIZE_BODY, "bold")).pack(fill=tk.X)
-            self._label(box,
-                        "Without it, practice phrases are taken from your own "
-                        "text, sentence by sentence.",
-                        fg="text_muted", size=FONT_SIZE_CAPTION,
-                        padx=22).pack(fill=tk.X)
-            self._bullets(box, plan.missing_optional)
+            self._choice_block(
+                parent, first=not rendered,
+                variable=self._wants_optional,
+                title=("Also download the local chat model "
+                       f"({_format_size(plan.missing_optional_mb)})"),
+                note=("Without it, practice phrases are taken from your own "
+                      "text, sentence by sentence."),
+                components=plan.missing_optional)
+            rendered = True
         elif plan.llama_server_blocked:
             # Not an alternative to the block above so much as its absence
             # explained: the optional level is empty because no download would
             # give this machine a working server, and staying silent would
             # leave the user with an LLM backend that fails at every start for
             # no stated reason.
-            pad = (14, 0) if plan.missing_required else (0, 0)
+            pad = (0, 0) if not rendered else (14, 0)
             self._label(parent, _BLOCKED_TEXT[plan.llama_server_blocked],
                         fg="text_muted", size=FONT_SIZE_CAPTION,
                         wraplength=_BAR_WIDTH).pack(fill=tk.X, pady=pad)
+            rendered = True
+
+        if plan.missing_translator:
+            self._choice_block(
+                parent, first=not rendered,
+                variable=self._wants_translator,
+                title=("Download the offline translator "
+                       f"({_format_size(plan.missing_translator_mb)})"),
+                note=("Without it, translation stays off and the phrase is "
+                      "shown on its own."),
+                components=plan.missing_translator)
+            rendered = True
 
         self._total = self._label(parent, "", bold=True, fg="text_bright")
         self._total.pack(fill=tk.X, pady=(14, 0))
         self._update_total()
+
+    def _choice_block(self, parent, *, first: bool, variable: tk.BooleanVar,
+                      title: str, note: str,
+                      components: Sequence[first_run.Component]) -> None:
+        """One refusable level: checkbox, its consequence, its contents.
+
+        The note under the checkbox is not decoration. Unchecking the box makes
+        ensure_ready write a setting, so this line is where the user is told
+        which configuration they are choosing - and it is per level for the
+        same reason the flags in Outcome are.
+        """
+        box = tk.Frame(parent, bg=THEME["bg_main"])
+        box.pack(fill=tk.X, pady=(0, 0) if first else (14, 0))
+        tk.Checkbutton(
+            box, variable=variable, command=self._update_total, text=title,
+            bg=THEME["bg_main"], fg=THEME["text"],
+            activebackground=THEME["bg_main"],
+            activeforeground=THEME["text_bright"],
+            selectcolor=THEME["bg_panel"], anchor="w",
+            highlightthickness=0, bd=0,
+            font=(FONT_FAMILY, FONT_SIZE_BODY, "bold")).pack(fill=tk.X)
+        self._label(box, note, fg="text_muted", size=FONT_SIZE_CAPTION,
+                    padx=22).pack(fill=tk.X)
+        self._bullets(box, components)
 
     def _bullets(self, parent, components: Sequence[first_run.Component]) -> None:
         for component in components:
@@ -329,6 +399,14 @@ class FirstRunWindow:
         """Required components this window has not managed to fetch yet."""
         return still_missing(self.plan.missing_required, self._fetched)
 
+    def _missing_optional(self) -> tuple[first_run.Component, ...]:
+        """Optional components this window has not managed to fetch yet."""
+        return still_missing(self.plan.missing_optional, self._fetched)
+
+    def _missing_translator(self) -> tuple[first_run.Component, ...]:
+        """Translator components this window has not managed to fetch yet."""
+        return still_missing(self.plan.missing_translator, self._fetched)
+
     def _secondary_text(self) -> str:
         # Refusing the required level leaves nothing to run, so there the only
         # other action is leaving. With only the optional level missing,
@@ -343,8 +421,9 @@ class FirstRunWindow:
     def _selected(self) -> tuple[first_run.Component, ...]:
         components = self._missing_required()
         if self._wants_optional.get():
-            components += still_missing(self.plan.missing_optional,
-                                        self._fetched)
+            components += self._missing_optional()
+        if self._wants_translator.get():
+            components += self._missing_translator()
         return components
 
     def _update_total(self) -> None:
@@ -375,8 +454,9 @@ class FirstRunWindow:
 
         Pressing it after a failed download counts as a refusal, not as the
         failure: the user was shown the error and chose to go on without the
-        optional level. That is the one path where a failure ends in
-        llm_backend "off", and it ends there because of the choice.
+        level that did not arrive. That is the one path where a failure ends in
+        llm_backend "off" or translation off, and it ends there because of the
+        choice.
         """
         if self._downloading():
             self._on_close()
@@ -384,13 +464,22 @@ class FirstRunWindow:
         if self._missing_required():
             # No working outcome without it, so the only other action is
             # leaving; nothing is recorded, and the question returns next time.
-            self._outcome = Outcome(True, False)
+            self._outcome = Outcome(True, False, False)
         else:
             # Everything the run needs is on disk, whether it was there when
-            # this window opened or arrived just now. Leaving without the
+            # this window opened or arrived just now. Leaving without an
             # optional level is a working configuration, so it is recorded as
             # the refusal it is instead of quitting.
-            self._outcome = Outcome(False, True)
+            #
+            # Per level, and asked of what is missing NOW rather than of the
+            # plan: a level that was empty to begin with was never offered and
+            # must not be reported as refused (that would switch a feature off
+            # on a machine nobody asked about it), and a level whose components
+            # arrived before a later failure was not refused either.
+            self._outcome = Outcome(
+                quit_requested=False,
+                optional_declined=bool(self._missing_optional()),
+                translator_declined=bool(self._missing_translator()))
         self._close()
 
     def run(self) -> Outcome:
@@ -403,7 +492,8 @@ class FirstRunWindow:
         if self._downloading() and not messagebox.askyesno(
                 "Mimora", _INTERRUPT_TEXT, parent=self.root):
             return
-        self._outcome = Outcome(quit_requested=True, optional_declined=False)
+        self._outcome = Outcome(quit_requested=True, optional_declined=False,
+                                translator_declined=False)
         self._close()
 
     def _close(self) -> None:
@@ -447,10 +537,15 @@ class FirstRunWindow:
 
         self._outcome = Outcome(
             quit_requested=False,
-            # Unchecked optional level: the refusal is recorded even though the
-            # required part was downloaded successfully.
+            # An unchecked level: the refusal is recorded even though the
+            # required part was downloaded successfully. Read off the plan
+            # rather than off _fetched, unlike in _on_secondary: this branch is
+            # the successful end of a download, so what is still missing is
+            # exactly what was not selected.
             optional_declined=(bool(self.plan.missing_optional)
-                               and not self._wants_optional.get()))
+                               and not self._wants_optional.get()),
+            translator_declined=(bool(self.plan.missing_translator)
+                                 and not self._wants_translator.get()))
         self._close()
 
     def _show_error(self, message: str) -> None:
@@ -474,7 +569,13 @@ class FirstRunWindow:
 
 
 def _detect_hardware_once() -> bool:
-    """Probe the machine after a first run. True when a restart is warranted.
+    """Probe the machine after a first run. True when it wrote a fresh answer.
+
+    The return value is reported rather than acted on: ensure_ready restarts
+    whenever this window has run, so the probe no longer has to argue for one.
+    It is kept because "did this run write the file" is worth having at the
+    call site and in tests, and because a caller that stopped restarting
+    unconditionally would need it again.
 
     Runs only when hardware_config.json is absent, which is both the "this has
     never been done" test and the loop guard: after a successful write the file
@@ -513,6 +614,18 @@ def _detect_hardware_once() -> bool:
     return True
 
 
+def _missing_keys(plan: first_run.Plan) -> set:
+    """Every component key the plan still calls missing, across all levels.
+
+    The one value that decides whether this run changed anything (see the tail
+    of ensure_ready). Keys rather than components, because "present" is exactly
+    the field that flips and comparing whole records would call every plan
+    different from every other.
+    """
+    return {c.key for c in (plan.missing_required + plan.missing_optional
+                            + plan.missing_translator)}
+
+
 def ensure_ready() -> str:
     """Make the machine runnable, asking first. Returns one of READY /
     CANCELLED / RESTART.
@@ -538,7 +651,8 @@ def ensure_ready() -> str:
         log.info("Nothing can be offered for the llama-server backend (%s); "
                  "starting without it.", plan.llama_server_blocked)
 
-    if not plan.missing_required and not plan.missing_optional:
+    if (not plan.missing_required and not plan.missing_optional
+            and not plan.missing_translator):
         return READY
 
     outcome = FirstRunWindow(plan).run()
@@ -553,8 +667,57 @@ def ensure_ready() -> str:
         config.save_user_setting("llm_backend", "off")
         config.LLM_BACKEND = "off"
 
-    # A binary downloaded just now needs no announcement: llm_server_ctl
+    if outcome.translator_declined:
+        # Same principle, the other setting. Writing it back matters more here
+        # than for llm_backend: this level is non-empty only because
+        # translation_language was set, and leaving it set with no model on
+        # disk would offer this same window at every start.
+        log.info("Translator download declined - turning translation off.")
+        config.save_user_setting("translation_language", "")
+        config.TRANSLATION_LANGUAGE = ""
+
+    # Run here rather than after the restart: the llama-server binary has just
+    # landed, and whether it reaches the GPU is the one thing the probe cannot
+    # answer before it exists.
+    probed = _detect_hardware_once()
+
+    # Restart when the machine no longer matches what config read while it was
+    # being imported. Two things can have changed it: the probe above, and the
+    # window itself - models arrived, or a refusal rewrote a setting. Those
+    # values are read once and all over the code, so a fresh process is the
+    # honest way to apply them.
+    #
+    # The offline gate is why the second half exists. config decides during its
+    # import whether huggingface_hub may reach the network, from what was
+    # cached AT THAT MOMENT, so a process that has just downloaded the last
+    # missing model would spend its whole session online, revalidating models
+    # that are now on disk: about seventy requests and ten seconds, plus
+    # transformers' auto-conversion thread pulling safetensors in the
+    # background. Measured on 2026-08-07, once the translator level made this
+    # reachable on a machine that had already been probed. It had looked
+    # harmless because spawn_replacement() passes no env=, so a child inherits
+    # HF_HUB_OFFLINE=1 from a parent that had set it - the right answer by
+    # accident, and only on the restart path; a cold launch got the storm.
+    #
+    # Asked as "did the plan actually change" rather than "did the window run",
+    # and that is a loop guard, not pedantry. A component can be reported as
+    # fetched while the plan still calls it missing - a stray *.incomplete blob
+    # in the repo does exactly that (loader.models_cached), and no download
+    # clears it, because the download does not need that file. Restarting on
+    # "the window ran" would then relaunch into the same window forever. This
+    # way that machine starts, once, with a line in the log naming the repo.
+    #
+    # A binary downloaded just now needs no such treatment: llm_server_ctl
     # resolves the path when it builds the command line, so it sees whatever is
-    # on disk by then (config.resolve_llama_server_path). The hardware values
-    # are the opposite case - config read them at import - hence the restart.
-    return RESTART if _detect_hardware_once() else READY
+    # on disk by then (config.resolve_llama_server_path).
+    before = _missing_keys(plan)
+    after = _missing_keys(first_run.build_plan())
+    if probed or before != after:
+        return RESTART
+
+    log.warning("The first-run window ran but nothing changed: %s is still "
+                "reported as missing. Starting anyway (a restart would only "
+                "reopen the same window). A stray *.incomplete file in the "
+                "repo's blobs/ directory is the usual cause - see "
+                "mimora/loader.py models_cached.", ", ".join(sorted(after)))
+    return READY

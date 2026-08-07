@@ -12,15 +12,26 @@ defect found in it so far was found by looking at it, and getting it to appear
 meant deleting a model or editing settings.json first. This builds the plan by
 hand instead, so each state is one command.
 
-Seven states:
+Nine states:
 
     required      the level that has no working refusal: notice plus Quit
-    optional      the one real choice: checkbox plus Skip
+    optional      one real choice: the chat model, checkbox plus Skip
+    translator    the other real choice, and the only one that appears alone
     both          what a bare machine sees
+    all-levels    every block at once, which no first run produces
     half-failure  the required level completes, then the optional one fails
     no-build      no llama.cpp build for this platform (BLOCKED_NO_BUILD)
     bad-setting   llama_server_path names nothing (BLOCKED_BAD_SETTING)
     real          this machine's actual plan, via first_run.build_plan()
+
+translator is the state to look at after changing anything about the levels,
+because it is the one the app reaches on a fully installed machine: turning
+translation on restarts into this window with everything else already present,
+so that block has to read correctly with nothing above it. all-levels is its
+opposite - three blocks stacked, which only a settings.json carried onto a bare
+machine would produce - and it exists because the leading padding of each block
+depends on what was rendered before it, and only this state exercises all of
+that at once.
 
 The two blocked states pair their note with a missing required level on
 purpose. That is the only way the window is ever reached in that condition: with
@@ -103,6 +114,10 @@ def _optional() -> tuple[first_run.Component, ...]:
     return (_fake_binary(), _model(models_info.GGUF_CHAT))
 
 
+def _translator() -> tuple[first_run.Component, ...]:
+    return (_model(models_info.NLLB),)
+
+
 def _cached_model():
     """The smallest catalogue repo this machine already has, or None.
 
@@ -145,8 +160,12 @@ def _plan(state: str) -> first_run.Plan | None:
         return first_run.Plan(_required(), (), None)
     if state == "optional":
         return first_run.Plan((), _optional(), None)
+    if state == "translator":
+        return first_run.Plan((), (), None, _translator())
     if state == "both":
         return first_run.Plan(_required(), _optional(), None)
+    if state == "all-levels":
+        return first_run.Plan(_required(), _optional(), None, _translator())
     if state == "half-failure":
         return _half_failure()
     # The blocked states: an empty optional level plus the reason, alongside a
@@ -156,8 +175,8 @@ def _plan(state: str) -> first_run.Plan | None:
     return first_run.Plan(_required(), (), blocked)
 
 
-STATES = ("required", "optional", "both", "half-failure", "no-build",
-          "bad-setting", "real")
+STATES = ("required", "optional", "translator", "both", "all-levels",
+          "half-failure", "no-build", "bad-setting", "real")
 
 _NO_CACHED_REPO = (
     "half-failure needs one catalogue repo already downloaded, so that "
@@ -171,6 +190,8 @@ def _describe(plan: first_run.Plan) -> str:
             f"{plan.missing_required_mb} MB | "
             f"optional: {len(plan.missing_optional)} missing, "
             f"{plan.missing_optional_mb} MB | "
+            f"translator: {len(plan.missing_translator)} missing, "
+            f"{plan.missing_translator_mb} MB | "
             f"blocked: {plan.llama_server_blocked or 'no'}")
 
 
@@ -213,7 +234,8 @@ def main() -> int:
     else:
         print("Fabricated keys: pressing Download shows the failure branch and "
               "fetches nothing.")
-    if not plan.missing_required and not plan.missing_optional:
+    if (not plan.missing_required and not plan.missing_optional
+            and not plan.missing_translator):
         # Reachable through --state real on a machine that has everything, i.e.
         # the first thing anyone tries. The window below is shown regardless
         # because looking at it is the whole point, but saying so keeps the
@@ -225,13 +247,13 @@ def main() -> int:
 
     outcome = FirstRunWindow(plan).run()
     print(f"\n{outcome}")
-    # Guarded by the plan, not just by the outcome. _on_secondary reports a
-    # decline whenever the required level is empty, which is right in the app -
-    # ensure_ready cannot reach the window with both levels empty - but here it
-    # can, and then the line below would claim a settings.json write that would
-    # never have happened.
-    if outcome.optional_declined and plan.missing_optional:
+    # The flags are already per level and already guarded against a level that
+    # was never offered (_on_secondary asks what is still missing rather than
+    # assuming), so these two lines can be printed straight off the outcome.
+    if outcome.optional_declined:
         print("ensure_ready() would have written llm_backend \"off\" here.")
+    if outcome.translator_declined:
+        print("ensure_ready() would have written translation_language \"\" here.")
     return 0
 
 

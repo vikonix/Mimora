@@ -999,9 +999,9 @@ if PHRASE_LENGTH not in PHRASE_LENGTH_CHOICES:
 # Offline translation engine: a dedicated NLLB-200 model (mimora/translator.py),
 # NOT the chat LLM - the local 3B LLM produced unusable translations (empty CJK,
 # leaked English). NLLB is a 200-language MT model that is small and CPU-friendly.
-# The repo is also part of _CACHED_REPOS (see the offline-mode gating below) so
-# offline-mode gating waits for it; the installer pre-fetches it into model_cache/
-# (see install.py).
+# The repo joins _CACHED_REPOS only when a translation language is selected
+# (see the offline-mode gating below); the installer pre-fetches it into
+# model_cache/ (see install.py).
 NLLB_TRANSLATOR_MODEL_NAME = models_info.NLLB.repo_id
 # Device for the translator. Defaults to CPU on purpose: translation is
 # latency-tolerant (it runs in the background after the phrase is shown and the
@@ -1018,61 +1018,17 @@ SOURCE_FLORES_CODE = _LANG_PROFILE["flores_code"]
 # language (from the profile).
 TRANSLATOR_WARMUP = _LANG_PROFILE["translator_warmup"]
 
-# =====================================================================
-# Offline-mode gating
-# =====================================================================
-# Auto offline: the first run downloads online; once every model the run actually
-# needs is cached, every later run loads straight from disk with no network access.
-# Delete model_cache/ to force a fresh download.
-#
-# The set of required repos is engine-aware: the always-used shared models (Kokoro
-# TTS, the NLLB translator) plus the ACTIVE engine's Wav2Vec2 model only. The
-# dispatcher never loads the inactive engine's weights, so requiring them would
-# needlessly keep the Hub online (and waste 1262 MB the run never touches). The
-# "none" engine has no recognizer model at all, so nothing extra is required then.
-#
-# This is NOT the same set as "what has to be downloaded before the app can
-# run": NLLB is in here unconditionally because offline mode cannot be entered
-# without it, while translation is off by default and the app works fine with
-# the 2483 MB missing. The first-run download check (mimora/first_run.py,
-# required_models) therefore builds its own required set the same WAY this one
-# is built, not from this constant.
-_ENGINE_MODEL_REPO = {
-    "phoneme": WAV2VEC2_PHONEME_MODEL_NAME,   # default engine
-    "acoustic": WAV2VEC2_MODEL_NAME,
-}
-# ENGINE was validated above, so a missing entry can only mean "none".
-_engine_repo = _ENGINE_MODEL_REPO.get(ENGINE)
-# The TTS requirement follows the active backend: only the Kokoro backend
-# loads the Kokoro repo, so requiring it under Supertonic would needlessly
-# keep the Hub online for weights the run never touches (and vice versa).
-_CACHED_REPOS = (
-    (NLLB_TRANSLATOR_MODEL_NAME,)             # NLLB-200 offline translator
-    + ((models_info.KOKORO.repo_id,) if TTS_BACKEND == "kokoro" else ())
-    + ((_engine_repo,) if _engine_repo else ())  # active engine's recognizer
-)
-
-
-# model_fetch.supertonic_cached() owns this check: it reads the same env var
-# set above and is pure filesystem work, so calling it here pulls in no
-# huggingface_hub import. It matters at all because the Supertonic download
-# itself goes through huggingface_hub - flipping HF_HUB_OFFLINE=1 before the
-# model exists would block that first download.
-_TTS_MODEL_CACHED = (model_fetch.supertonic_cached()
-                     if TTS_BACKEND == "supertonic"
-                     else True)  # Kokoro is covered by _CACHED_REPOS above
-# HF_HOME is read from os.environ (not MODEL_CACHE_DIR) so an externally set cache
-# location is honored.
-if _TTS_MODEL_CACHED and loader.models_cached(
-        Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-
 # Translation panel: language the practice phrase is translated into and shown
 # under the phrase card. The first ("") choice means "translation off" - it is
 # the default, so the panel and the extra translation work stay opt-in. The
 # label is mapped to a FLORES-200 code for NLLB (see mimora/translator.py) and
 # persisted via save_user_setting("translation_language", …).
+#
+# It sits above the offline gating rather than with the other UI settings
+# because the gate below reads it: whether NLLB has to be cached before this
+# process may go offline depends on whether translation is on at all, and the
+# gate must see the VALIDATED value (an invalid one falls back to "off", and
+# then the model is not needed either).
 TRANSLATION_LANGUAGES = ("", "English", "Russian", "Ukrainian", "Spanish",
                          "French", "German", "Italian", "Chinese", "Japanese")
 
@@ -1103,6 +1059,66 @@ if TRANSLATION_LANGUAGE not in translation_targets():
           f"{translation_targets()}, got {TRANSLATION_LANGUAGE!r}; using '' "
           f"(translation off)", file=sys.stderr)
     TRANSLATION_LANGUAGE = ""
+
+# =====================================================================
+# Offline-mode gating
+# =====================================================================
+# Auto offline: the first run downloads online; once every model the run actually
+# needs is cached, every later run loads straight from disk with no network access.
+# Delete model_cache/ to force a fresh download.
+#
+# Every entry is conditional on what THIS run actually loads: the active
+# engine's Wav2Vec2 model (the dispatcher never loads the inactive engine's
+# weights, and the "none" engine loads no recognizer at all), the active TTS
+# backend's repo, and the translator only when a translation language is
+# selected. Requiring a repo the run never touches would keep the Hub online
+# for nothing, which is not a theoretical cost: with the gate open, every model
+# load revalidates over the network at every start, so one missing optional
+# model makes the whole app non-offline.
+#
+# NLLB used to be required unconditionally, on the reasoning that offline mode
+# cannot be entered without it. That is true but backwards: translation is off
+# by default, so it meant the default installation never went offline at all.
+# It is conditional now, and the other half of that change is that a
+# translation language can no longer be enabled while the model is missing -
+# mimora/app.py restarts into the first-run window instead, because this
+# decision is made once, here, at import time (see mimora/first_run.py, the
+# translator level).
+#
+# This is still NOT the same set as "what has to be downloaded before the app
+# can start": that question has levels and this one does not. The first-run
+# plan is therefore built the same WAY rather than taken from this constant.
+_ENGINE_MODEL_REPO = {
+    "phoneme": WAV2VEC2_PHONEME_MODEL_NAME,   # default engine
+    "acoustic": WAV2VEC2_MODEL_NAME,
+}
+# ENGINE was validated above, so a missing entry can only mean "none".
+_engine_repo = _ENGINE_MODEL_REPO.get(ENGINE)
+# The TTS requirement follows the active backend: only the Kokoro backend
+# loads the Kokoro repo, so requiring it under Supertonic would needlessly
+# keep the Hub online for weights the run never touches (and vice versa).
+_CACHED_REPOS = (
+    # NLLB-200 offline translator, only when the panel asks for translations.
+    ((NLLB_TRANSLATOR_MODEL_NAME,) if TRANSLATION_LANGUAGE else ())
+    + ((models_info.KOKORO.repo_id,) if TTS_BACKEND == "kokoro" else ())
+    + ((_engine_repo,) if _engine_repo else ())  # active engine's recognizer
+)
+
+
+# model_fetch.supertonic_cached() owns this check: it reads the same env var
+# set above and is pure filesystem work, so calling it here pulls in no
+# huggingface_hub import. It matters at all because the Supertonic download
+# itself goes through huggingface_hub - flipping HF_HUB_OFFLINE=1 before the
+# model exists would block that first download.
+_TTS_MODEL_CACHED = (model_fetch.supertonic_cached()
+                     if TTS_BACKEND == "supertonic"
+                     else True)  # Kokoro is covered by _CACHED_REPOS above
+# HF_HOME is read from os.environ (not MODEL_CACHE_DIR) so an externally set cache
+# location is honored.
+if _TTS_MODEL_CACHED and loader.models_cached(
+        Path(os.environ["HF_HOME"]) / "hub", _CACHED_REPOS):
+    os.environ.setdefault("HF_HUB_OFFLINE", "1")
+    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
 # =====================================================================
 # Prosody panel (UI state)

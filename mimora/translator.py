@@ -13,10 +13,20 @@ CPU-friendly.
 ``TranslatorManager`` mirrors ``TTSManager`` and the pronunciation engine:
 ``load_model()`` brings the network into memory, ``warm_up()`` pays the slow
 first-call cost up front, and ``translate()`` returns one translated string.
-Loading is lazy and idempotent: ``main.py`` preloads it at startup only when a
-language is already selected, and ``translate()`` loads on demand the first time
-a language is enabled at runtime -- so a session that never translates never
-pays the model's RAM or startup cost.
+Loading is lazy and idempotent, so a session that never translates never pays
+the model's RAM or startup cost: ``app.py`` preloads it at startup only when a
+language is already selected, and ``translate()`` loads on demand otherwise.
+
+Loading is not downloading, and on this path the two must not be confused. The
+weights are guaranteed to be on disk before anything here runs: enabling a
+translation language while they are missing restarts into the first-run window
+(``app.py`` ``_offer_translator_download``), which is the only place a
+multi-gigabyte download is shown with a progress bar. This used to be the one
+downloader with no UI at all - ``from_pretrained`` fetched 2.5 GB as a side
+effect of a load, on a worker thread, with the window showing nothing for half
+a minute. So a slow ``load_model()`` here now means a slow disk or a cold page
+cache, never a download, and ``is_loaded()`` is what lets a caller tell a
+failed load from translation simply being off.
 """
 
 import logging
@@ -97,6 +107,17 @@ class TranslatorManager:
             self.tokenizer = tokenizer
             self.model = model
             logging.info("Translator model loaded.")
+
+    def is_loaded(self) -> bool:
+        """True when translate() will answer without loading the model first.
+
+        The distinction the caller needs is not "did this work" but "why is the
+        panel empty": translate() returns "" both when translation is off and
+        when the model could not be loaded, and only the second deserves a
+        message. load_model() assigns self.model last and only on success, so
+        this is also the retry state - a failed load leaves it False.
+        """
+        return self.model is not None
 
     def warm_up(self):
         """Run one throwaway translation so the first real call is not slow.

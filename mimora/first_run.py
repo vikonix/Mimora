@@ -5,8 +5,10 @@
 
 The single place the first-run dialog and the progress bar read their plan
 from: one record per component - label, download size, and whether this machine
-already has it - split into the two levels that differ in what refusing them
-means.
+already has it - split into the levels that differ in what refusing them means.
+The consequence of a refusal is the whole criterion: it decides which buttons
+the window offers and which setting is written back afterwards, so two
+components belong in one level only when refusing them means the same thing.
 
 * **Required**: the active TTS backend's model plus the active engine's
   recognizer. Refusing leaves no reference audio or no scoring, i.e. no
@@ -14,17 +16,27 @@ means.
   question.
 * **Optional**: the llama-server binary and the GGUF chat model, and only when
   llm_backend is "llama-server". Refusing is a working configuration
-  (llm_backend "off" takes practice phrases from the source text verbatim), so
-  this is the one real choice.
+  (llm_backend "off" takes practice phrases from the source text verbatim).
+* **Translator**: the NLLB model, and only when a translation language is
+  selected. Refusing is a working configuration too, but a different one
+  (translation_language "" shows the phrase without a translation), which is
+  exactly why it is not folded into the optional level: one Skip must not
+  switch off two unrelated features, and ensure_ready has to know which of the
+  two settings to write back.
 
-NLLB is in neither. Translation is off by default and the app runs fine without
-its 2483 MB, so asking for it would nearly double the required level.
-config._CACHED_REPOS does require it unconditionally, but that constant answers
-a different question - what must be cached before the run can go offline - and
-that is why the required set is built here the same WAY rather than taken from
-it. The same argument rules out an aggregate on the model_fetch side: that
-module owns all four repos plus Supertonic, 5776 MB, most of which a given run
-never loads, and it may not read config to narrow the set down.
+The translator level is empty by default, because translation is off by
+default: a machine that never enables it is never asked for the 2483 MB. What
+makes the level exist at all is that enabling translation cannot download
+anything by itself - config.py decides at import time whether the process may
+reach the network, so the model has to arrive through a restart into this
+window. mimora/app.py's on_translation_language_changed is the other half.
+
+config._CACHED_REPOS asks a related but different question - what must be
+cached before the run can go offline - so the sets are built the same WAY here
+rather than taken from it. The same argument rules out an aggregate on the
+model_fetch side: that module owns all four repos plus Supertonic, 5776 MB,
+most of which a given run never loads, and it may not read config to narrow the
+set down.
 
 This module reads config, so the fetchers must never import it: they are
 forbidden config (which flips HF_HUB_OFFLINE=1 once the models are cached,
@@ -142,6 +154,11 @@ _TTS_SUPPORT_MODELS: dict[str, tuple[Model, ...]] = {
     "kokoro": (models_info.SPACY_EN,),
 }
 
+# The translation engine, bound rather than named again: mimora/config.py takes
+# NLLB_TRANSLATOR_MODEL_NAME from the same record, so the plan and the offline
+# gate cannot end up describing different repos.
+_TRANSLATOR_MODEL: Model = models_info.NLLB
+
 
 class Component(NamedTuple):
     """One downloadable piece of the run, plus its state on this machine.
@@ -184,11 +201,16 @@ class Plan(NamedTuple):
     the binary is genuinely absent and a download would look reasonable - but
     it would land in bin/llama/ while the resolver keeps honouring the
     settings.json path, so the user would pay for it and change nothing.
+
+    translator carries a default so that every existing construction of a Plan
+    stays valid, which is also why it is last: llama_server_blocked has no
+    default, and a NamedTuple may not put a defaulted field before a bare one.
     """
 
     required: tuple[Component, ...]
     optional: tuple[Component, ...]
     llama_server_blocked: Optional[str]
+    translator: tuple[Component, ...] = ()
 
     @property
     def missing_required(self) -> tuple[Component, ...]:
@@ -199,6 +221,10 @@ class Plan(NamedTuple):
         return tuple(c for c in self.optional if not c.present)
 
     @property
+    def missing_translator(self) -> tuple[Component, ...]:
+        return tuple(c for c in self.translator if not c.present)
+
+    @property
     def missing_required_mb(self) -> int:
         """Bytes over the network the required level still costs, in MB."""
         return total_mb(self.missing_required)
@@ -207,6 +233,11 @@ class Plan(NamedTuple):
     def missing_optional_mb(self) -> int:
         """Bytes over the network the optional level still costs, in MB."""
         return total_mb(self.missing_optional)
+
+    @property
+    def missing_translator_mb(self) -> int:
+        """Bytes over the network the translator level still costs, in MB."""
+        return total_mb(self.missing_translator)
 
 
 def total_mb(components: Sequence[Component]) -> int:
@@ -292,6 +323,30 @@ def _model_component(model: Model) -> Component:
 def _required_components() -> tuple[Component, ...]:
     return tuple(_model_component(model) for model
                  in required_models(config.ENGINE, config.TTS_BACKEND))
+
+
+# ---------------------------------------------------------------------------
+# The translator level
+# ---------------------------------------------------------------------------
+
+def translator_models(translation_language: str) -> tuple[Model, ...]:
+    """The MT model, when a translation language is selected.
+
+    Pure, and a function of one setting rather than a constant, because the
+    answer changes within an installation: the level is empty on the first run
+    (translation is off by default) and populated on the restart that follows
+    the user turning it on.
+
+    Deliberately not folded into required_models(): that one answers "what
+    cannot the app start without", and the app starts perfectly well with the
+    translation panel showing nothing.
+    """
+    return (_TRANSLATOR_MODEL,) if translation_language else ()
+
+
+def _translator_components() -> tuple[Component, ...]:
+    return tuple(_model_component(model) for model
+                 in translator_models(config.TRANSLATION_LANGUAGE))
 
 
 # ---------------------------------------------------------------------------
@@ -394,14 +449,18 @@ def build_plan() -> Plan:
     required = _required_components()
     optional, llama_server_blocked = _optional_components()
     plan = Plan(required=required, optional=optional,
-                llama_server_blocked=llama_server_blocked)
+                llama_server_blocked=llama_server_blocked,
+                translator=_translator_components())
 
     log.info("Startup plan: %d of %d required components missing (%d MB), "
-             "%d of %d optional (%d MB).",
+             "%d of %d optional (%d MB), %d of %d translator (%d MB).",
              len(plan.missing_required), len(plan.required),
              plan.missing_required_mb,
              len(plan.missing_optional), len(plan.optional),
-             plan.missing_optional_mb)
-    for component in plan.missing_required + plan.missing_optional:
+             plan.missing_optional_mb,
+             len(plan.missing_translator), len(plan.translator),
+             plan.missing_translator_mb)
+    for component in (plan.missing_required + plan.missing_optional
+                      + plan.missing_translator):
         log.info("    missing: %s, %d MB", component.label, component.size_mb)
     return plan

@@ -91,5 +91,79 @@ class LogFileFailureTests(unittest.TestCase):
                         handler.close()
 
 
+class LogHeaderTests(unittest.TestCase):
+    """Every log opens with a rule and says what wrote it.
+
+    The header is the only part of a log that is read before anything is known
+    about the run, so its shape is worth pinning: a bare rule on line one (no
+    timestamp, no level - it is a rule, not a record), then the build, the pid
+    and the command line. The restored formatter is the other half: swapping it
+    for the header and forgetting to put it back would cost every timestamp for
+    the rest of the run, which nothing else in the suite would notice.
+    """
+
+    def setUp(self):
+        root = logging.getLogger()
+        saved_handlers, saved_level = root.handlers[:], root.level
+        self.addCleanup(self._restore, root, saved_handlers, saved_level)
+        # setup_logging also sets the process-global append flag that
+        # log_file_mode() reads, and the append case below would otherwise
+        # leave every later log file in this process opening with mode "a".
+        self.addCleanup(setattr, bootstrap, "_append_logs",
+                        bootstrap._append_logs)
+
+    @staticmethod
+    def _restore(root, handlers, level):
+        for handler in root.handlers[:]:
+            root.removeHandler(handler)
+        for handler in handlers:
+            root.addHandler(handler)
+        root.setLevel(level)
+
+    def _log_lines(self, append=False):
+        """Set logging up in a temporary directory and return the file's lines."""
+        import tempfile
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            with tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "main.log"
+                bootstrap.setup_logging(path, append=append)
+                logging.info("an ordinary record")
+                root = logging.getLogger()
+                # Closed before the directory goes away: on Windows it cannot
+                # be removed while the handler holds the file open.
+                for handler in root.handlers[:]:
+                    if isinstance(handler, logging.FileHandler):
+                        root.removeHandler(handler)
+                        handler.close()
+                return path.read_text(encoding="utf-8").splitlines()
+
+    def test_the_first_line_is_the_bare_rule(self):
+        self.assertEqual(self._log_lines()[0], bootstrap._HEADER_RULE)
+
+    def test_the_header_names_the_build_the_pid_and_the_command(self):
+        import os
+
+        from mimora import __version__
+
+        lines = self._log_lines()
+        self.assertIn(__version__, lines[1])
+        self.assertIn(str(os.getpid()), lines[1])
+        self.assertTrue(lines[2].startswith("Launched: "))
+
+    def test_ordinary_records_keep_their_timestamps(self):
+        # i.e. the bare formatter was put back. The record is the last line,
+        # and every real line carries the level in brackets.
+        self.assertIn("[INFO]", self._log_lines()[-1])
+
+    def test_appending_separates_the_runs(self):
+        # A blank line only when continuing a file: a fresh log opens with the
+        # rule, a continued one gets a gap so the seam is visible.
+        lines = self._log_lines(append=True)
+        self.assertEqual(lines[0], "")
+        self.assertEqual(lines[1], bootstrap._HEADER_RULE)
+        self.assertIn("restarted in-session", lines[2])
+
+
 if __name__ == "__main__":
     unittest.main()

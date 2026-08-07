@@ -190,6 +190,47 @@ class TqdmStandInTests(unittest.TestCase):
             bar.some_method_a_later_version_invents()
         bar.close()
 
+    def test_thread_map_can_drive_the_stand_in(self):
+        # The shape that actually broke, run for real rather than imitated:
+        # huggingface_hub's _snapshot_download passes tqdm_class straight to
+        # thread_map, and thread_map reaches for the CLASS before it constructs
+        # anything. The instance-level __getattr__ does not answer that, so the
+        # first genuine snapshot download died on
+        # "type object '_ProgressTqdm' has no attribute 'get_lock'".
+        #
+        # That call is unconditional (huggingface_hub 1.24.0, the only early
+        # returns above it are "already cached" and dry_run), so it is not a
+        # platform quirk: every hub component of a first-run plan went through
+        # it. The tests above cover the instance and passed throughout, which
+        # is exactly why this one exercises the real thread_map rather than
+        # another hand-written call shape.
+        from tqdm.contrib.concurrent import thread_map
+
+        result = thread_map(str, [1, 2, 3], tqdm_class=self.cls, max_workers=2)
+        self.assertEqual(result, ["1", "2", "3"])
+        # The map's own bar counts files, not bytes.
+        self.assertEqual(self.state.snapshot().done_bytes, 0)
+
+    def test_the_class_lock_is_real_enough_to_be_deleted(self):
+        # Why the two classmethods are implemented rather than no-oped:
+        # ensure_lock() creates the lock, hands it to set_lock(), and then
+        # deletes the attribute again. A no-op pair leaves nothing to delete
+        # and the AttributeError simply moves three lines down.
+        from tqdm.contrib.concurrent import ensure_lock
+
+        self.assertFalse(hasattr(self.cls, "_lock"))
+        with ensure_lock(self.cls) as lock:
+            self.assertIsNotNone(lock)
+            self.assertIs(self.cls._lock, lock)
+        self.assertFalse(hasattr(self.cls, "_lock"))
+
+    def test_each_stand_in_class_owns_its_lock(self):
+        # make_tqdm_class builds a fresh class per download, and the lock is
+        # class state: sharing one across two downloads would be a global.
+        other = first_run_download.make_tqdm_class(
+            first_run_download.ProgressState(1))
+        self.assertIsNot(self.cls.get_lock(), other.get_lock())
+
     def test_the_upstream_hook_still_exists(self):
         # The whole approach rests on this argument being public. If a version
         # bump removes it, this fails here instead of silently freezing the bar.
@@ -407,8 +448,15 @@ class DownloadLoopTests(unittest.TestCase):
                 mock.patch.object(first_run_download, "_fetch",
                                   side_effect=OSError("no route to host")):
             first_run_download.download((_component("a", size_mb=10),), state)
-        self.assertEqual(os.environ.get("HF_HUB_OFFLINE"), "1")
-        self.assertTrue(hub_constants.HF_HUB_OFFLINE)
+            # Inside the patches on purpose. Both of them restore on exit, so
+            # asserting below the `with` asks what this machine's environment
+            # happens to hold rather than what _hub_online put back - and it
+            # passed for as long as it did only because config had set
+            # HF_HUB_OFFLINE=1 during its import on the machine running the
+            # tests. The day a cached repo stopped counting as cached, the
+            # assertion started reporting that instead of this function.
+            self.assertEqual(os.environ.get("HF_HUB_OFFLINE"), "1")
+            self.assertTrue(hub_constants.HF_HUB_OFFLINE)
 
     def test_a_failure_stops_the_run_and_is_reported(self):
         components = (_component("a", size_mb=10), _component("b", size_mb=20))
