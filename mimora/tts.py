@@ -112,8 +112,44 @@ class KokoroBackend:
         # first-run check decides whether Kokoro is missing from that same
         # record, so a second copy here could send the download after one repo
         # while synthesis loaded another.
-        self.model = KModel(repo_id=models_info.KOKORO.repo_id).to(config.DEVICE)
-        self.pipeline = KPipeline(lang_code=config.TTS_LANG_CODE)
+        # .eval() is load-bearing, not ceremony. KModel is a plain nn.Module
+        # built here rather than loaded through from_pretrained, so it starts
+        # in TRAINING mode - and TextEncoder applies an nn.Dropout(0.2) per
+        # block unconditionally in forward(). A fifth of the linguistic
+        # representation was therefore being zeroed on the way to the vocoder,
+        # in the reference the user imitates and the acoustic engine scores
+        # against. Every other torch model here is already explicit about this
+        # - translator.py, and both recognizers in pronunciation/.
+        #
+        # What this does NOT buy is a reproducible waveform, and the number is
+        # worth keeping because it says how much the defect was worth: two
+        # syntheses of one phrase in one voice differed by 0.67 peak (on a
+        # waveform in [-1, 1]) before, and by 0.08 after. Kokoro stays
+        # non-deterministic by construction - istftnet.py draws a random
+        # initial phase per harmonic and Gaussian excitation noise in the
+        # source module, neither gated by training mode, as every StyleTTS2
+        # vocoder does. So the difference that remains is one rendering of the
+        # same content rather than a perturbation of the content itself.
+        self.model = KModel(repo_id=models_info.KOKORO.repo_id).to(
+            config.DEVICE).eval()
+        # Both arguments matter, and neither is cosmetic:
+        #
+        # repo_id, because KPipeline otherwise defaults it to a string of its
+        # own and says so on stdout at every start. That default happens to
+        # equal ours today, which is exactly what makes it a trap: it is the
+        # second copy of the id the comment above rules out, and it decides
+        # where load_voice() fetches voices from.
+        #
+        # model, because the parameter defaults to True, and that makes
+        # KPipeline build a SECOND KModel - onto a device it picks itself
+        # (cuda when available), ignoring config.DEVICE. Nothing ever used it:
+        # every call site passes model=self.model and the library resolves
+        # `model or self.model`. So it was 82M parameters loaded, moved to the
+        # card and left there for the session, on the machine that also has to
+        # fit Wav2Vec2 and llama.cpp.
+        self.pipeline = KPipeline(lang_code=config.TTS_LANG_CODE,
+                                  repo_id=models_info.KOKORO.repo_id,
+                                  model=self.model)
         self._prefetch_voices()
 
     def _prefetch_voices(self):
