@@ -120,6 +120,18 @@ dependencies = [
     # exists). 5.x needs torch>=2.7 for torch.float8_e8m0fnu.
     "transformers>=5.3; platform_system != 'Darwin' or platform_machine != 'x86_64'",
     "transformers>=4.44,<5; platform_system == 'Darwin' and platform_machine == 'x86_64'",
+    # numba (via librosa) upper bound on Intel macOS only: starting with
+    # llvmlite 0.46.0 (paired with numba 0.63.0, December 2025) PyPI stopped
+    # publishing wheels for macOS x86_64 - GitHub Actions retired the free
+    # Intel runners numba's CI used, and the platform was downgraded to
+    # "best effort, no binaries" (numba/numba#10187). Without a wheel, pip/uv
+    # fall back to building llvmlite from source, which needs a matching LLVM
+    # installed with LLVMConfig.cmake on the target machine and fails outright
+    # otherwise. numba pins its paired llvmlite minor tightly, so capping numba
+    # alone keeps llvmlite in the 0.45.x range, which still ships a wheel.
+    # Found on Intel Mac 2026-08-09; see tasks/release-1.1.0.md, finding 10 of
+    # stage 2.
+    "numba<0.63,>=0.60; platform_system == 'Darwin' and platform_machine == 'x86_64'",
 
     # --- audio in and out -------------------------------------------------
     "soundfile>=0.12.0",

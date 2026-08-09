@@ -44,4 +44,10 @@ Pronunciation analysis lives in the separate top-level ``pronunciation`` package
 # true the moment 1.1.0 ships; until then an rc that turns out wrong can be
 # yanked, which leaves it installable by exact pin but out of the resolver's
 # reach.
-__version__ = "1.1.0rc5"
+#
+# rc6 exists because rc5's unpinned `numba` (via librosa) resolves to a
+# version whose paired llvmlite no longer ships an Intel macOS wheel, so
+# `uv tool install` tries to build llvmlite from source and fails outright
+# without a matching LLVM on the machine (mimora/pyproject.toml now caps
+# numba on that platform; see tasks/release-1.1.0.md, finding 10 of stage 2).
+__version__ = "1.1.0rc6"
