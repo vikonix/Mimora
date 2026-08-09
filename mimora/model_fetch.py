@@ -132,7 +132,7 @@ def supertonic_cache_dir() -> Path:
 
 
 def prepare_hf_env() -> None:
-    """Point the HF caches at model_cache/ and arm the Windows fallbacks.
+    """Point the HF caches at model_cache/ and arm the Windows/macOS fallbacks.
 
     Shared by every download here and by gguf_fetch, because each of them can
     also run standalone from its own CLI and so cannot rely on another step
@@ -195,11 +195,16 @@ def _configure_symlink_fallback() -> None:
     returns False on it BEFORE consulting the racy cache, so every file takes
     the copy path. It is set only when our own probe says symlinks are
     unavailable, so a machine with Developer Mode keeps the cheaper symlinked
-    cache.
+    cache. Windows-only: macOS and Linux create symlinks without a permission
+    bit to fight, so there is nothing here for either to fall back from.
 
     HF_HUB_DISABLE_XET stays on for every Windows run because older hf-xet
     downloaders linked files into the cache themselves and raised 1314 with no
-    copy fallback at all.
+    copy fallback at all. macOS gets the same variable set for an unrelated
+    reason - see the early return below - so this module ends up disabling Xet
+    everywhere except Linux, where it downloads and reports progress correctly
+    (confirmed under WSL2). It stays enabled there rather than disabled
+    everywhere on principle, because Xet is otherwise the faster transport.
 
     All three variables are frozen by huggingface_hub's constants.py at import
     time, so this must run before huggingface_hub is first imported anywhere in
@@ -208,6 +213,25 @@ def _configure_symlink_fallback() -> None:
     probe and its log line happen exactly once per process.
     """
     global _symlink_supported
+
+    if sys.platform == "darwin":
+        # A UX bug, not a correctness one - unlike the Windows branch below,
+        # macOS has no symlink/copy-fallback issue to work around, so this
+        # skips the probe entirely. Xet's own progress bars report far too
+        # rarely on this platform: fetching NLLB (2.4 GB, one file, no
+        # sharding) took ~40s at a healthy ~60 MB/s, yet the first-run
+        # window's bar received not one intermediate update and jumped
+        # straight from 0% to done. Smaller repos (Kokoro, Wav2Vec2) showed
+        # the same gap as a handful of large jumps rather than a smooth
+        # climb - visible then, silent here only because NLLB is a single big
+        # file instead of several smaller ones. Disabling Xet falls back to
+        # the classic HTTP path, which make_tqdm_class already drives
+        # correctly (that is what Kokoro/Wav2Vec2's jumps were built from).
+        # Found on Intel Mac, rc6, 2026-08-09; see tasks/release-1.1.0.md,
+        # stage 2 results.
+        os.environ["HF_HUB_DISABLE_XET"] = "1"
+        return
+
     if sys.platform != "win32":
         return
 
