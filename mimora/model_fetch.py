@@ -217,18 +217,27 @@ def _configure_symlink_fallback() -> None:
     if sys.platform == "darwin":
         # A UX bug, not a correctness one - unlike the Windows branch below,
         # macOS has no symlink/copy-fallback issue to work around, so this
-        # skips the probe entirely. Xet's own progress bars report far too
-        # rarely on this platform: fetching NLLB (2.4 GB, one file, no
-        # sharding) took ~40s at a healthy ~60 MB/s, yet the first-run
-        # window's bar received not one intermediate update and jumped
-        # straight from 0% to done. Smaller repos (Kokoro, Wav2Vec2) showed
-        # the same gap as a handful of large jumps rather than a smooth
-        # climb - visible then, silent here only because NLLB is a single big
-        # file instead of several smaller ones. Disabling Xet falls back to
-        # the classic HTTP path, which make_tqdm_class already drives
-        # correctly (that is what Kokoro/Wav2Vec2's jumps were built from).
-        # Found on Intel Mac, rc6, 2026-08-09; see tasks/release-1.1.0.md,
-        # stage 2 results.
+        # skips the probe entirely.
+        #
+        # This does NOT fix the first-run window's progress bar on Intel
+        # macOS, and it is kept anyway rather than reverted - see why below.
+        #
+        # Diagnosed 2026-08-09 (Intel Mac, rc6): the relaxed pin
+        # `transformers>=4.44,<5` for this platform requires
+        # `huggingface_hub<1.0`, and 0.36.0 was the LAST 0.x release before
+        # huggingface_hub's 1.0 - there is no higher pre-1.0 version to pick.
+        # Read straight from the installed 0.36.2 source: its
+        # `_get_progress_bar_context()` takes no `tqdm_class` parameter at
+        # all and unconditionally builds a real, console-printing `tqdm`, so
+        # mimora/first_run_download.py's stand-in never receives per-file
+        # byte updates on this platform - the bars print to the terminal
+        # instead of feeding the app window. Xet was a wrong first guess (it
+        # does not exist yet at 0.36.2 either), and this line is a no-op
+        # there today - but it is correct in intent and costs nothing, and
+        # would start mattering the moment this platform's huggingface_hub
+        # ceiling ever moves past 1.0 (i.e. if the transformers pin above is
+        # ever relaxed). See tasks/release-1.1.0.md, stage 2 results, for the
+        # full trace (Xet hypothesis first, then this).
         os.environ["HF_HUB_DISABLE_XET"] = "1"
         return
 
