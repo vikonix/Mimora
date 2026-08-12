@@ -12,42 +12,7 @@ Pronunciation analysis lives in the separate top-level ``pronunciation`` package
 # with an optional PEP 440 pre-release suffix while a release is being tested).
 # pyproject.toml reads this value dynamically; runtime code imports it from here.
 #
-# The minor bump past the 1.0.0 tagged on GitHub is what this release actually
-# is: an installable package (console script, package data, dependencies in
-# pyproject.toml, user data in the OS directory) with first-run downloads and
-# the LLM in the official llama-server binary.
-#
-# Still a release candidate, and the number keeps climbing because PyPI accepts
-# a filename once and for all: every re-upload costs one. rc1 is the one that
-# hangs on a missing spaCy model.
-#
-# rc5 exists because rc4 could not download anything through the first-run
-# window at all. The progress stand-in handed to huggingface_hub had no
-# class-level get_lock, and snapshot_download passes tqdm_class straight to
-# tqdm's thread_map, which asks the CLASS for its lock before it builds a
-# single bar - so every hub component of every plan died there
-# (mimora/first_run_download.py, make_tqdm_class). That it survived four
-# candidates is the part worth remembering: the machines that tested them all
-# had the models already, because a maintainer's tree is seeded by install.py,
-# which passes no stand-in and keeps tqdm's own bars. A first run can only be
-# tested against an empty cache, and MIMORA_HOME pointing at an empty directory
-# makes one out of any machine (see mimora/paths.py).
-#
-# rc5 also stops the default installation reaching the network at all: NLLB is
-# required for offline mode only when a translation language is selected, and
-# turning translation on restarts into that same first-run window instead of
-# downloading 2.5 GB silently on a worker thread.
-#
-# Note what a pre-release does NOT buy here. The resolver rule is "pre-releases
-# are not selected WHEN A STABLE RELEASE EXISTS", and none does, so plain
-# `pip install mimora` and `uv tool install mimora` do take this. It stops being
-# true the moment 1.1.0 ships; until then an rc that turns out wrong can be
-# yanked, which leaves it installable by exact pin but out of the resolver's
-# reach.
-#
-# rc6 exists because rc5's unpinned `numba` (via librosa) resolves to a
-# version whose paired llvmlite no longer ships an Intel macOS wheel, so
-# `uv tool install` tries to build llvmlite from source and fails outright
-# without a matching LLVM on the machine (mimora/pyproject.toml now caps
-# numba on that platform; see tasks/release-1.1.0.md, finding 10 of stage 2).
+# Every re-upload costs a version number: PyPI accepts a filename once and for
+# all. A pre-release is still what a plain `pip install mimora` resolves to
+# while no stable 1.1.0 exists, and can be yanked if it turns out wrong.
 __version__ = "1.1.0rc6"

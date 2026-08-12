@@ -197,7 +197,7 @@ Useful flags:
 - `--cpu` - skip the GPU (CUDA) installs
 - `--skip-models` / `--skip-gguf` - skip the model / GGUF downloads
 
-Step 5 reports the `espeak-ng` library the engines resolve to, which on a normal
+The espeak-ng step reports the library the engines resolve to, which on a normal
 install is the bundled one; it only offers a system install if none is found
 (and on Windows it just prints instructions, see below). On Windows, enabling
 **Developer Mode** lets the model cache use symlinks; without it the installer
@@ -248,8 +248,8 @@ Run it **with the virtual environment activated**, or call the interpreter by
 path (`.venv\Scripts\python.exe -m ...`). It answers for the interpreter that
 runs it, so a bare `python` outside the environment reports on a different
 Python than the one that runs Mimora. `install.py` reports the same thing in
-its step 5 and is immune to this, because it invokes its own interpreter
-explicitly.
+its espeak-ng step and is immune to this, because it invokes its own
+interpreter explicitly.
 
 Note also that `phonemizer` loads a shared **library**, not the `espeak-ng`
 executable, so `espeak-ng --version` answering on the command line says nothing

@@ -710,11 +710,9 @@ def ensure_ready() -> str:
     # missing model would spend its whole session online, revalidating models
     # that are now on disk: about seventy requests and ten seconds, plus
     # transformers' auto-conversion thread pulling safetensors in the
-    # background. Measured on 2026-08-07, once the translator level made this
-    # reachable on a machine that had already been probed. It had looked
-    # harmless because spawn_replacement() passes no env=, so a child inherits
-    # HF_HUB_OFFLINE=1 from a parent that had set it - the right answer by
-    # accident, and only on the restart path; a cold launch got the storm.
+    # background. Note that a restart alone does not prove this is handled:
+    # spawn_replacement() passes no env=, so a child inherits HF_HUB_OFFLINE=1
+    # from a parent that had set it, and only a cold launch shows the storm.
     #
     # Asked as "did the plan actually change" rather than "did the window run",
     # and that is a loop guard, not pedantry. A component can be reported as

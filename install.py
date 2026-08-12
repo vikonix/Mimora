@@ -1352,7 +1352,7 @@ def step_prefetch_spacy_model(
 def _disable_llm_backend(
     log: Logger, confirmer: Confirmer, report: StepReport
 ) -> None:
-    """Set "llm_backend" to "off" after step 8 found no build for this machine.
+    """Set "llm_backend" to "off" after step_llama_server found no build here.
 
     The default backend is "llama-server", so a machine the pinned release has
     nothing for otherwise installs cleanly, starts, fails to launch a server it
@@ -1419,8 +1419,9 @@ def step_llama_server(
     pinned build at all (everything except Windows x64, Linux x64 and macOS),
     and a Mac older than the minimum macOS its build was compiled for.
 
-    Returns False in exactly that case, so the caller can skip step 9: the GGUF
-    model is a 2.7 GB download for a server that will not exist. Every other
+    Returns False in exactly that case, so the caller can skip
+    step_download_gguf: the GGUF model is a 2.7 GB download for a server that
+    will not exist. Every other
     outcome returns True, including the user skipping the download - declining
     a binary is a decision about this run, not a fact about the platform, and
     the model may well be wanted for a build they install themselves.

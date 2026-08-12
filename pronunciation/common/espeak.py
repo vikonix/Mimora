@@ -48,7 +48,7 @@ espeak-ng if one existed, and quietly scored against a different transcription
 if one did not. Hence the INFO/WARNING pair - the same idea as the "spaCy
 pipeline ... resolves from" line in ``mimora/app.py``.
 
-Also runnable, which is what ``install.py`` step 5 uses::
+Also runnable, which is what ``install.py``'s ``step_espeak`` uses::
 
     python -m pronunciation.common.espeak
 

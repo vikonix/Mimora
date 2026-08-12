@@ -76,8 +76,7 @@ short-lived root and Tk takes a second one after the first is destroyed (see
 mimora/first_run_window.py) - and no ttk widget, cached image or registered
 font survives a window to make the second showing differ from the first.
 
-Two things that sentence got wrong, both found by the first tour of 2026-08-07
-and both worth keeping written down.
+Two things that sentence gets wrong, both worth keeping written down.
 
 The harmless one is the log: model_fetch.prepare_hf_env() probes for symlink
 privileges once per process, so its INFO line appears in the first state that

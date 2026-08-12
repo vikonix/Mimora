@@ -522,9 +522,7 @@ def warn_if_gpu_unused(device: str) -> None:
     # exist on macOS, so the gap this warning covers is one platform wide. The
     # advice used to be printed everywhere, which on Linux sent the user to a
     # flag that cannot help and does harm - it moves the WHOLE resolution onto
-    # the PyTorch index, and did so with results that differed between runs
-    # (tasks/release-1.1.0.md, finding 2 of stage 2). A message is only as good
-    # as the machine it is read on.
+    # the PyTorch index, with results that differ between runs.
     if sys.platform == "win32":
         reinstall = ("`uv tool install --reinstall mimora --torch-backend auto` "
                      "(or set UV_TORCH_BACKEND=auto beforehand), or "

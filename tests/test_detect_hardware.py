@@ -113,7 +113,8 @@ class ProbeLlamaOffloadTests(unittest.TestCase):
 
     def test_missing_install_is_unknown_not_negative(self):
         # None keeps build_config on its "physical GPU presence" fallback,
-        # which is what makes the tool usable before install.py's step 8.
+        # which is what makes the tool usable before install.py has fetched
+        # the llama-server binary (step_llama_server).
         verdict, warnings = self._probe(exe=None)
         self.assertIsNone(verdict)
         self.assertEqual(len(warnings), 1)
@@ -334,8 +335,8 @@ class WarnIfGpuUnusedTests(unittest.TestCase):
         # PyPI already serves a CUDA build of torch on Linux and macOS has no
         # CUDA at all, so --torch-backend auto cannot fix what this warning is
         # about anywhere but Windows - and on Linux it does harm, moving the
-        # whole resolution onto the PyTorch index with results that differed
-        # between runs. See tasks/release-1.1.0.md, finding 2 of stage 2.
+        # whole resolution onto the PyTorch index with results that differ
+        # between runs.
         for platform in ("linux", "darwin"):
             with self.subTest(platform=platform):
                 warnings, _ = self._run("cpu", (12, 4), platform=platform)

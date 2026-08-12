@@ -215,29 +215,15 @@ def _configure_symlink_fallback() -> None:
     global _symlink_supported
 
     if sys.platform == "darwin":
-        # A UX bug, not a correctness one - unlike the Windows branch below,
-        # macOS has no symlink/copy-fallback issue to work around, so this
-        # skips the probe entirely.
+        # macOS has no symlink/copy-fallback issue to work around, so the
+        # probe below is skipped entirely.
         #
-        # This does NOT fix the first-run window's progress bar on Intel
-        # macOS, and it is kept anyway rather than reverted - see why below.
-        #
-        # Diagnosed 2026-08-09 (Intel Mac, rc6): the relaxed pin
-        # `transformers>=4.44,<5` for this platform requires
-        # `huggingface_hub<1.0`, and 0.36.0 was the LAST 0.x release before
-        # huggingface_hub's 1.0 - there is no higher pre-1.0 version to pick.
-        # Read straight from the installed 0.36.2 source: its
-        # `_get_progress_bar_context()` takes no `tqdm_class` parameter at
-        # all and unconditionally builds a real, console-printing `tqdm`, so
-        # mimora/first_run_download.py's stand-in never receives per-file
-        # byte updates on this platform - the bars print to the terminal
-        # instead of feeding the app window. Xet was a wrong first guess (it
-        # does not exist yet at 0.36.2 either), and this line is a no-op
-        # there today - but it is correct in intent and costs nothing, and
-        # would start mattering the moment this platform's huggingface_hub
-        # ceiling ever moves past 1.0 (i.e. if the transformers pin above is
-        # ever relaxed). See tasks/release-1.1.0.md, stage 2 results, for the
-        # full trace (Xet hypothesis first, then this).
+        # Disabling Xet is a no-op on this platform today and kept for when it
+        # stops being one: the relaxed `transformers>=4.44,<5` pin here holds
+        # huggingface_hub below 1.0, where Xet does not exist yet. Note that
+        # the same ceiling is why the first-run window shows no per-file
+        # progress on Intel macOS: a pre-1.0 hub builds a console tqdm
+        # unconditionally and ignores first_run_download.py's stand-in.
         os.environ["HF_HUB_DISABLE_XET"] = "1"
         return
 

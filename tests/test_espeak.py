@@ -15,7 +15,7 @@ Four questions, one per class:
   * Does the ACOUSTIC engine register before its first phonemize call? It had
     no registration at all and worked only by accident, on machines where a
     system espeak-ng existed or where importing Kokoro had registered one.
-  * Does install.py step 5 ask the consumer's question (which library resolves)
+  * Does install.py's step_espeak ask the consumer's question (which resolves)
     rather than `shutil.which("espeak-ng")` (does the executable exist)? The
     two disagree, and the old check was wrong in both directions.
 """
@@ -226,7 +226,7 @@ class _StubLogger:
 
 
 class InstallerStepTests(unittest.TestCase):
-    """Step 5 asks which library resolves, not whether an executable exists."""
+    """step_espeak asks which library resolves, not whether an exe exists."""
 
     def test_the_probe_is_the_engines_own_module(self):
         # Deliberately the module under pronunciation/, not one under mimora/:
@@ -262,7 +262,7 @@ class InstallerStepTests(unittest.TestCase):
                                return_value=BUNDLED_LIBRARY), \
              mock.patch.object(install.shutil, "which",
                                side_effect=AssertionError(
-                                   "step 5 must not look for an executable")):
+                                   "step_espeak must not look for an exe")):
             install.step_espeak(log, confirmer=None, report=report)
 
         self.assertEqual(report.statuses(), [install.DONE])

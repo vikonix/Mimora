@@ -4,12 +4,11 @@
 """Checks for how KokoroBackend builds its model and pipeline (mimora/tts.py).
 
 Everything here runs on stubs: no kokoro, no torch, no weights, no network.
-What is asserted is the wiring of three keyword arguments and one method call,
-and that wiring is exactly what was wrong until 2026-08-08.
+What is asserted is the wiring of three keyword arguments and one method call.
 
-The defect: `KPipeline(lang_code=...)` alone left both `repo_id` and `model` at
-their library defaults, and nothing called `.eval()` on the model. Three
-separate consequences, hence the tests below:
+The regression these guard against: `KPipeline(lang_code=...)` alone leaves both
+`repo_id` and `model` at their library defaults, and nothing calls `.eval()` on
+the model. Three separate consequences, hence the tests below:
 
   * without `.eval()` the synthesis model stays in TRAINING mode. KModel is
     constructed here rather than loaded through `from_pretrained`, and

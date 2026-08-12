@@ -163,8 +163,8 @@ def early_init():
     # loader.models_cached reads any such file as "this repo is not cached" -
     # so a complete, working repo is reported missing at every start, the
     # first-run window offers a download, and the download cannot clear it
-    # because it does not need that file. Observed on 2026-08-07 in both the
-    # wav2vec2 and the NLLB caches after a single online session.
+    # because it does not need that file. One online session is enough to do
+    # this to a cache; model_fetch._sweep_incomplete_blobs heals one that has.
     #
     # DISABLE_SAFETENSORS_CONVERSION is transformers' own switch for this
     # (modeling_utils, can_auto_convert) and is read per call rather than
