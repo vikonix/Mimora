@@ -8,14 +8,14 @@ disc with eyebrows, blinking eyes and a mouth that has two mutually exclusive
 modes:
 
   * Talking -- a plain dark mouth ellipse whose height tracks playback
-    loudness. This is live feedback *during* TTS playback; it shows how open
-    the mouth is, not tongue position.
+    loudness. This is feedback *during* TTS playback; it shows how open the
+    mouth is, not tongue position.
 
   * Paused -- when nothing is playing, the mouth becomes a single round-capped
     stroke: smile / flat / frown (``:)`` / ``:|`` / ``:(``) reflecting the
     current state, with the eyebrows following the expression. The smiley is
-    never drawn together with the talking mouth: ``set_level`` switches to
-    talking, ``rest`` switches back to the smiley.
+    never drawn together with the talking mouth: ``play_levels`` (or
+    ``set_level``) switches to talking, ``rest`` switches back to the smiley.
 
 Besides the two mouth modes the face is interactive:
 
@@ -36,38 +36,37 @@ Besides the two mouth modes the face is interactive:
 
 Design constraints this module is built around:
 
-  * Antialiased rendering. Tk Canvas primitives have no antialiasing, which is
-    why the previous vector face read as clipart at ~78 px. Each frame is now
-    drawn by Pillow at 4x size and downscaled with LANCZOS, then shown as a
-    single Canvas image item.
+  * Antialiased rendering. Tk Canvas primitives have no antialiasing, so each
+    frame is drawn by Pillow at 4x size and downscaled with LANCZOS, then shown
+    as a single Canvas image item.
 
   * Lazy frame cache instead of per-frame rendering. Mouth openness, smile
     curl and the blink phase are quantized to a small number of steps; every
     distinct combination is rendered once on first use (~1-2 ms) and cached as
-    a ``PhotoImage``. Steady-state animation is just an image swap -- cheaper
-    than the old ``Canvas.coords`` path. The cache is cleared on resize.
+    a ``PhotoImage``, so steady-state animation is an image swap. The cache is
+    cleared on resize.
 
-  * Thread-safe hand-off. Audio plays on a sounddevice thread while Tk draws
-    on the main thread. ``set_level`` therefore only stores the latest
-    loudness in a plain attribute (a single assignment, atomic in CPython);
-    the ``after``-loop on the Tk thread reads it and swaps frames. Pillow /
-    ``ImageTk`` objects are only ever touched on the Tk thread.
+  * No per-frame audio callback is required, because ``winsound`` does not
+    offer one: ``play_levels`` takes a loudness track computed in advance from
+    the whole waveform (``tts.loudness_envelope``) and replays it against the
+    wall clock. ``set_level`` is the live alternative and is safe to call from
+    an audio thread -- it only stores a float -- but nothing in Mimora uses it.
+    Pillow / ``ImageTk`` objects are only ever touched on the Tk thread.
 
   * Dependencies: stdlib ``tkinter`` plus Pillow (pinned in pyproject.toml).
 
-Typical use::
+Typical use, as the hero card drives it::
 
     face = FaceWidget(parent_frame, size=160, bg=THEME["bg_panel"],
                       face_color=THEME["face"], eye_color=THEME["eyes"],
                       mouth_color=THEME["mouth"])
     face.pack()
     ...
-    # inside the audio playback callback (any thread):
-    rms = float(np.sqrt(np.mean(chunk.astype("float32") ** 2)))
-    face.set_level(FaceWidget.level_from_rms(rms))   # talking mouth
+    # on the Tk thread, started together with playback:
+    face.play_levels(levels, fps=face.fps)  # talking mouth, pre-computed track
     ...
-    face.set_score(score)   # choose the paused smiley (:) / :| / :( )
-    face.rest()             # playback stopped -> show the smiley
+    face.rest()                  # playback stopped or interrupted -> smiley
+    face.set_expression(":)")    # the paused smiley (:) / :| / :( )
 """
 
 from __future__ import annotations
