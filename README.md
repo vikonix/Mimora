@@ -449,13 +449,12 @@ Press `ESC` or close the window to quit (the LLM server subprocess is terminated
 
 ### Where Mimora keeps your files
 
-Running from a clone - which is every installation today - everything stays
-inside the project directory: `config/`, `models/`, `model_cache/`, `bin/llama/`
-and `logs/`. Nothing about that changes, and there is nothing to migrate.
+Running from a clone, everything stays inside the project directory: `config/`,
+`models/`, `model_cache/`, `bin/llama/` and `logs/`.
 
-Installed as a package (a future option), the same layout moves under the
-operating system's user-data directory, because a package's own directory
-belongs to whatever installed it and is rebuilt on the next upgrade:
+Installed as a package, the same layout moves under the operating system's
+user-data directory, because a package's own directory belongs to whatever
+installed it and is rebuilt on the next upgrade:
 
 | OS | Location |
 |---|---|
@@ -475,6 +474,13 @@ writes; a relative one is read as relative to the settings file you are editing.
 Keys you leave out are not affected by the rule at all - their defaults are
 resolved for you, and the downloads and the files shipped with the app do not
 live in the same place.
+
+Most settings are editable in the app's settings window. For the rest, and for
+what each one does,
+[`config/settings.example.json`](config/settings.example.json) documents every
+key next to its default - copy it to `config/settings.json` to start, or edit
+that file directly. Both the file and every key in it are optional: anything
+missing falls back to the built-in default.
 
 ---
 
