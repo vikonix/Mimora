@@ -341,7 +341,7 @@ def all_fields() -> tuple:
 
 # Spoken by the voice-preview button; comes from the active language profile
 # (config), so the preview is in the language being practiced. Re-exported here
-# because main.py imports it from this module (the settings-window preview path).
+# because app.py imports it from this module (the settings-window preview path).
 PREVIEW_PHRASE = config.PREVIEW_PHRASE
 
 
@@ -349,7 +349,7 @@ class SettingsWindow:
     """The Toplevel settings dialog: one scrollable column of sections.
 
     Non-modal and transient to the main window. The controller keeps at most
-    one instance alive (see main.py on_settings_clicked) and pushes changes
+    one instance alive (see app.py on_settings_clicked) and pushes changes
     made in the main window back in through set_value(), so both windows stay
     in sync without ever looping (set_value never re-emits).
     """

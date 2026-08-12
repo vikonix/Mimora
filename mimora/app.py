@@ -445,20 +445,16 @@ class PronunciationTrainerGUI:
             logging.info("Mimora initialization complete.")
 
         except BaseException as e:
-            # BaseException, not Exception, and that is the whole point of this
-            # clause. A library called from this thread can raise something
-            # outside the Exception hierarchy, and one does: spacy.util.
-            # run_command ends the process with sys.exit when the command it
-            # shells out to fails, which is how misaki reacts to a spacy model
-            # it cannot download. SystemExit derives from BaseException, so the
-            # narrower clause did not see it - the thread died without a log
-            # line, without an error in the window, and the interface sat on
-            # "Loading models..." for as long as the user was willing to wait.
+            # BaseException, not Exception, and that is the point of this
+            # clause: spacy.util.run_command calls sys.exit when the command it
+            # shells out to fails, which is how misaki reacts to a spaCy model
+            # it cannot download. SystemExit is outside the Exception hierarchy,
+            # so a narrower clause lets the loader thread die silently and the
+            # window sits on "Loading models..." forever.
             #
-            # Catching it here is safe because this is a daemon thread:
-            # SystemExit ends nothing but the thread it is raised in, and
-            # KeyboardInterrupt is delivered to the main thread rather than
-            # this one, so neither is being taken away from anybody.
+            # Safe here because this is a daemon thread: SystemExit ends only
+            # the thread it is raised in, and KeyboardInterrupt goes to the main
+            # thread.
             #
             # The type name is part of the message because str(SystemExit(1))
             # is "1": without it the window would say "Initialization Error: 1".
@@ -1369,14 +1365,11 @@ class PronunciationTrainerGUI:
             # when self-playback is turned off in Settings - go straight to
             # analysis then.
             #
-            # Logged on both sides, and that is not decoration. play_with_face
-            # blocks for as long as the take lasts, and the analysis timer
-            # below starts after it, so the log used to jump from "Stopping
-            # audio recording" straight to "analysis done in 277ms" with a
-            # silent seven-to-twelve second hole in between. Three separate
-            # runs on two operating systems recorded that hole as an
-            # unexplained stall before anyone noticed it was simply the length
-            # of the phrase being played back.
+            # Logged on both sides, and that is not decoration: play_with_face
+            # blocks for the length of the take while the analysis timer below
+            # starts only after it, so without these two lines the log jumps
+            # from "Stopping audio recording" to "analysis done in 277ms" with
+            # a silent multi-second hole that reads as an unexplained stall.
             if config.PLAYBACK_OWN_RECORDING:
                 playback_seconds = len(self.last_user_audio) / config.AUDIO_SAMPLE_RATE
                 logging.info("Playing the take back to the user (%.1fs) before "

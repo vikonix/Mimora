@@ -11,7 +11,7 @@ with the Tk root (for ``after``), the TrainerView facade, the TTSManager and
 the app-wide shutdown event; workers receive stop events as plain arguments
 and never touch the shared state directly.
 
-Threading contract (unchanged from the original main.py code):
+Threading contract:
   * ``new_event()``, ``stop()`` and ``play_async()`` run on the Tk main
     thread only.
   * ``play_with_face()`` blocks for the playback duration and is safe to

@@ -6,7 +6,7 @@
 Pitch (F0) and energy contours describe *how* something was said (intonation,
 stress, rhythm), independent of *which* pronunciation engine scores the words.
 So they live here, in a light module computed from the raw user and reference
-waveforms in ``main.py`` regardless of the active engine - not inside any single
+waveforms in ``app.py`` regardless of the active engine - not inside any single
 engine. Both the phoneme (``pronunciation/phoneme/``, the default) and the acoustic
 (``pronunciation/acoustic/``) engine show the exact same two charts because neither
 computes prosody anymore.

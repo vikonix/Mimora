@@ -192,7 +192,7 @@ class Plan(NamedTuple):
     llama-server, or is None when it can. Either way the optional level is then
     empty rather than "the GGUF only" - one model without a server does not
     start the backend - and the window shows the matching note instead of an
-    offer. main.py says the same thing again when the server later fails to
+    offer. app.py says the same thing again when the server later fails to
     start, which is what a machine in this state does at every launch.
 
     The distinction is the whole point of the field: the two reasons want

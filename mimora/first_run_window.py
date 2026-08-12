@@ -11,10 +11,10 @@ the user agreed to, and records a refusal where the user will later look for it.
 Why its own Tk root
 -------------------
 The question has to be answered BEFORE PronunciationTrainerGUI.__init__ picks
-between LLMManager and SourceTextPhraseProvider (main.py, the llm_backend
+between LLMManager and SourceTextPhraseProvider (app.py, the llm_backend
 branch), because a refusal changes that choice. Running inside __init__ would
 mean aborting a half-built object when the user quits; a separate, short-lived
-root avoids that entirely and keeps main.py's constructor untouched. Tk is
+root avoids that entirely and keeps app.py's constructor untouched. Tk is
 happy to have a second root after the first is destroyed, as long as the two do
 not overlap - and they cannot, because this returns before the app starts.
 
@@ -86,7 +86,7 @@ from mimora.ui_theme import (FONT_FAMILY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
 
 log = logging.getLogger(__name__)
 
-# What ensure_ready() tells main.py to do next.
+# What ensure_ready() tells app.py to do next.
 READY = "ready"          # start the app in this process
 CANCELLED = "cancelled"  # the user left; exit without starting
 RESTART = "restart"      # start over, so the freshly detected hardware applies
@@ -499,20 +499,18 @@ class FirstRunWindow:
     def _close(self) -> None:
         self._closed = True
         # Drop the Tcl variables HERE, on the Tk thread and while the
-        # interpreter still answers, rather than leaving them to the garbage
-        # collector. They cannot be freed by reference counting: this object is
-        # part of a cycle (a bound method per button lives in Tcl's callback
-        # registry, the registry belongs to the root, the root is an attribute
-        # of self), so the whole graph waits for a cyclic collection - which
-        # runs on whichever thread happens to allocate at the time. When that
-        # is a worker thread, Variable.__del__ calls "info exists" into this
-        # already-destroyed interpreter from the wrong thread, and Tcl does not
-        # raise: it aborts the process with "Tcl_AsyncDelete: async handler
-        # deleted by the wrong thread". The window is followed by exactly such
-        # a thread every time - loading models is the next thing that happens.
+        # interpreter still answers. Reference counting cannot free them: this
+        # object sits in a cycle (a bound method per button in Tcl's callback
+        # registry, the registry on the root, the root on self), so the graph
+        # waits for a cyclic collection, which runs on whichever thread happens
+        # to allocate at the time. From a worker thread Variable.__del__ calls
+        # into the destroyed interpreter and Tcl does not raise, it ABORTS the
+        # process ("Tcl_AsyncDelete: async handler deleted by the wrong
+        # thread"). Loading models is the next thing that happens, so such a
+        # thread always follows this window.
         #
-        # Assignment rather than del: nothing reads these after _close(), but
-        # None is a defined state and a missing attribute is not.
+        # Assignment rather than del: None is a defined state, a missing
+        # attribute is not.
         self._wants_optional = None
         self._wants_translator = None
         self.root.destroy()
@@ -654,17 +652,15 @@ def ensure_ready() -> str:
 
     if plan.llama_server_blocked:
         # No download would give this machine a server it would launch, so
-        # there is nothing this window could offer for the LLM backend. Logged
-        # before the early return below rather than after it: a blocked backend
-        # is exactly what makes the optional level empty, so a check placed
-        # after "is anything missing?" could only ever run when something else
-        # was missing too - and would say nothing in the commonest case, a
-        # machine with every model already cached.
+        # there is nothing to offer for the LLM backend. Logged BEFORE the
+        # early return below: a blocked backend is what makes the optional
+        # level empty, so a check placed after "is anything missing?" would
+        # stay silent on the commonest machine, one with everything cached.
         #
-        # Only logged. The advice a user can act on is given where it bites -
-        # in main.py._server_failure_message() - because this state repeats at
-        # every start, and a window that repeats with it would be a modal
-        # standing between the user and an app that does start.
+        # Only logged. The advice a user can act on is given where it bites,
+        # in app.py._server_failure_message(): this state repeats at every
+        # start, and a modal that repeats with it would stand between the user
+        # and an app that does start.
         log.info("Nothing can be offered for the llama-server backend (%s); "
                  "starting without it.", plan.llama_server_blocked)
 
@@ -704,27 +700,23 @@ def ensure_ready() -> str:
     # values are read once and all over the code, so a fresh process is the
     # honest way to apply them.
     #
-    # The offline gate is why the second half exists. config decides during its
-    # import whether huggingface_hub may reach the network, from what was
-    # cached AT THAT MOMENT, so a process that has just downloaded the last
-    # missing model would spend its whole session online, revalidating models
-    # that are now on disk: about seventy requests and ten seconds, plus
-    # transformers' auto-conversion thread pulling safetensors in the
-    # background. Note that a restart alone does not prove this is handled:
-    # spawn_replacement() passes no env=, so a child inherits HF_HUB_OFFLINE=1
-    # from a parent that had set it, and only a cold launch shows the storm.
+    # The offline gate is the reason this is unconditional rather than tied to
+    # the probe. config decides during its import whether huggingface_hub may
+    # reach the network, from what was cached AT THAT MOMENT, so a process that
+    # has just downloaded the last missing model spends its whole session
+    # online revalidating models that are now on disk. (Testing this needs a
+    # cold launch: spawn_replacement() passes no env=, so a restarted child
+    # inherits HF_HUB_OFFLINE=1 from a parent that had set it.)
     #
     # Asked as "did the plan actually change" rather than "did the window run",
-    # and that is a loop guard, not pedantry. A component can be reported as
-    # fetched while the plan still calls it missing - a stray *.incomplete blob
-    # in the repo does exactly that (loader.models_cached), and no download
-    # clears it, because the download does not need that file. Restarting on
-    # "the window ran" would then relaunch into the same window forever. This
-    # way that machine starts, once, with a line in the log naming the repo.
+    # and that is the loop guard: a component can be reported as fetched while
+    # the plan still calls it missing (a stray *.incomplete blob does exactly
+    # that, and no download clears it), so restarting on "the window ran" would
+    # reopen the same window forever. This way that machine starts once, with a
+    # log line naming the repo.
     #
-    # A binary downloaded just now needs no such treatment: llm_server_ctl
-    # resolves the path when it builds the command line, so it sees whatever is
-    # on disk by then (config.resolve_llama_server_path).
+    # A binary downloaded just now needs no restart: llm_server_ctl resolves
+    # the path when it builds the command line (config.resolve_llama_server_path).
     before = _missing_keys(plan)
     after = _missing_keys(first_run.build_plan())
     if probed or before != after:

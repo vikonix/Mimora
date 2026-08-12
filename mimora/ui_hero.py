@@ -59,7 +59,7 @@ class HeroCard:
         # tags - every word is clickable to hear it slowly (the "word" tag) and
         # the mispronounced ones also get the "miss" underline. Disabled +
         # takefocus=0 keeps it from swallowing the spacebar record toggle
-        # (main.py gates hotkeys on a focused Text widget).
+        # (app.py gates hotkeys on a focused Text widget).
         self.phrase_text = tk.Text(
             self.frame, font=(FONT_FAMILY, FONT_SIZE_PHRASE, "bold"),
             fg=THEME["phrase"], bg=THEME["bg_card"], wrap=tk.WORD, bd=0,
@@ -297,7 +297,7 @@ class HeroCard:
         """Speak the clicked phrase word slowly (any word, via the controller)."""
         word = self._phrase_word_at(event)
         # Return focus to the window so the spacebar record toggle keeps
-        # working (main.py's global click handler skips Text widgets).
+        # working (app.py's global click handler skips Text widgets).
         self.root.focus_set()
         if word:
             self._on_word_clicked(word)

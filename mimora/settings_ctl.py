@@ -8,12 +8,11 @@ mechanics around settings.json - persisting one value, mirroring a change
 into the open settings window, and the "Default" reset with its no-op
 dispatch diffing - plus the two tables describing which settings the
 running app can apply live. The *dispatch* stays in the controller
-(main.py on_setting_changed and the on_*_changed handlers): applying a
+(app.py on_setting_changed and the on_*_changed handlers): applying a
 change may regenerate the phrase or touch the view, which is controller
 behavior. The controller injects its three touchpoints as callbacks.
 
-All methods run on the Tk main thread (same contract this code had while
-it lived in main.py).
+All methods run on the Tk main thread.
 """
 
 import logging
@@ -62,12 +61,12 @@ SETTING_LIVE_ATTRS = {
 class SettingsGlue:
     """Persist one setting, mirror it into the settings window, reset all.
 
-    Composed by main.py with three controller touchpoints:
+    Composed by app.py with three controller touchpoints:
       * ``report_error(message)`` - shows an error in the main window
         (view.append_error_msg).
       * ``get_window()`` - returns the currently open SettingsWindow or
         None; the controller keeps owning the window instance.
-      * ``dispatch(key, value)`` - main.py on_setting_changed; used by the
+      * ``dispatch(key, value)`` - app.py on_setting_changed; used by the
         reset to re-apply default values live.
     """
 

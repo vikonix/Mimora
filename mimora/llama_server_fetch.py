@@ -204,17 +204,16 @@ VARIANTS: dict[str, Variant] = {
         backend="CPU",
     ),
     # There is no CUDA build for Linux to mirror win-cuda-*: llama.cpp ships
-    # CUDA binaries for Windows only (checked against b10099, whose linux/x64
-    # assets are cpu, vulkan, rocm, sycl and openvino). So on an NVIDIA card
-    # under Linux the GPU path is the Vulkan build, and min_driver_cuda stays
-    # None because the CUDA version of the driver says nothing about it.
+    # CUDA binaries for Windows only (the linux/x64 assets are cpu, vulkan,
+    # rocm, sycl and openvino). So on an NVIDIA card under Linux the GPU path
+    # is the Vulkan build, and min_driver_cuda stays None because the driver's
+    # CUDA version says nothing about it.
     #
     # Whether Vulkan will find the GPU cannot be settled before the download:
-    # it needs a loader AND an ICD manifest AND a device the driver exposes
-    # through them, and under WSL2 the NVIDIA driver publishes no Vulkan ICD at
-    # all (verified on driver 610.43.02: /usr/lib/wsl/lib has CUDA, NVML and
-    # NVENC, no ICD). Hence the fallback: try Vulkan, keep CPU as the answer
-    # when the device check comes back empty.
+    # it needs a loader AND an ICD manifest AND a device exposed through them,
+    # and under WSL2 the NVIDIA driver publishes no Vulkan ICD at all. Hence
+    # the fallback: try Vulkan, keep CPU as the answer when the device check
+    # comes back empty.
     "linux-vulkan-x64": Variant(
         assets=(
             Asset("llama-{tag}-bin-ubuntu-vulkan-x64.tar.gz",
@@ -247,17 +246,15 @@ VARIANTS: dict[str, Variant] = {
     # min_macos is high because llama.cpp's workflow passes no
     # CMAKE_OSX_DEPLOYMENT_TARGET for this asset and builds it on whatever macOS
     # runner is current, so clang stamps the runner's own version as the
-    # minimum. Verified 2026-07-31 by reading LC_BUILD_VERSION out of the
-    # downloaded binary: minos 26.0, sdk 26.5. Nothing here can lower it, so an
+    # minimum (LC_BUILD_VERSION: minos 26.0). Nothing here can lower it, so an
     # Apple Silicon Mac on macOS 14 or 15 has no usable build in this release
-    # and select_variant() says so before the download.
+    # and select_variant() says so before the download. Re-read it out of the
+    # binary when bumping the pinned tag.
     #
-    # device_pattern is the one thing here still UNVERIFIED: no Apple Silicon
-    # machine has run this build yet, and the device name was read off the
-    # sources (ggml-metal.cpp defines GGML_METAL_NAME "MTL", ggml-metal-device.m
-    # formats each device as "MTL%d"), so --list-devices is *expected* to print
-    # "MTL0: Apple M...". If a real Mac prints something else, this is the field
-    # that has to change.
+    # device_pattern is UNVERIFIED: no Apple Silicon machine has run this build,
+    # and the name comes from the ggml sources (ggml-metal-device.m formats each
+    # device as "MTL%d"), so --list-devices is only *expected* to print
+    # "MTL0: Apple M...". This is the field to change if a real Mac disagrees.
     "macos-metal-arm64": Variant(
         assets=(
             Asset("llama-{tag}-bin-macos-arm64.tar.gz",
@@ -279,9 +276,8 @@ VARIANTS: dict[str, Variant] = {
     #
     # Two limits of the build are the release's, and only the first can be
     # checked before the download:
-    # * It is compiled with -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3, which
-    #   LC_BUILD_VERSION confirms (minos 13.3, verified 2026-07-31) - hence
-    #   min_macos below.
+    # * -DCMAKE_OSX_DEPLOYMENT_TARGET=13.3, which LC_BUILD_VERSION confirms -
+    #   hence min_macos below.
     # * ggml's GGML_NATIVE defaults to ON and the workflow does not turn it
     #   off, so the asset carries -march=native for the CI runner's CPU. An
     #   older Intel CPU dies on the first instruction it lacks, and nothing in

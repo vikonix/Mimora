@@ -3,38 +3,30 @@
 
 """Identity and download size of every model Mimora fetches.
 
-Pure data: this module imports nothing but the standard library and has no side
-effects, which is exactly what lets every layer read it. The fetchers must never
-import mimora/config.py (config flips HF_HUB_OFFLINE=1 once the models are
-cached, switching the network off precisely when a download is wanted), so facts
-they share with config have to live in a module that depends on neither side.
-install.py reads it too, before the requirements step has run, hence stdlib only.
+The single place a repo id is written down: config, the fetchers and tts.py all
+bind to these records rather than restating the strings, so a download and the
+load that follows it cannot go to different repos.
 
-Two reasons it exists:
-
-* a model's identity used to be written down two to four times each -
-  mimora/config.py, mimora/model_fetch.py and mimora/tts.py all spelled the same
-  repo ids out, three of them as bare literals - so the copies could drift;
-* the first-run download dialog has to name volumes as numbers before the user
-  agrees to them, and the sizes were prose inside a display label (or, for
-  Kokoro, absent).
+**Stdlib only, no side effects.** The fetchers must never import
+mimora/config.py (config flips HF_HUB_OFFLINE=1 once the models are cached,
+switching the network off precisely when a download is wanted), so facts they
+share with config have to live in a module that depends on neither side.
+install.py reads it too, before the requirements step has run.
 
 Deliberately NOT here
 ---------------------
-* **The llama-server binary.** The size of a release asset belongs next to its
-  name and sha256 in mimora/llama_server_fetch.py: bumping the pinned release
-  rewrites all three together, and a size left behind in another file would not
-  fail loudly, it would quietly mis-scale the progress bar. The binary is also
-  not a model.
+* **The llama-server binary.** Its size belongs next to its name and sha256 in
+  mimora/llama_server_fetch.py, so bumping the pinned release rewrites all
+  three together; a stale size elsewhere would silently mis-scale the progress
+  bar rather than fail. It is also not a model.
 * **Cache paths.** They stay in mimora/model_fetch.py, next to the code that
   writes into them.
-* **Which level a model belongs to** (required / optional / lazy). That depends
-  on the active engine, the active TTS backend and llm_backend, so it is the
-  result of a computation at startup, not a static property of a model.
-* **The defaults in pronunciation/acoustic/config.py and
-  pronunciation/phoneme/config.py.** Those subpackages are reusable,
-  GUI-agnostic libraries that must work without mimora.config, so their model
-  names are standalone fallbacks rather than a second copy of the app's choice.
+* **Which level a model belongs to** (required / optional / lazy): that depends
+  on the active engine, TTS backend and llm_backend, so it is computed at
+  startup rather than being a property of a model.
+* **The defaults in pronunciation/*/config.py.** Those subpackages must work
+  without mimora.config, so their model names are standalone fallbacks, not a
+  second copy of the app's choice.
 """
 
 from __future__ import annotations
@@ -45,28 +37,20 @@ from typing import NamedTuple
 # What size_mb means
 # ---------------------------------------------------------------------------
 #
-# BYTES OVER THE NETWORK, in decimal MB (bytes / 1_000_000).
+# BYTES OVER THE NETWORK, in decimal MB (bytes / 1_000_000). The first-run
+# dialog promises traffic ("you are about to download X GB") to somebody who
+# may be on a metered connection, so traffic is what is stored.
 #
-# Three different numbers could be meant here and they diverge by up to a
-# factor of two, so the choice is load-bearing:
+# It is NOT disk usage, and the two diverge by up to a factor of two: unpacked
+# archives are larger, and the HF cache on Windows without symlink privileges
+# COPIES files into snapshots/ instead of linking them
+# (model_fetch._configure_symlink_fallback). A free-space warning must compute
+# its own numbers.
 #
-#   1. what the download costs  <- this one
-#   2. what it occupies on disk after unpacking (the llama.cpp archives) or
-#      after conversion
-#   3. what the HF cache occupies on Windows without symlink privileges, where
-#      model_fetch._configure_symlink_fallback puts downloads on the HTTP path,
-#      which COPIES files into snapshots/ instead of linking them
-#
-# The first-run dialog promises traffic ("you are about to download X GB"), and
-# somebody on a metered connection has to be able to trust it, so traffic is
-# what is stored. A dialog that also wants to warn about free disk space needs
-# (2) or (3) and must not reuse these numbers.
-#
-# Decimal MB, not MiB, because that is how download sizes are advertised and what
-# the pre-existing GGUF_SIZE_MB already meant. llama_server_fetch._human(), which
-# renders live progress under the same "MB" label, divides by 1_000_000 to match;
-# it used to divide by 1024**2, which made a finished download report a number
-# visibly smaller than the size the user had just agreed to.
+# Decimal MB, not MiB, because that is how download sizes are advertised.
+# llama_server_fetch._human() renders live progress under the same "MB" label
+# and divides by 1_000_000 to match; dividing by 1024**2 makes a finished
+# download report a number smaller than the one the user agreed to.
 
 # ---------------------------------------------------------------------------
 # Record types
@@ -141,14 +125,10 @@ class PackagedModel(NamedTuple):
 # ---------------------------------------------------------------------------
 #
 # Re-snap the sizes with `python tools/measure_model_sizes.py` and commit the
-# result whenever a repo id changes; they are a one-off per pin rather than a
-# runtime lookup. Measuring at startup was rejected on purpose: it would put a
-# network round-trip in front of the very dialog that exists for people with no
-# network or an expensive one.
-#
-# Every number below is measured. For the record, the prose they replaced was
-# optimistic across the board (~1.2 GB for repos that are 1.26 GB, ~2.4 GB for
-# one that is 2.48), which is the concrete argument against eyeballing them.
+# result whenever a repo id changes: a one-off per pin, never a runtime lookup.
+# Measuring at startup would put a network round-trip in front of the very
+# dialog that exists for people with no network or an expensive one, and
+# eyeballed numbers come out optimistic by 5-10%.
 #
 # Measure the WHOLE snapshot, not the weights the app loads: snapshot_download
 # without allow_patterns fetches every file in the repo, and these repos ship

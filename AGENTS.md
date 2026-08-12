@@ -2,115 +2,364 @@
 
 This file provides guidance to agents when working with code in this repository.
 
+It is a map, not a manual: each entry says what a module is for and what would
+break if it were changed carelessly. The reasoning behind a specific line lives
+in the comment next to that line.
+
 ## Project Overview
 
-Mimora is a local, offline **pronunciation trainer** (Python 3.11/3.12, Tkinter GUI). It speaks an LLM-generated phrase aloud (TTS backend per language: Kokoro for English, Supertonic 3 for Spanish - see `mimora/tts.py`), records the user repeating it, then scores the attempt against the reference with the active pronunciation engine plus prosody. The engine is selected by `config.ENGINE` (settings.json `"engine"`; see `mimora/engine.py`): the **default is `phoneme`** (espeak reference phonemes vs a wav2vec2 phoneme recognizer, feature-weighted edit distance, calibrated 0–5 grade); the alternative `acoustic` engine uses Wav2Vec2-embedding cosine-DTW plus phoneme/word error rates; `none` disables scoring entirely (no recognizer model is loaded, every take is accepted, the GUI shows a neutral "scoring off" read-out - for slow machines). The user repeats the same phrase until the score passes, then generates the next one.
+Mimora is a local, offline **pronunciation trainer** (Python 3.11/3.12, Tkinter
+GUI). It speaks an LLM-generated phrase aloud, records the user repeating it,
+then scores the attempt against the reference with the active pronunciation
+engine plus prosody. The user repeats the same phrase until satisfied, then
+generates the next one.
 
-The **practice language is data, not an assumption**: every language is one entry in `config.LANGUAGE_PROFILES` (display name, FLORES-200 code, engines, variants with Kokoro/espeak wiring and voices, phrase-generation prompts, startup greeting, preview/warm-up phrases, default practice text and its unreadable-file fallback). The active language/variant comes from settings.json `"practice_language"` / `"accent"` (the legacy `"english_accent"` is read as a fallback and dropped on the next save); both apply after a restart. English (variants `american`/`british`) is fully calibrated; Spanish (variant `castilian`) runs the `phoneme` engine as **experimental** until `pronunciation/phoneme/es_model_calibration.json` lands (scoring falls back to the English calibration; the app logs a startup warning and the settings window shows a notice - see `config.engine_experimental`). The English-only `acoustic` engine is offered per profile (`config.available_engines`); an unavailable engine falls back to the language's first available one. Adding a language = one profile module in `mimora/languages/` (a pure-data `PROFILE` dict) registered in the `LANGUAGE_PROFILES` assembly in `config.py`, plus an engine calibration, never a new `if language == ...` branch.
+The engine is selected by `config.ENGINE` (settings.json `"engine"`, dispatched
+by [`mimora/engine.py`](mimora/engine.py)):
 
-The pronunciation-scoring core in `pronunciation/acoustic/` is adapted from [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) and reused as a GUI-agnostic library.
+- **`phoneme`** (default) - espeak reference phonemes vs a wav2vec2 phoneme
+  recognizer, feature-weighted edit distance, calibrated 0-5 grade.
+- `acoustic` - Wav2Vec2-embedding cosine-DTW plus phoneme/word error rates.
+  English-only.
+- `none` - scoring off. No recognizer is loaded, every take is accepted, the
+  GUI shows a neutral read-out. For slow machines.
+
+The **practice language is data, not an assumption**: every language is one
+entry in `config.LANGUAGE_PROFILES`, assembled from the pure-data modules in
+[`mimora/languages/`](mimora/languages/) (the profile format is documented in
+that package's `__init__.py`). The active language/variant comes from
+settings.json `"practice_language"` / `"accent"` and applies after a restart.
+English (`american`/`british`) is fully calibrated; Spanish (`castilian`) runs
+the phoneme engine as **experimental** until
+`pronunciation/phoneme/es_model_calibration.json` lands. Adding a language is a
+profile module plus an engine calibration, never a new `if language == ...`.
+
+The pronunciation-scoring core in `pronunciation/acoustic/` is adapted from
+[OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) and reused as
+a GUI-agnostic library.
 
 ## Running the App
 
 ```bash
-# Dependencies come from [project.dependencies] in pyproject.toml and cover both
-# pronunciation engines, so one install covers everything. There is no root
-# requirements.txt any more; the two under pronunciation/ remain, because those
-# subpackages are installable on their own. Editable, because a plain
-# `pip install .` from a clone leaves a second copy in site-packages that your
-# edits never reach - and would also switch paths.py out of source-tree mode.
 pip install -e .
 python main.py
 ```
 
-`python main.py` is one of three launch forms, all of which arrive at
-`mimora/cli.py`'s `main()` and differ in nothing else: the root `main.py` is a
-two-line shim for a source checkout, `python -m mimora` goes through
-`mimora/__main__.py`, and the `mimora` console script (`[project.scripts]` in
-pyproject.toml) is what an installed package puts on PATH.
+Editable on purpose: a plain `pip install .` from a clone leaves a second copy
+in site-packages that your edits never reach, and switches `paths.py` out of
+source-tree mode. Dependencies come from `[project.dependencies]` and cover both
+engines; the two `requirements.txt` under `pronunciation/` remain because those
+subpackages are installable on their own.
 
-Also requires a GGUF chat model at `config.EXTERNAL_MODEL_PATH`. **espeak-ng** is no longer a separate install: the `espeakng-loader` wheel is a pinned dependency and [`pronunciation/common/espeak.py`](pronunciation/common/espeak.py) registers its library and data with `phonemizer`; a system espeak-ng is only the fallback. On Linux add the native **PortAudio** library (`libportaudio2`): the `sounddevice` wheel bundles it on Windows and macOS but not there, and without it every import of `sounddevice` raises `OSError: PortAudio library not found`. `install.py` checks it in its preflight block (`step_check_portaudio`), together with `tkinter` and, on Windows, the MSVC runtime.
+Three launch forms, differing in nothing after `mimora/cli.py`'s `main()`: the
+root `main.py` shim for a checkout, `python -m mimora`, and the `mimora` console
+script.
 
-**Default LLM backend**: `llama-server` - the official llama.cpp binary is launched automatically as a subprocess (`mimora/llm_server_ctl.py`). The binary is named by `"llama_server_path"`; empty means `bin/llama/` as installed by `python -m mimora.llama_server_fetch`, then `llama-server` on `PATH`. `install.py` installs it (`step_llama_server`, the GGUF model follows in `step_download_gguf`); the app also fetches whatever is missing on first run, asking first (`mimora/first_run_window.py`). On a platform the pinned release has no build for, `step_llama_server` records a manual action, offers to write `llm_backend: "off"` (`_disable_llm_backend`, the only setting the installer ever writes, and never over a backend the user chose) and returns False, which skips the GGUF step - that model is useless without a server to load it.
-**Alternatives**: `"llm_backend": "lm-studio"` in `config/settings.json` and run LM Studio on `http://localhost:1234` (or on another machine in the local network - set `"lm_studio_host"` to its address as `host` or `host:port`, port defaults to 1234; also editable in the settings window); or `"llm_backend": "off"` - no LLM is loaded or started at all, practice phrases are the source text's own sentences taken verbatim in order (`mimora/phrase_source.py`); the phrase-length choice is disabled in the settings window in this mode (sentences are never shortened into fragments).
-An unknown `llm_backend` in `settings.json` is reported on stderr and corrected to the default, in `_USER` as well as in the constant, so the settings window never sees a value outside its own choices. Nothing in the project installs or imports llama-cpp-python.
+Also requires a GGUF chat model at `config.EXTERNAL_MODEL_PATH`. **espeak-ng is
+not a separate install**: the pinned `espeakng-loader` wheel ships the library
+and [`pronunciation/common/espeak.py`](pronunciation/common/espeak.py) registers
+it with `phonemizer`. On Linux add **PortAudio** (`libportaudio2`) - the
+`sounddevice` wheel bundles it on Windows and macOS but not there.
+
+**Default LLM backend**: `llama-server`, the official llama.cpp binary launched
+as a subprocess ([`mimora/llm_server_ctl.py`](mimora/llm_server_ctl.py)).
+`install.py` installs it (`step_llama_server`); the app fetches whatever is
+missing on first run, asking first. **Alternatives**: `"llm_backend":
+"lm-studio"` (LM Studio on `http://localhost:1234`, or `"lm_studio_host"`
+elsewhere on the network), or `"off"` - no LLM at all, phrases are the source
+text's own sentences taken verbatim in order
+([`mimora/phrase_source.py`](mimora/phrase_source.py)). Nothing in the project
+installs or imports llama-cpp-python.
 
 ## Architecture
 
-- [`mimora/app.py`](mimora/app.py) - `PronunciationTrainerGUI`: Tkinter GUI, recording, the Prompt→Record→Analyze→Feedback→Loop state machine, threading orchestration; the LLM-server subprocess lifecycle is delegated to [`mimora/llm_server_ctl.py`](mimora/llm_server_ctl.py). Module-level `run()` is the startup sequence (root logging, the first-run window, then the GUI) and the only thing `cli.py` calls. This file was `main.py` in the project root until the entry point landed; it moved because a root `main.py` added to the wheel would occupy the import name `main` for every package in the environment.
-- [`mimora/cli.py`](mimora/cli.py) - the command line entry point, target of `[project.scripts] mimora = "mimora.cli:main"`. Exists purely for ordering: `bootstrap.early_init()` only works before the libraries it configures are imported, and `--version` must answer without waiting for torch, so both have to happen before `mimora.app` is imported - which means neither can live in it. Hence the function-local `from mimora import app`, which is load-bearing and not a style choice. **Stdlib-only at module level** (plus `bootstrap`, itself stdlib-only). [`mimora/__main__.py`](mimora/__main__.py) is a three-line shim over the same `main()` so `python -m mimora` works when the console script is not reachable (`Scripts` missing from PATH on Windows, a relocated virtual environment); it holds no logic, because a module executed as `__main__` and also imported under its real name exists twice in one process.
-- [`mimora/bootstrap.py`](mimora/bootstrap.py) - early process setup for the entry point, stdlib-only. `early_init()` also sets **`DISABLE_SAFETENSORS_CONVERSION=1`**: with a `.bin` repo and an online process, `from_pretrained` starts a background `Thread-auto_conversion` that opens a conversion PR on the Hub and downloads the converted weights from `refs/pr/<n>`. Mimora never asks for safetensors, so that is gigabytes nobody requested - and killed by the app exiting it leaves `blobs/<sha>.incomplete` behind, which `loader.models_cached` reads as "not cached", so a complete repo is reported missing at every start and no download clears it (the download does not need that file). One online session is enough to do this to a cache; `model_fetch._sweep_incomplete_blobs` is what heals one that already has such a file. `early_init()` runs BEFORE the heavy mimora.* imports (it is called in `cli.py`, whose whole purpose is to be importable without them); `setup_logging(log_file)` runs AFTER them, at the top of `app.run()` (basicConfig with force=True replaces handlers auto-installed during the imports). The two-phase split is load-bearing - do not merge or reorder the calls, and note that the two phases now sit in different modules, which is what keeps the ordering true for all three launch forms. Every run opens with `_log_header()`: an 80-column rule as the literal first line, then the build and pid, then the full command line (`sys.executable` + `sys.argv`, which is what distinguishes a source checkout from an installed console script - the difference `paths.py` branches on). It is emitted through `logging` with the handlers' formatter swapped for a bare one and restored in a `finally`, because a rule with a timestamp in front of it is not a rule; the version is stated there and deliberately nowhere else. `setup_logging(log_file, append=False)` also owns the **log continuity across an in-session restart**: `append=True` opens `logs/main.log` with `mode="a"` and repeats that header (preceded by a blank line) as the seam instead of truncating, which is what `--append-log` selects (`bootstrap.APPEND_LOG_FLAG`, declared as an argument in `cli.py` and appended to the relaunch command by `lifecycle.spawn_replacement()`, so the two restart paths - after the first-run window and after a restart-only setting - keep one file for the whole session). A fresh launch still starts an empty log, deliberately: the file stays one session long. `log_file_mode()` exposes the same decision to the one log that is opened directly rather than through `logging`, `logs/llm_server.log` in `llm_server_ctl.py`.
-- [`mimora/session.py`](mimora/session.py) - `SessionState`: per-run score tally (distinct-phrase count, mean of per-phrase *best* scores with raw/graded formatting, the current phrase's attempt list for the ring's dot column) and the bounded attempt history with trend arrows. Pure data, no Tk; `app.py` owns the instance and forwards its outputs to the view (`update_session_stats` / `render_history`). Unit-tested in `tests/test_session.py`.
-- [`mimora/playback.py`](mimora/playback.py) - `PlaybackController`: the per-playback stop-event lifecycle plus the talking-mouth coupling. `new_event()` installs a fresh stop event per playback (Tk main thread only), `stop()` supersedes the current one, `play_with_face()` is the blocking chokepoint around `TTSManager.play_array` that also drives the FaceWidget's loudness track, `play_async()` the fire-and-forget wrapper, `finished()` the identity-guarded Ready-status restore. Composed by `app.py` with the Tk root, the view facade, the TTSManager and the shutdown event.
-- [`mimora/ui.py`](mimora/ui.py) - `TrainerView`: the view facade `app.py` composes. Owns the window chrome (header, status bar, tip line), the control row with the mic button, the `enter_*` intent methods and the feedback orchestration (`show_feedback`), and delegates panel-local work to per-panel classes: [`mimora/ui_practice.py`](mimora/ui_practice.py) (`PracticePanel`, collapsible source-text editor), [`mimora/ui_hero.py`](mimora/ui_hero.py) (`HeroCard`: phrase with clickable words, translation, and the score row - the FaceWidget on the left, then the SCORE column and WORK ON badges, and the `ProgressRing` on the right - session average of per-phrase bests plus the current phrase's attempt dots), [`mimora/ui_prosody.py`](mimora/ui_prosody.py) (`ProsodyPanel`, pitch/energy sparklines with the cached last result) and [`mimora/ui_history.py`](mimora/ui_history.py) (`HistoryPanel`, scrollable attempt list). Shared palette/fonts/wheel helpers and the hover tooltip live in [`mimora/ui_theme.py`](mimora/ui_theme.py) (importing it also disables ttkbootstrap's classic-widget autostyle hook). The controller-facing API is unchanged by the split; `ui.py` re-exports `THEME`, `FONT_FAMILY`, `WHEEL_EVENTS` and `wheel_scroll_units` for `settings_window.py`.
-- [`mimora/engine.py`](mimora/engine.py) - engine dispatcher: binds the backend chosen by `config.ENGINE` (`phoneme` default, `acoustic` alternative, `none` = scoring off) and exposes one `analyze(...)` interface, so `app.py` is engine-agnostic and only the selected engine's weights load. `pronunciation/none/` is a no-op engine returning `PronunciationResult(scored=False, passed=True)`; the GUI renders unscored results neutrally (`ui.py _show_unscored_feedback`).
-- [`pronunciation/phoneme/speech.py`](pronunciation/phoneme/speech.py) - **default** pronunciation engine (text-only reference): espeak reference phonemes vs a wav2vec2 phoneme recognizer, feature-weighted edit distance, mapped to a calibrated 0–5 grade. Model calibration lives in `pronunciation/phoneme/<lang>_model_calibration.json` (committed, selected by espeak language); a per-user `phoneme_good` override in `config/calibration_phoneme.json` (gitignored, shaped `{lang: {users: {name: ...}}}`). Samples appended to `logs/phoneme_samples.jsonl`. No GUI dependency. The two calibration files are different in KIND, which is why they no longer sit in the same directory: the model one ships with the code, the user one is state this machine produced, and an installed package's own directory is no place to write state to. The library still defaults to `calibration.json` beside itself so host-less use keeps working; the app overrides it via `AnalyzerConfig.calibration_file`, and `current_calibration_file()` is what every read and write goes through.
-- [`pronunciation/acoustic/speech.py`](pronunciation/acoustic/speech.py) - alternative pronunciation engine (adapted from OpenPronounce). Single entry point `analyze(user_audio, expected_text, reference_audio) -> PronunciationResult`. Wav2Vec2 embeddings + per-step cosine DTW, phoneme/word error rates. Scoring uses a calibratable acoustic floor (`config/calibration_acoustic.json` overrides `config.PRONUNCIATION_ACOUSTIC_GOOD`; injected the same way as the phoneme engine's, see above); every attempt's raw components are appended to `logs/acoustic_samples.jsonl`. No GUI/Tkinter dependency. Prosody is no longer computed here (returns `prosody={}`) - see `mimora/prosody.py`.
-- [`mimora/prosody.py`](mimora/prosody.py) - engine-agnostic prosody layer: F0/energy contour extraction (librosa/sklearn, no torch). `app.py` calls `compute_prosody(user, reference)` after `analyze` (via `_compute_prosody_safe`, skipped entirely while the prosody block is collapsed (`show_prosody`) - pyin pitch tracking is expensive on slow machines) and fills `result.prosody`, so the pitch/energy charts work identically regardless of the active engine. Pure plotting helpers (`to_semitones`, `resample_series`) stay in [`mimora/prosody_utils.py`](mimora/prosody_utils.py).
-- [`pronunciation/acoustic/calibrate.py`](pronunciation/acoustic/calibrate.py) - on-request semi-automatic calibration: fits the acoustic floor from collected samples and writes `config/calibration_acoustic.json` (`--dry-run` to preview). It reaches that path the same way the app does, by calling `engine.configure("acoustic")` first.
-- [`mimora/audio_io.py`](mimora/audio_io.py) - shared audio-device infrastructure depended on by both the mic and speaker paths (so neither depends on the other). Exports `reset_portaudio()` (shared PortAudio reset used by recording and playback), `uses_winsound()` (single source of truth for which playback path is taken), `WINSOUND_AVAILABLE` and the winsound lead-in constants. The coordinating `AUDIO_LOCK` and pipeline `AUDIO_SAMPLE_RATE` stay in [`config.py`](mimora/config.py) with the other `AUDIO_*` settings. (The synthesis rate is no longer a constant here: it is a property of the active TTS backend, `TTSManager.sample_rate`.)
-- [`mimora/tts.py`](mimora/tts.py) - `TTSManager`: facade over per-variant synthesis backends selected by profile data (`config.TTS_BACKEND`, registry `TTS_BACKENDS`): `KokoroBackend` (torch, 24 kHz; English) and `SupertonicBackend` (ONNX, 44.1 kHz; Spanish - weights OpenRAIL-M, cached in `model_cache/supertonic3/` via `SUPERTONIC_CACHE_DIR`). `synthesize()` returns the waveform at `TTSManager.sample_rate` (the backend's native rate - app.py reads this property everywhere instead of a constant); `play_array(waveform, sample_rate)` plays any waveform. Also exports `loudness_envelope(waveform, sample_rate, fps)` (per-frame RMS → 0..1 track that drives the talking mouth - see [`face_widget.py`](mimora/face_widget.py)). The PortAudio/winsound device helpers it uses live in [`mimora/audio_io.py`](mimora/audio_io.py).
-- [`mimora/face_widget.py`](mimora/face_widget.py) - `FaceWidget`: cartoon articulation face shown on a Tk Canvas. A filled talking mouth opens/closes during playback; a smiley (plus eyebrows and blinking) reflects the score while idle. Frames are rendered by Pillow at 4x supersampling (LANCZOS downscale = antialiasing Tk Canvas lacks) and cached per quantized state, so steady-state animation is an image swap. Deps: stdlib `tkinter` + Pillow. The mouth is driven by `play_levels(levels, fps)` - a pre-computed loudness track the widget's own `after`-loop replays by wall-clock - rather than a live audio callback (see the Windows-audio note below).
-- [`mimora/progress_widget.py`](mimora/progress_widget.py) - `ProgressRing`: circular session-average gauge on the right of the hero score row (mirrors the face on the left), with a vertical attempt-dot column on its left flank - one dot per take of the *current* phrase, bottom-up, coloured by quality (theme good/warn/bad from the score fraction); only the last few fit (column height = ring), older dots drop off the bottom. A `tk.Frame` holding a dots Canvas, the ring Canvas and a count Label (grid, so the count centres under the ring). The ring (track + fill arc with round caps) and the dot column are rendered by Pillow at 4x supersampling (LANCZOS downscale for the antialiasing Tk Canvas lacks); the numbers (average, "/ max", phrase count) are plain Tk text in the app font, so no TrueType font file is needed. Driven by `set_progress(value, maximum, count)` and `set_attempts(scores)` (empty list clears the dots - `ui.py enter_reference_playing` does this per new phrase); starts empty ("0 phrases", no fill, no dots). The file is named generically on purpose - `ProgressRing` is the current shape; a later redesign swaps the class without moving the import. Deps: stdlib `tkinter` + Pillow. This holds the session tally that previously sat in the status bar (see `ui.py update_session_stats`).
-- [`mimora/lifecycle.py`](mimora/lifecycle.py) - process-exit helpers, Tk-free: `hard_exit()` (TerminateProcess on Windows to dodge the CUDA DLL-detach crash, `os._exit` elsewhere) and `spawn_replacement()` (detached self-relaunch for the settings restart). The command it spawns comes from `relaunch_command()`, which reconstructs how THIS process was started rather than assuming: `sys.executable` in front for a `.py`/`.pyw` script path, `-m <package>` when `__main__.__spec__` names one (executing `__main__.py` by path instead would put the package directory on `sys.path` and break `import mimora` in a checkout), and `sys.argv` alone for a console script, since `python.exe mimora.exe` does not run at all. "Names one" is load-bearing: a Windows console script is a launcher with a zip archive appended, so its `__main__` **has** a spec, named literally `"__main__"` - reading that as a module produced `python.exe -m __main__` and the app closed instead of restarting, which is what the first live run of an installed package found. `spawn_replacement()` then appends `bootstrap.APPEND_LOG_FLAG` to that command (guarded against repeating it, since `sys.argv` may already carry it from an earlier restart) so the replacement continues `logs/main.log` rather than truncating it - deliberately not inside `relaunch_command()`, which answers "how was this process started" and nothing else. Unit-tested in `tests/test_lifecycle.py`, where the two forms that only exist in an installed package are stubbed. `app.py` keeps the orchestration: `quit_app` / `restart_app` run `_shutdown_runtime` first (playback, recorder, LLM-server subprocess), then call these.
-- [`mimora/llm.py`](mimora/llm.py) - `LLMManager`: OpenAI-compatible client. `generate_phrase()` produces one practice phrase per request (non-streaming). The model name is `PLACEHOLDER_MODEL` here rather than a config constant: both supported servers ignore the field (llama-server serves the GGUF it was launched with, LM Studio serves what is loaded), so nothing configures it and the string only exists because the OpenAI client demands one. `LLMManager(model=...)` is the escape hatch for a server that does route by name. The API keys are the opposite case - `config.LLM_SERVER_API_KEY` is a real shared secret, passed to the binary as `--api-key` and sent back as the bearer token.
-- [`mimora/llama_server_fetch.py`](mimora/llama_server_fetch.py) - standalone downloader for the official llama-server binary (the `llama-server` backend). Stdlib-only and side-effect-free on import, so `config.py` and `install.py` (which runs before the requirements are in place) can both use it. Installs a **pinned** llama.cpp release into `bin/llama/` (gitignored): sha256 per asset, staged unpack, then `--version` and `--list-devices` probes - the device probe is what catches llama.cpp's *silent* fallback to CPU when the cudart DLLs are missing or of the wrong major version. `VARIANTS` covers **Windows x64** (`.zip` assets, CUDA or CPU, chosen from the driver's CUDA version), **Linux x64** (`.tar.gz` assets, Vulkan or CPU) and **macOS** (`.tar.gz` assets, one build per architecture: Metal on Apple Silicon, CPU-only on Intel because llama.cpp builds that asset with `GGML_METAL=OFF`). Each macOS row also carries `Variant.min_macos`, the `minos` of the asset's own `LC_BUILD_VERSION` (13.3 for the Intel build, which llama.cpp targets explicitly; **26.0** for the Apple Silicon one, which inherits its CI runner's macOS because the workflow sets no deployment target). `select_variant()` compares it against `detect_macos_version()` and raises `UnsupportedPlatformError` *before* the download, which is the difference between install.py recording a manual step and failing one - an explicit `--variant` still installs it, exactly like `min_driver_cuda`. What stays unverified is the Metal `device_pattern` (`MTL0`), read off the ggml sources, and the Intel build's CPU baseline: it is compiled `-march=native` for llama.cpp's CI runner and no header says which instructions that needs, so an older Intel Mac only finds out by dying on one - hence `_probe`'s signal branch and `_start_failure_hint()`. `select_variant()` picks the macOS build by architecture and asks `is_rosetta()` (`sysctl.proc_translated`) first, because an x86_64 Python under Rosetta 2 reports `x86_64` on an M-series Mac and would otherwise install the CPU build on a machine with a GPU. Unit-tested in [`tests/test_llama_server_fetch.py`](tests/test_llama_server_fetch.py), which stubs the OS, the architecture and every subprocess, so what a Mac would have confirmed is at least written down. There is no CUDA build for Linux - llama.cpp publishes CUDA binaries for Windows only - so the Linux GPU build is Vulkan, and since its usability cannot be established before the download (loader, ICD, a device behind both; WSL2's NVIDIA driver publishes no ICD), `linux-vulkan-x64` names `linux-cpu-x64` as its `Variant.fallback`: a failed *device check* alone (`DeviceCheckError`, not a download or checksum failure) makes `ensure_llama_server` install the fallback instead, logging the reason and recording the variant actually installed in the stamp. `python -m mimora.llama_server_fetch [--variant ...|--dry-run|--force|--list]`; `ensure_llama_server()` / `installed_exe()` are the API, plus `list_devices()` / `installed_variant()` for the two device probes built on them (`llm_server_ctl.log_compute_devices()` at every app start, `mimora/detect_hardware.py` when it writes `hardware_config.json`) and `detect_driver_cuda()`, which `install.py` also uses to pick its torch wheel series - it is the only copy that knows the 610 drivers renamed the `nvidia-smi` header field to `CUDA UMD Version`. `install.py` calls `ensure_llama_server()` in `step_llama_server`, and the app's first-run window calls it too when the binary is missing; `config.py` and the controller themselves only *read* what is already installed, which is why "where is the binary" is `config.resolve_llama_server_path()`, a function called when the command line is built, rather than a constant fixed while `config` was imported - the first-run download happens after that import.
-- [`mimora/model_fetch.py`](mimora/model_fetch.py) and [`mimora/gguf_fetch.py`](mimora/gguf_fetch.py) - two more downloaders, alongside `llama_server_fetch.py` and `spacy_model_fetch.py`. `model_fetch` owns everything a run always needs (the two Wav2Vec2 repos, Kokoro, NLLB, plus Supertonic in its own cache dir); `gguf_fetch` owns the GGUF chat model. The split follows what is skippable: with `llm_backend` `lm-studio` or `off`, neither the binary nor the GGUF is needed, while `model_fetch`'s models are chosen by the active engine and TTS backend rather than by a setting. Both export "is it downloaded?" predicates (`hf_repo_cached`, `supertonic_cached`, `gguf_present`) plus `ensure_*` and a CLI, but deliberately no "everything that is missing" aggregate - which set matters depends on the active engine and TTS backend, i.e. on `config`, so that question is answered in `mimora/first_run.py` instead, and both keep huggingface_hub out of the module-level imports so `install.py` can import them before the requirements step. **Neither may import `config.py`**: config flips `HF_HUB_OFFLINE=1` once the models are cached, which would switch the network off exactly when a download is wanted - the dependency runs the other way, config takes `MODEL_CACHE_DIR`, `DEFAULT_SUPERTONIC_CACHE_DIR` and `supertonic_cached()` from `model_fetch`. The hub cache layout is `model_fetch.hf_hub_dir()` and nowhere else - `first_run` asks the same filesystem question without `prepare_hf_env()`'s side effects, and the `hub` segment is huggingface_hub's own to change. `prepare_hf_env()` (HF_HOME, the Supertonic cache var, and the Windows hf-xet/symlink workaround for `WinError 1314`) lives in `model_fetch` and is called by every download; its symlink probe runs once per process. `ensure_hf_models` and `ensure_gguf` also take an optional `tqdm_class`, huggingface_hub's own progress-bar hook, forwarded untouched and omitted from the call when unset (the library is not pinned, so an older one without the argument still works).
-- [`mimora/spacy_model_fetch.py`](mimora/spacy_model_fetch.py) - the fourth downloader, and the only one whose model no Mimora code asks for: Kokoro builds misaki, whose English G2P constructor calls `spacy.cli.download` when the `en_core_web_sm` pipeline is missing, and that shells out to `sys.executable -m pip`. A `uv tool` environment has no pip, so the subprocess fails and `spacy.util.run_command` calls `sys.exit` - a **SystemExit inside the loader thread**, which is why an installed package used to sit on "Loading models..." with nothing in the log (`app.py load_components` now catches `BaseException` for exactly this reason). Declaring the model as a dependency is not available: spaCy models are published on `explosion/spacy-models` release pages, not on PyPI, and a PyPI package may not name a URL dependency. So the pinned wheel is downloaded (sha256, staged unpack, atomic swap - the same shape as `llama_server_fetch`), unpacked into `paths.spacy_model_dir()` under the data root rather than into site-packages (which `uv tool upgrade` rebuilds), and that directory is **appended** to `sys.path` by `activate()`, called from `config.py` next to `ensure_dirs()`. Appended, not inserted: a model somebody installed into the environment on purpose keeps winning. The version tracks spaCy's minor (`spacy>=3.8,<3.9` in pyproject.toml pins the other half of the pair). Presence is `model_available()` - "would this interpreter find it", through `importlib.metadata` - so a checkout whose venv already has the model is offered no download. **Must not import `config`**, same rule as the other three; it does not import spaCy either, because `install.py` and the first-run plan both call it before the requirements are guaranteed. `python -m mimora.spacy_model_fetch [--list|--force|--measure]`; `--measure` prints the wheel's sha256 and size, which is how the pin in `models_info.SPACY_EN` gets its numbers, since explosion publishes no checksums. Unit-tested in [`tests/test_spacy_model_fetch.py`](tests/test_spacy_model_fetch.py).
-- [`mimora/first_run.py`](mimora/first_run.py), [`mimora/first_run_download.py`](mimora/first_run_download.py) and [`mimora/first_run_window.py`](mimora/first_run_window.py) - the app's own "nothing is downloaded yet" path, run from `app.run()` **before** `PronunciationTrainerGUI` is constructed (a refusal rewrites `llm_backend`, which the constructor branches on). `first_run.build_plan()` is the single place the dialog and the progress bar read from: one record per component (label, measured size, present or not, and for the llama-server binary the build variant - resolved once, so the download cannot be a different build from the one whose size was quoted) split into three levels, and **what a refusal means is the criterion** - the level is what `ensure_ready` maps to a settings.json write, so two components share one only when refusing them means the same thing: a **required** level (the active TTS backend's model plus the active engine's recognizer; refusing leaves no product, so the buttons are Download and Quit), an **optional** one (llama-server plus the GGUF, only when `llm_backend` is `llama-server`; refusing writes `llm_backend: "off"`) and a **translator** one (NLLB, only when `translation_language` is set; refusing writes `translation_language: ""`). The last one exists because enabling translation cannot download anything by itself - `config` decides at import time whether the process may reach the network - so `app.py.on_translation_language_changed` persists the setting and restarts into this window instead. Each level carries its own checkbox and its own flag on `Outcome`; folding two into one boolean means a single Skip switching off a feature nobody declined, which is why `_on_secondary` asks what is *still missing* rather than assuming. Presence is asked of the *app*, not of the fetchers: `config.resolve_llama_server_path()` (which also sees a binary on PATH), `config.EXTERNAL_MODEL_PATH`, and `loader.models_cached` - the same predicate config's offline gate uses. When downloading could not produce a server the app would actually launch, `Plan.llama_server_blocked` names the reason, the optional level is **empty** (a GGUF without a server starts nothing), and the way out is stated on screen: a per-reason note in the first-run window, and again in `app.py._server_failure_message()` when the backend later fails to start, which is what such a machine does at every launch. Two reasons: no build pinned for the platform, and a `"llama_server_path"` naming a file that is not there - the second is *not* offered a download precisely because the download would land in `bin/llama/` while the setting kept winning in the resolver. A `Plan` is a snapshot and is never rebuilt, so the window subtracts what it has fetched (`still_missing`) before deciding anything after a download has started - otherwise a run that completed the required level and then failed on the optional one would offer "Quit" instead of "Skip" and throw the finished download away. `first_run_download` runs the fetches on a daemon thread into one lock-guarded `ProgressState` that a single `root.after(100, ...)` reads (and which names the components that finished, for exactly that subtraction), and wraps them in `_hub_online()`, which lifts `HF_HUB_OFFLINE` for the duration - config sets it during import once the hub repos are cached, which switches the network off exactly when the GGUF still has to be downloaded. `first_run_window` owns its own short-lived `tk.Tk()` root and **must not build ttk widgets**: ttkbootstrap's `Style` singleton latches onto the root of the first one and outlives it. `ensure_ready()` returns one of `READY` / `CANCELLED` / `RESTART` rather than a bool, and it returns `RESTART` **whenever the plan changed** (compared before and after the window, by missing-component key - which is also the loop guard: a component can be reported as fetched while the plan still calls it missing, and restarting on "the window ran" would reopen the same window forever; that machine starts instead, with a warning naming the repo). The reason to restart at all is that `config` is stale: it read the machine while it was being imported and the window then changed exactly what it read. Two things go stale. The hardware probe is the older one (the llama-server binary has just landed, and whether it reaches the GPU is the one thing `detect_hardware` cannot answer before it exists, but `config` read `hardware_config.json` at import). The **offline gate** is what made the restart unconditional rather than conditional on the probe: `config` decides during its import whether huggingface_hub may reach the network, from what was cached AT THAT MOMENT, so a process that has just downloaded the last missing model spends its whole session online, revalidating models that are now on disk - measured at ~70 requests and ~10 s, plus transformers' auto-conversion thread pulling safetensors in the background. It looked harmless for a while only because `spawn_replacement()` passes no `env=`, so a child inherits `HF_HUB_OFFLINE=1` from a parent that had set it; a cold launch got the storm instead. `app.run()` relaunches rather than re-applying anything live - these values are read once, all over the code - and it cannot loop, because the next process finds nothing missing and returns before the window. It is cheap exactly at that point: nothing heavy is loaded yet, so `spawn_replacement()` + `hard_exit()` is the whole procedure, with none of `restart_app`'s shutdown. What triggers it is the first-run window having run at all, i.e. something was missing; on a machine where everything is present `ensure_ready` returns `READY` before the probe is reached. The absence of `hardware_config.json` is the loop guard on top of that, not the trigger - it is what stops the relaunched process from probing again - so deleting the file by hand does NOT re-run the detector from the app (`python -m mimora.detect_hardware` does). A fact on disk rather than a flag, and it happens at most once per installation.
-- [`mimora/models_info.py`](mimora/models_info.py) - the model catalogue: one record per model with its repo id, display label and **measured** download size in decimal MB. Pure data, imports nothing but `typing` (a unit test enforces that), which is exactly what lets `config.py` and the fetchers share it despite the fetchers being forbidden to import `config`. It is the single place a repo id is written down - `config.WAV2VEC2_MODEL_NAME`, `model_fetch.HF_MODEL_REPOS`, `gguf_fetch.GGUF_REPO_ID` and the two loading calls in `tts.py` (`KModel(repo_id=...)`, `TTS(model=...)`) all **bind** to these records rather than restating the strings, which is how the same id used to end up spelled out in three files. The `tts.py` pair matters most: those are the live synthesis paths, so a literal there could send the first-run download after one repo while the app loaded another. Sizes are hardcoded on purpose (the first-run dialog must name a volume before the user agrees to it, so it cannot afford a network round-trip first) and re-snapped with [`tools/measure_model_sizes.py`](tools/measure_model_sizes.py). The llama-server binary is deliberately absent: an asset's size lives next to its name and sha256 in `llama_server_fetch.Asset`, because bumping the pinned release rewrites all three together. `size_mb` means bytes over the network, NOT disk usage - the HF cache on Windows without symlink privileges copies rather than links and takes roughly twice as much, so a free-space warning must not reuse these numbers.
-- [`mimora/llm_server_ctl.py`](mimora/llm_server_ctl.py) - `LLMServerController`: lifecycle of the llama-server subprocess (the `llama-server` backend). `llama_server_command()` is a pure builder holding the tuning that must never be left to the binary's defaults (`--ctx-size`, `--parallel 1`, `--cache-reuse 256`), unit-tested in `tests/test_llm_server_ctl.py`; `_build_command()` wraps it and returns `None` with a logged reason on a bad setup, so `start()` has one failure path. `start(llm_mgr)` launches the process and blocks until it answers (readiness polled via `LLMManager.check_connection`); `shutdown()` terminates it with a 5-second kill fallback and is safe to call from two threads at once (loader thread + Tk thread in `quit_app`).
-- [`mimora/recorder.py`](mimora/recorder.py) - `AudioRecorder`: microphone capture thread with silence-based auto-stop, device selection, normalization and the diagnostic WAV dumps; returns the take as one 16 kHz mono array.
-- [`mimora/translator.py`](mimora/translator.py) - `TranslatorManager`: offline NLLB-200 translation of the practice phrase for the translation panel (loaded lazily, CPU by default - `config.TRANSLATOR_DEVICE`). **Loading is not downloading here**: the weights are guaranteed present before `load_model()` runs, because selecting a translation language while they are missing restarts into the first-run window instead (`app.py._offer_translator_download`, `first_run.py`'s translator level). That is the fix for the one downloader that had no UI at all - `from_pretrained` used to fetch 2.5 GB as a side effect of a load, on a worker thread, with the window showing nothing for the ~25 s it took. `is_loaded()` is the predicate that lets `app.py` tell a failed load from translation simply being off, since `translate()` returns `""` for both.
-- [`mimora/loader.py`](mimora/loader.py) - pure, stateless config-loading helpers (JSON parsing, setting validation, device probe) used by `config.py`. `detect_device` trusts the detected value in one direction only: `"cpu"` short-circuits (no torch import, and a machine that has gained a GPU is merely slower - `warn_if_gpu_unused` says so), while `"cuda"` is re-checked against the installed torch, because `hardware_config.json` outlives the environment that wrote it (`uv tool upgrade` onto a CPU-only wheel, or a data directory carried to another machine) and a stale `"cuda"` kills the app on Kokoro's `.to(...)` before the window appears. Unit-tested in `tests/test_loader.py`, with torch stubbed in `sys.modules`.
-- [`mimora/paths.py`](mimora/paths.py) - where every file lives, and the only module that knows. **Three roots, deliberately not one**: `data_root()` is what this machine WRITES (`config/`, `models/`, `model_cache/`, `bin/llama/`, `logs/`); `shipped_root()` is the read-only files INSIDE this package (`mimora/texts/`, `mimora/themes/`); `resource_root()` is the same kind of file one package over, and its only tenant is `pronunciation/phoneme/`'s committed `<lang>_model_calibration.json`. Running from a clone all three are the same tree, which is why one `BASE_DIR` used to answer everything; installed as a package they are not, and a wholesale move of `BASE_DIR` to the user-data directory would have sent the app looking for committed resources among the downloads. The split between the second and third is packaging, not taste: **setuptools puts a non-Python file into the wheel only from inside a package**, so the starter texts and theme schemas that used to sit at the top of the source tree built and installed cleanly and were simply absent afterwards - hence `[tool.setuptools.package-data] mimora` in pyproject.toml, and `tests/test_paths.py ShippedRootTests` as the guard. `data_root()` resolves as `MIMORA_HOME` → the source tree → the OS user-data directory (`%APPDATA%\Mimora`, `~/Library/Application Support/Mimora`, `$XDG_DATA_HOME/mimora`); the source-tree test is the `pyproject.toml` next to the package and **not** a "site-packages" test on `__file__`, which misreports editable installs. The layout under the data root is identical in both modes on purpose: one set of instructions, one set of log paths, and a directory a user can carry between machines. **Stdlib-only** - `install.py` reads it before the requirements exist, which rules out `platformdirs` and is the same constraint (and the same reason) as `models_info.py`; that is also what lets the modules forbidden to import `config` - the three fetchers and `detect_hardware` - import this one instead. `config.py` binds `BASE_DIR`, `RESOURCE_DIR`, `SHIPPED_DIR`, `CONFIG_DIR` and `LOG_DIR` from it at import and calls `ensure_dirs()` there, which is where the directories come into existence. `ensure_dirs()` creates what a documented scenario would otherwise need a manual mkdir for: `config/` (without it `loader.save_setting` fails on every write and only says so on stderr) and `config/themes/`, the one entry nothing writes to but the place users are told to put a theme. Unit-tested in `tests/test_paths.py`, which stubs the marker and the platform because only one of the three OS answers is observable on any given machine.
-- [`mimora/phoneme_examples.py`](mimora/phoneme_examples.py) - static IPA phoneme → example word table backing the "WORK ON" badges (tooltip text and the example word spoken on a badge click), per language.
-- [`mimora/phrase_source.py`](mimora/phrase_source.py) - `SourceTextPhraseProvider`: the "off" LLM backend's phrase source, stdlib-only (importable without openai). Duck-typed drop-in for `LLMManager` in the generation path (`app.py` only calls `generate_phrase` on it): returns the source text's sentences verbatim, sequentially with wraparound; a text edit (detected by hash) restarts from the first sentence. Also home of the shared `split_sentences` helper `LLMManager._split_sentences` delegates to. Unit-tested in `tests/test_phrase_source.py`.
-- [`mimora/config.py`](mimora/config.py) - all configuration (device, model names, score threshold, practice-text path, phrase-generation settings, audio settings) plus the language model: `LANGUAGE_PROFILES` (language → profile with variants, engines, prompts, texts), assembled from the per-language pure-data modules in [`mimora/languages/`](mimora/languages/) (one `PROFILE` dict each, e.g. `english.py`, `spanish.py`), and the derived per-run constants (`PRACTICE_LANGUAGE`, `ACCENT`, `TARGET_LANGUAGE`, `ESPEAK_LANGUAGE`, `TTS_*`, `SOURCE_FLORES_CODE`, `PHONEME_EXPERIMENTAL`). Public helpers: `language_choices()`, `accent_choices(language)`, `accent_voices(accent, language)`, `accent_default_voice(accent, language)`, `default_accent(language)`, `available_engines(language)`, `engine_experimental(engine, language, accent)`, `translation_targets(language)`. User overrides live in `config/settings.json`; UI themes are read from `config/themes/` and from the schemas shipped in `mimora/themes/`, user copy first (`_theme_file`, `available_themes`). Also home of the **offline gate**: `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1` are set during import, but only once every repo in `_CACHED_REPOS` is on disk - and that set is all-or-nothing, so one missing entry leaves the Hub online for *every* model, which costs dozens of HEAD requests at each start. Each entry is therefore conditional on what the run actually loads: the active engine's recognizer, the active TTS backend's repo, and NLLB **only when `TRANSLATION_LANGUAGE` is set** (it used to be unconditional, which meant the default installation - translation off - never went offline at all). The consequence of deciding this once, at import: nothing later in the process may start a hub download, which is why enabling translation restarts (see `first_run.py`) and why `first_run_download._hub_online()` exists for the one download that legitimately happens after the decision. `TRANSLATION_LANGUAGE` is defined *above* the gate for the same reason, and the gate reads the validated value, not the raw setting. Unit-tested in `tests/test_language_profiles.py` and `tests/test_settings_fields.py`; the gate's agreement with the first-run plan in `tests/test_first_run.py`.
-- [`mimora/settings_ctl.py`](mimora/settings_ctl.py) - `SettingsGlue`: the persistence mechanics around settings.json - `persist` (with suppression during reset), `persist_and_apply_live` (table-driven live config attrs), `sync_window` (mirror a main-window change into the open settings dialog) and `reset_to_defaults` (the "Default" button, dispatching only defaults that differ from the live values). Owns the `LIVE_CONFIG_ATTRS` / `SETTING_LIVE_ATTRS` tables; the dispatch itself (`on_setting_changed`, the `on_*_changed` handlers) stays in `app.py`, injected as callbacks. Unit-tested in `tests/test_settings_ctl.py`.
-- [`mimora/settings_window.py`](mimora/settings_window.py) - settings dialog (gear button in the header). Declarative model: every editable settings.json key is one `Field` (kind, choices, range, restart flag) grouped into `Section`s; `SettingsWindow` renders them into a scrollable column and stays passive - changes go to `app.py on_setting_changed`, which applies live effects and persists once via `mimora/settings_ctl.py` (restart-only keys are just persisted). Restart-only changes surface a "Restart now" offer that relaunches the process (`app.py restart_app`). The Language field lists `config.language_choices()`; the Accent field follows the selected language and is hidden when it has a single variant; the Engine field offers only `config.available_engines`; an experimental notice appears when the selected engine+language runs uncalibrated (`config.engine_experimental`); "Random voice per phrase" is disabled when the running variant has fewer than two voices. Includes a per-voice "Listen" preview (running language/variant only), "Cancel" (reverts everything changed while the window was open, then closes) and "Default" (`SettingsGlue.reset_to_defaults`: removes every override from settings.json - `config.USER_SETTING_DEFAULTS` / `reset_user_settings` - and applies the built-in defaults live without re-persisting them).
-- [`mimora/detect_hardware.py`](mimora/detect_hardware.py) - machine probe (RAM/CPU/GPU/VRAM/audio) writing `config/hardware_config.json`, whose `config` section supplies the machine-derived overrides `mimora/config.py` prefers over its defaults (`EXTERNAL_N_GPU_LAYERS`, `EXTERNAL_N_CTX`, `WAV2VEC2_DEVICE`, `DEVICE`). The torch devices among them are believed only as far as the installed torch allows: `loader.detect_device` re-checks a detected `"cuda"` (see its bullet above) and `config._model_device` caps `WAV2VEC2_DEVICE` and `TRANSLATOR_DEVICE` at the resulting `DEVICE`, so a per-model pin from a stale file cannot reach torch after the shared device has stepped down. Run as `python -m mimora.detect_hardware` from a checkout, or `mimora --detect-hardware` from an installed package - the second exists because an installed tool's environment has no interpreter on PATH that can `import mimora`, so the `python -m` form is unreachable exactly where a stale file is most likely (`uv tool upgrade` onto a different PyTorch build); `_refresh_command()` picks the spelling by `paths.repo_mode()` so the advice never names the wrong one. `install.py`'s `step_detect_hardware` does the same probe. It lives in the package, unlike everything else in `tools/`, on one criterion: `tools/` holds what the maintainer runs, this has to execute on the **user's** machine - and a packaged install has neither `tools/` nor `install.py`. **It must not import `config`**: `config` reads `hardware_config.json` at import time, so importing it here would snapshot the very file this module rewrites. Same rule as the fetchers: `paths` yes, `config` no. The GPU question it answers is **not** "is there a card" but "can the installed LLM binary use it": `_probe_llama_offload` asks `llama_server_fetch` for the stamped install in `bin/llama/` and matches `--list-devices` against the device pattern of the variant it was installed as. `None` (nothing installed, foreign binary, probe failed) leaves `build_config` on physical GPU presence, so the tool still writes the same numbers when run before the binary is fetched; only a provably CPU-bound install returns `False` and zeroes the LLM's VRAM budget. `probe_and_write()` is the API for in-app use and `main()` the CLI wrapper that prints; the split exists because `first_run_window` calls the former (see the restart note there). Also home of `warn_if_gpu_unused(device)`, called once from `app.run()`: the torch-side twin of `log_compute_devices`, warning when an NVIDIA driver is present while torch sits on the CPU - silent by nature, since the app works and is merely several times slower. It takes the device as an argument precisely because this module may not import `config`, never imports torch (`config.DEVICE` already answers "does torch see CUDA", and no user setting overrides it), and only reaches for nvidia-smi in the `cpu` case, so a machine already on the GPU pays nothing. The situation is reachable because a published package cannot name an index: PyPI's torch is CUDA-enabled on Linux and CUDA does not exist on macOS, so the gap is Windows with a card, and the fix is `--torch-backend auto` at install time. Unit-tested in `tests/test_detect_hardware.py`.
-- [`tools/preview_first_run.py`](tools/preview_first_run.py) - shows the first-run window in any of its nine states (`--state required|optional|translator|both|all-levels|half-failure|no-build|bad-setting|real`, `--list`) without a first run, because the window only appears on a machine that is missing something and that is never the machine it is being written on. It drives `FirstRunWindow` directly and never `ensure_ready()`, so nothing is written to settings.json; the fabricated states also use component keys no downloader claims, which makes Download harmless and doubles as the only easy way to see the "Download failed" branch. `half-failure` is the one mixed state: its first component is a real repo the machine already has, so that fetch genuinely succeeds without a request and the second, fabricated one then fails - the only cheap way to reach "the required level completed, the optional one did not", where the second button has to become "Skip" rather than "Quit". `translator` is the state to check after touching the levels: it is the one the app actually reaches on an installed machine (turning translation on restarts into this window with everything else present), so that block has to read correctly with nothing above it; `all-levels` is the opposite extreme and the only state that exercises every block's leading padding at once.
-- [`mimora/texts/practice_text.txt`](mimora/texts/practice_text.txt) - default source text loaded into the input panel at startup; the path comes from the active language profile (`texts/practice_text_es.txt` for Spanish), still spelled relative to `paths.shipped_root()`. It lives inside the package rather than in a `texts/` directory at the top of the tree so that an installed copy has it at all - see the packaging note under `mimora/paths.py`. The user's own texts get no directory of their own: the picker writes an absolute path.
-- [`mimora/themes/`](mimora/themes/) - the shipped UI color schemas (`dark_schema.json`, `light_schema.json`), inside the package for the same packaging reason. A theme is resolved by `config._theme_file()`, which looks in the user's `config/themes/` first and here second, so a user file of the same name replaces the shipped one and a new name adds a theme; `config.available_themes()` merges the two listings. The built-in `_DARK_THEME` dict stays the last-resort fallback and the definition of which colour keys are valid, so a missing or broken schema degrades rather than failing.
+### Controller and view
+
+- [`mimora/app.py`](mimora/app.py) - `PronunciationTrainerGUI`: the Tkinter
+  controller, recording, the Prompt→Record→Analyze→Feedback→Loop state machine,
+  threading orchestration. Module-level `run()` is the startup sequence (root
+  logging, first-run window, GUI) and the only thing `cli.py` calls.
+- [`mimora/cli.py`](mimora/cli.py) - the console-script entry point. Exists
+  purely for ordering: `bootstrap.early_init()` only works before the libraries
+  it configures are imported, and `--version` must answer without waiting for
+  torch, so neither can live in `app.py`. The function-local `from mimora import
+  app` is load-bearing, not a style choice. **Stdlib-only at module level.**
+  [`mimora/__main__.py`](mimora/__main__.py) is a shim over the same `main()`.
+- [`mimora/bootstrap.py`](mimora/bootstrap.py) - early process setup,
+  stdlib-only. Two phases that **must not be merged or reordered**:
+  `early_init()` runs before the heavy imports (from `cli.py`),
+  `setup_logging()` after them (from `app.run()`, `force=True` replacing
+  handlers installed during the imports). Owns log continuity across an
+  in-session restart (`--append-log` / `APPEND_LOG_FLAG`) and the
+  `DISABLE_SAFETENSORS_CONVERSION` switch.
+- [`mimora/ui.py`](mimora/ui.py) - `TrainerView`: the view facade `app.py`
+  composes. Window chrome, control row, `enter_*` intent methods, feedback
+  orchestration; delegates panel-local work to
+  [`ui_practice.py`](mimora/ui_practice.py) (source-text editor),
+  [`ui_hero.py`](mimora/ui_hero.py) (phrase, translation, score row),
+  [`ui_prosody.py`](mimora/ui_prosody.py) (sparklines) and
+  [`ui_history.py`](mimora/ui_history.py) (attempt list). Shared palette, fonts
+  and tooltip live in [`ui_theme.py`](mimora/ui_theme.py); importing it also
+  disables ttkbootstrap's classic-widget autostyle hook.
+- [`mimora/face_widget.py`](mimora/face_widget.py) - `FaceWidget`: cartoon
+  articulation face on a Tk Canvas, driven by a pre-computed loudness track
+  (`play_levels`) rather than a live audio callback. Frames rendered by Pillow
+  at 4x supersampling and cached per quantized state.
+- [`mimora/progress_widget.py`](mimora/progress_widget.py) - `ProgressRing`:
+  session-average gauge with a per-attempt dot column. Named generically on
+  purpose so a redesign swaps the class without moving the import.
+- [`mimora/session.py`](mimora/session.py) - `SessionState`: score tally and
+  bounded attempt history. Pure data, no Tk.
+- [`mimora/playback.py`](mimora/playback.py) - `PlaybackController`: per-playback
+  stop-event lifecycle plus the talking-mouth coupling. `play_with_face()` is
+  the blocking chokepoint around every `play_array` call.
+- [`mimora/settings_window.py`](mimora/settings_window.py) - the settings
+  dialog. Declarative: every editable key is one `Field` grouped into
+  `Section`s, and the window stays passive - changes go to `app.py`.
+- [`mimora/settings_ctl.py`](mimora/settings_ctl.py) - `SettingsGlue`: the
+  persistence mechanics around settings.json (persist, live-apply tables,
+  window sync, reset-to-defaults). The dispatch itself stays in `app.py`.
+
+### Engines and audio
+
+- [`mimora/engine.py`](mimora/engine.py) - dispatcher: binds the backend chosen
+  by `config.ENGINE` and exposes one `analyze(...)`, so `app.py` is
+  engine-agnostic and only the selected engine's weights load.
+- [`pronunciation/phoneme/speech.py`](pronunciation/phoneme/speech.py) -
+  **default** engine, text-only reference. Model calibration ships in
+  `pronunciation/phoneme/<lang>_model_calibration.json`; the per-user
+  `phoneme_good` override lives in `config/calibration_phoneme.json`. The two
+  are different in KIND, which is why they sit in different directories: one
+  ships with the code, the other is state this machine produced, and an
+  installed package's own directory is no place to write state to.
+- [`pronunciation/acoustic/speech.py`](pronunciation/acoustic/speech.py) -
+  alternative engine (adapted from OpenPronounce). Wav2Vec2 embeddings +
+  per-step cosine DTW. Calibratable floor in `config/calibration_acoustic.json`;
+  fitted on request by
+  [`pronunciation/acoustic/calibrate.py`](pronunciation/acoustic/calibrate.py).
+  No GUI dependency. Prosody is no longer computed here.
+- [`mimora/prosody.py`](mimora/prosody.py) - engine-agnostic prosody layer,
+  F0/energy contours (librosa/sklearn, no torch). Called by `app.py` after
+  `analyze`, skipped entirely while the prosody block is collapsed. Plotting
+  helpers in [`prosody_utils.py`](mimora/prosody_utils.py).
+- [`mimora/tts.py`](mimora/tts.py) - `TTSManager`: facade over per-variant
+  backends selected by profile data - `KokoroBackend` (torch, 24 kHz, English)
+  and `SupertonicBackend` (ONNX, 44.1 kHz, Spanish). `synthesize()` returns the
+  waveform at `TTSManager.sample_rate`, the backend's native rate, which callers
+  read as a property and never as a constant.
+- [`mimora/audio_io.py`](mimora/audio_io.py) - shared device infrastructure both
+  the mic and speaker paths depend on, so neither depends on the other.
+- [`mimora/recorder.py`](mimora/recorder.py) - `AudioRecorder`: capture thread
+  with silence-based auto-stop, device selection, normalization, diagnostic WAV
+  dumps. Returns one 16 kHz mono array.
+- [`mimora/phoneme_examples.py`](mimora/phoneme_examples.py) - static IPA
+  phoneme → example word table behind the "WORK ON" badges.
+
+### LLM and translation
+
+- [`mimora/llm.py`](mimora/llm.py) - `LLMManager`: OpenAI-compatible client,
+  one phrase per non-streaming request. The model name is a placeholder because
+  both supported servers ignore the field; `LLMManager(model=...)` is the escape
+  hatch for a server that does route by name.
+- [`mimora/llm_server_ctl.py`](mimora/llm_server_ctl.py) -
+  `LLMServerController`: subprocess lifecycle. `llama_server_command()` is a
+  pure builder holding the tuning that must never be left to the binary's
+  defaults; `start()` blocks until the server answers, `shutdown()` is safe from
+  two threads at once.
+- [`mimora/translator.py`](mimora/translator.py) - `TranslatorManager`: offline
+  NLLB-200 translation, loaded lazily, CPU by default. **Loading is not
+  downloading here** - the weights are guaranteed present, because selecting a
+  translation language while they are missing restarts into the first-run
+  window.
+
+### Configuration and paths
+
+- [`mimora/config.py`](mimora/config.py) - all configuration plus the language
+  model and the derived per-run constants. User overrides in
+  `config/settings.json`; themes from `config/themes/` first, then the schemas
+  shipped in `mimora/themes/`. Also home of the **offline gate**:
+  `HF_HUB_OFFLINE=1` is set during import, but only once every repo the run
+  actually needs is cached. That set is all-or-nothing, so each entry is
+  conditional on what this run loads - one unnecessary entry keeps the Hub
+  online for every model. The consequence of deciding this once, at import:
+  nothing later in the process may start a hub download.
+- [`mimora/loader.py`](mimora/loader.py) - pure, stateless config-loading
+  helpers. `detect_device` trusts the stored value in one direction only: `cpu`
+  short-circuits, `cuda` is re-checked against the installed torch, because
+  `hardware_config.json` outlives the environment that wrote it.
+- [`mimora/paths.py`](mimora/paths.py) - where every file lives, and the only
+  module that knows. **Three roots, deliberately not one**: `data_root()` is
+  what this machine writes, `shipped_root()` is read-only files inside this
+  package, `resource_root()` the same one package over. In a clone all three are
+  the same tree; installed they are not. The split between the last two is
+  packaging, not taste: **setuptools puts a non-Python file into the wheel only
+  from inside a package**. **Stdlib-only** - `install.py` reads it before the
+  requirements exist, which is also what lets the modules forbidden to import
+  `config` import this one instead.
+- [`mimora/lifecycle.py`](mimora/lifecycle.py) - process-exit helpers, Tk-free:
+  `hard_exit()` and `spawn_replacement()`. `relaunch_command()` reconstructs how
+  THIS process was started rather than assuming, which is subtler than it looks
+  on Windows (see the comment there).
+- [`mimora/detect_hardware.py`](mimora/detect_hardware.py) - machine probe
+  writing `config/hardware_config.json`, whose `config` section supplies the
+  machine-derived overrides `config.py` prefers over its defaults. Lives in the
+  package rather than in `tools/` on one criterion: it has to run on the
+  **user's** machine, and a packaged install has neither `tools/` nor
+  `install.py`. The GPU question it answers is not "is there a card" but "can
+  the installed LLM binary use it". Also home of `warn_if_gpu_unused()`.
+
+### Downloads and first run
+
+Four downloaders, all **forbidden to import `config`** (config flips
+`HF_HUB_OFFLINE=1` once the models are cached, which would switch the network
+off exactly when a download is wanted) and all keeping huggingface_hub out of
+their module-level imports so `install.py` can use them before the requirements
+step:
+
+- [`mimora/model_fetch.py`](mimora/model_fetch.py) - everything a run always
+  needs (both Wav2Vec2 repos, Kokoro, NLLB, Supertonic). Owns the cache layout
+  and `prepare_hf_env()`.
+- [`mimora/gguf_fetch.py`](mimora/gguf_fetch.py) - the GGUF chat model. Split
+  from the above by what is skippable: with `lm-studio` or `off`, neither the
+  binary nor the GGUF is needed.
+- [`mimora/llama_server_fetch.py`](mimora/llama_server_fetch.py) - the pinned
+  llama.cpp release into `bin/llama/`: sha256 per asset, staged unpack, then
+  `--version` and `--list-devices` probes. `VARIANTS` covers Windows x64 (CUDA
+  or CPU), Linux x64 (Vulkan or CPU, with CPU as the Vulkan variant's
+  `fallback`) and macOS (Metal on Apple Silicon, CPU on Intel). Also exports
+  `detect_driver_cuda()`, which `install.py` uses to pick its torch wheel.
+- [`mimora/spacy_model_fetch.py`](mimora/spacy_model_fetch.py) - the one model
+  no Mimora code asks for: Kokoro builds misaki, whose English G2P calls
+  `spacy.cli.download` when `en_core_web_sm` is missing, which shells out to
+  pip - and a `uv tool` environment has no pip. Unpacked under the data root
+  and **appended** to `sys.path` (appended, so a model installed on purpose
+  keeps winning).
+
+None of them aggregates "everything that is missing": which set matters depends
+on the active engine and TTS backend, i.e. on `config`, so that question is
+answered in `first_run.py` instead.
+
+- [`mimora/models_info.py`](mimora/models_info.py) - the model catalogue, one
+  record per model. Pure data importing nothing but `typing` (a unit test
+  enforces it), which is what lets `config` and the fetchers share it. The
+  single place a repo id is written down. Sizes are hardcoded because the
+  first-run dialog must name a volume before the user agrees to it; re-snap with
+  [`tools/measure_model_sizes.py`](tools/measure_model_sizes.py).
+- [`mimora/first_run.py`](mimora/first_run.py),
+  [`first_run_download.py`](mimora/first_run_download.py) and
+  [`first_run_window.py`](mimora/first_run_window.py) - the "nothing is
+  downloaded yet" path, run from `app.run()` **before** the GUI is constructed,
+  because a refusal rewrites `llm_backend` and the constructor branches on it.
+  `build_plan()` is the single place the dialog and the progress bar read from.
+  **What a refusal means is the criterion** for the three levels: *required*
+  (buttons are Download and Quit), *optional* (refusing writes `llm_backend:
+  "off"`) and *translator* (refusing writes `translation_language: ""`). Each
+  carries its own checkbox and its own flag, so one Skip never switches off a
+  feature nobody declined. `ensure_ready()` returns `READY` / `CANCELLED` /
+  `RESTART`, and restarts **whenever the plan changed** - see the module
+  docstring and the comment at the end of `ensure_ready` for why that is the
+  loop guard and why `config` is stale by then. `first_run_window` owns a
+  short-lived `tk.Tk()` root and **must not build ttk widgets**.
+- [`tools/preview_first_run.py`](tools/preview_first_run.py) - shows the
+  first-run window in any of its states without a first run, because the window
+  only appears on a machine that is missing something and that is never the
+  machine it is being written on.
+
+### Shipped data
+
+- [`mimora/texts/`](mimora/texts/) - default source texts, named by the active
+  language profile. Inside the package rather than at the top of the tree so an
+  installed copy has them at all (see the packaging note under `paths.py`).
+- [`mimora/themes/`](mimora/themes/) - shipped UI color schemas, inside the
+  package for the same reason. A user file of the same name in `config/themes/`
+  replaces a shipped one; `config._DARK_THEME` stays the last-resort fallback
+  and the definition of which colour keys are valid.
 
 ## State Machine (pronunciation loop)
 
-1. **Prompt** - `llm_mgr.generate_phrase(source_text)` → `tts_mgr.synthesize(phrase)`. The synthesized array is stored as `self.reference_audio` and played for the user. Phrase generation + synth + playback all run in one daemon thread (`_generate_and_prompt`).
-2. **Record** - shared recording path (`AudioRecorder._record_loop` → `AudioRecorder.get_audio`), 16 kHz mono. Gated by `_can_record()` (a phrase must be ready and nothing else busy).
-3. **Analyze** - `_finalize_recording` → `analyze_recording` (daemon thread) calls `engine.analyze(...)` - the dispatcher in `mimora/engine.py`, which selects `pronunciation.acoustic` or `pronunciation.phoneme` by `config.ENGINE`.
-4. **Feedback** - `_show_feedback` (via `root.after`) fills the hero card (score, verdict, "WORK ON" phoneme badges, underlined problem words in the phrase) and appends the take to the attempt-history list; enables replay buttons.
-5. **Loop** - the user decides when to move on: generate the next phrase, or record the same one again (the phrase/reference are retained until a new phrase is generated). **`result.passed` is not enforced yet** - no code in `app.py`/`ui.py` reads it, so nothing auto-advances or forces a repeat based on the verdict. See the Pass-threshold note under Key Patterns & Gotchas.
+1. **Prompt** - `llm_mgr.generate_phrase(source_text)` → `tts_mgr.synthesize()`.
+   The array is stored as `self.reference_audio` and played. Generation, synth
+   and playback all run in one daemon thread (`_generate_and_prompt`).
+2. **Record** - `AudioRecorder._record_loop` → `get_audio`, 16 kHz mono. Gated
+   by `_can_record()`.
+3. **Analyze** - `_finalize_recording` → `analyze_recording` (daemon thread)
+   calls `engine.analyze(...)`.
+4. **Feedback** - `_show_feedback` (via `root.after`) fills the hero card and
+   appends the take to the history.
+5. **Loop** - the user decides when to move on. **`result.passed` is not
+   enforced yet** - see the Pass-threshold note below.
 
 ## Key Patterns & Gotchas
 
-- **Threading**: Recording, analysis, model loading, phrase generation, and playback run in daemon threads. **Always update the GUI via `root.after()`**; never read/write Tk widgets from a background thread. Source text is read on the main thread and passed into the worker.
+- **Threading**: recording, analysis, model loading, phrase generation and
+  playback run in daemon threads. **Always update the GUI via `root.after()`**;
+  never touch Tk widgets from a background thread. Source text is read on the
+  main thread and passed into the worker.
 
-- **Reference audio is synthesized once** ([`mimora/tts.py`](mimora/tts.py) `synthesize()`): the same waveform is both played to the user and passed to `analyze()` as the reference. Only ONE synthesis backend runs per session (the one the active variant selects); the backends never mix within a run.
+- **Reference audio is synthesized once**: the same waveform is played to the
+  user and passed to `analyze()` as the reference. Only ONE synthesis backend
+  runs per session; the backends never mix within a run.
 
-- **Sample rates**: recording uses 16 kHz; the TTS backend outputs its native rate (Kokoro 24 kHz, Supertonic 44.1 kHz) - app.py reads it from `TTSManager.sample_rate`, never a constant; Wav2Vec2 needs 16 kHz. `engine.analyze` takes `user_sr` and `reference_sr` and `_prepare_waveform` resamples to 16 kHz internally. `play_array` plays the reference at the backend rate and the user recording at 16 kHz.
+- **Sample rates**: recording 16 kHz; TTS at the backend's native rate (read
+  from `TTSManager.sample_rate`, never a constant); Wav2Vec2 needs 16 kHz.
+  `engine.analyze` takes `user_sr` and `reference_sr` and resamples internally.
 
-- **Pronunciation model lifecycle** ([`pronunciation/acoustic/speech.py`](pronunciation/acoustic/speech.py)): models load lazily; `load_models()` makes loading explicit (call in a background thread at startup) and `warm_up()` removes first-call latency - mirroring `mimora/tts.py`. Device follows `config.WAV2VEC2_DEVICE` (defaults to `config.DEVICE`). `speech.py` reads config via `getattr(..., default)` so it stays usable without config edits.
+- **Pronunciation model lifecycle**: models load lazily; `load_models()` makes
+  loading explicit (call it in a background thread at startup) and `warm_up()`
+  removes first-call latency. `speech.py` reads config via `getattr(...,
+  default)` so it stays usable without config edits.
 
-- **Pass threshold / `result.passed` are currently inert (reserved for a future gating loop)**: `config.PRONUNCIATION_SCORE_THRESHOLD` (settings.json `"pronunciation_score_threshold"`; not exposed in the settings window) feeds each engine's `score_threshold` and produces `result.passed` - the acoustic engine always as `score >= threshold` ([`pronunciation/acoustic/speech.py`](pronunciation/acoustic/speech.py)), the phoneme engine only as a fallback when no calibrated bucket exists ([`pronunciation/phoneme/speech.py`](pronunciation/phoneme/speech.py); normally `passed = bucket >= PASS_BUCKET`, so the threshold is bypassed on the default calibrated path). **But `result.passed` is not consumed by the app**: `ui.py show_feedback` derives the score read-out, quality band, face and history from the score/bucket, not from `passed`, and the phoneme `feedback` string (`"(passed)"`/`"(try again)"`) is never rendered. So today the Pass-threshold value has **no visible effect** - it is computed and logged only, kept as a hook for a future pass/repeat gate. When that gate is implemented, wire it to `result.passed` (and account for the phoneme calibrated-bucket path, where the raw threshold does not apply).
+- **Pass threshold / `result.passed` are currently inert**, reserved for a
+  future gating loop. `config.PRONUNCIATION_SCORE_THRESHOLD` feeds each engine's
+  `score_threshold` and produces `result.passed`, but nothing in `app.py` or
+  `ui.py` reads it: the score read-out, quality band, face and history all come
+  from the score/bucket. When that gate is implemented, wire it to
+  `result.passed` and account for the phoneme engine's calibrated-bucket path,
+  where the raw threshold does not apply.
 
-- **GPU contention**: Wav2Vec2, Kokoro, and llama.cpp can compete for VRAM. Mitigations: the LLM runs in a **separate process** (llama-server), and the loop's phases (LLM → Kokoro → Wav2Vec2) run **sequentially**. If VRAM is tight, set `WAV2VEC2_DEVICE = "cpu"` in `mimora/config.py`.
+- **GPU contention**: Wav2Vec2, Kokoro and llama.cpp compete for VRAM.
+  Mitigations: the LLM runs in a separate process, and the loop's phases run
+  sequentially. If VRAM is tight, set `WAV2VEC2_DEVICE = "cpu"`.
 
-- **Phrase generation** ([`mimora/llm.py`](mimora/llm.py)): `generate_phrase()` is a stateless, non-streaming completion with its own system prompt (`config.PHRASE_GEN_SYSTEM_PROMPT`, a `{min_words}`/`{max_words}` format template); each request builds its messages from scratch (there is no conversational history). To keep phrases varied, the prompt only includes a sliding window of the source text (`_current_window`, advanced every `PHRASE_GEN_WINDOW_REPEATS` calls) plus a random focus word and opening-style hint; `_clean_phrase` strips quotes/list markers. A proficiency level 0-5 (`config.PHRASE_GEN_LEVEL`, settings.json `"phrase_gen_level"`, live) selects per-language constraints from the profile's `phrase_gen["levels"]` (vocab/grammar hints folded into the system prompt - kept stable across calls for the llama.cpp prefix cache - word range, wordfreq Zipf floor); the generated phrase is validated against them (`_fits_level`) with at most `PHRASE_GEN_LEVEL_RETRIES` (=1) regeneration, then accepted as-is (soft degradation; samples logged to `logs/phrase_level_samples.jsonl` for threshold tuning).
+- **Phrase generation**: `generate_phrase()` is stateless and non-streaming,
+  with no conversational history. Variety comes from a sliding window over the
+  source text plus a random focus word and opening-style hint. A proficiency
+  level 0-5 selects per-language constraints from the profile, and the generated
+  phrase is validated against them with at most one regeneration, then accepted
+  as-is (soft degradation; samples logged for threshold tuning).
 
-- **Audio normalization** ([`mimora/app.py`](mimora/app.py)): peaks are normalized before analysis; silence below `AUDIO_MIN_PEAK_THRESHOLD = 0.01` skips gain adjustment.
+- **Windows audio**: TTS/playback uses `winsound` to bypass PortAudio/MME
+  issues, with a `sounddevice` fallback elsewhere. A ~150 ms silence lead-in
+  avoids clipping the first audio. `config.AUDIO_LOCK` serialises PortAudio
+  init/teardown between the mic and speaker paths.
 
-- **Windows audio**: TTS/playback uses `winsound` to bypass PortAudio/MME issues; a `sounddevice` fallback exists for other platforms. A ~150 ms silence lead-in is prepended to avoid clipping the first audio. `config.AUDIO_LOCK` serialises PortAudio init/teardown between the mic and speaker paths.
+- **Talking mouth without an audio callback**: `winsound.PlaySound` plays the
+  whole buffer with no per-frame hook, so the envelope is pre-computed from the
+  waveform and replayed on the widget's own `after`-loop. Same path on all
+  platforms, no live-RMS branch. Because the envelope uses the playback sample
+  rate, the slowed-reference speed stretches the mouth track automatically.
 
-- **Talking mouth without an audio callback**: `winsound.PlaySound` plays the whole buffer with no per-frame hook, so the face cannot follow live amplitude on Windows. Instead the loudness envelope is pre-computed from the (fully known) waveform via `tts.loudness_envelope()` and the face replays it on its own wall-clock `after`-loop (`FaceWidget.play_levels`). `PlaybackController.play_with_face()` ([`mimora/playback.py`](mimora/playback.py)) is the single chokepoint wrapping every `play_array` call: it starts the track, plays, then closes the mouth - and prepends closed-mouth frames matching `TTSManager.playback_lead_in_seconds()` so the animation lines up with the Windows warm-up silence. The same path is used on all platforms (no live-RMS branch). Because the envelope uses the same `sample_rate` as playback, the slowed-reference speed (lowered sample rate) stretches the mouth track automatically. `_rest_face_if_current()` stops the mouth on finish/interrupt without clobbering a playback that superseded it (same identity-guard idea as `PlaybackController.finished`).
+- **Three llama-server flags are passed explicitly and must stay that way**
+  (all three measured against the previous llama-cpp-python backend):
+  `--ctx-size` (the default inflates the KV cache to the model's own 131072-token
+  training context), `--parallel 1` (the default fragments the prefix cache the
+  sliding-window prompt depends on) and `--cache-reuse 256`. Also `--api-key`
+  (the server allows every CORS origin) and `--no-ui`.
 
-- **LLM server subprocess** ([`mimora/llm_server_ctl.py`](mimora/llm_server_ctl.py)): started from `load_components()` via `LLMServerController.start()`, which polls `LLMManager.check_connection()` until ready; terminated via `LLMServerController.shutdown()` (called from `_shutdown_runtime` on quit/restart) with a 5-second kill fallback. Three llama-server flags are passed **explicitly and must stay that way** (all three were measured against the previous llama-cpp-python backend before this one became the default): `--ctx-size` (the default takes the model's own 131072-token training context and inflates the KV cache), `--parallel 1` (the default opens several slots and fragments the prefix cache the sliding-window prompt depends on) and `--cache-reuse 256` (prefix reuse at parity with the old llama-cpp-python path). Also passed: `--api-key` (the server allows every CORS origin, so without a key any browser page could call the port) and `--no-ui`.
+- **Silent CPU fallback is the trap of this backend**: a CUDA build whose
+  runtime DLLs are missing or of the wrong major version still logs `offloaded
+  N/N layers to GPU`, still answers every request, and is about three times
+  slower. `log_compute_devices()` runs a sub-second `--list-devices` probe
+  before launch as the only startup evidence. Diagnostic only - a failed probe
+  is logged and the server starts anyway.
 
-- **Silent CPU fallback is the trap of this backend** and `log_compute_devices()` in `mimora/llm_server_ctl.py` is the guard: a CUDA build whose runtime DLLs are missing or of the wrong major version still logs `offloaded N/N layers to GPU`, still answers every request, and is simply about three times slower. At its default verbosity llama-server's log shows neither the buffer names (`CUDA0` vs `CPU_Mapped`) nor the selected devices, so the sub-second `--list-devices` probe run just before launch is the only startup evidence. It is diagnostic only: a failed probe is logged and the server starts anyway.
-
-- **Device detection** ([`mimora/config.py`](mimora/config.py)): CUDA auto-detected via `torch.cuda.is_available()`.
-
-- **espeak-ng is registered, not installed** ([`pronunciation/common/espeak.py`](pronunciation/common/espeak.py)): `phonemizer` loads a shared library, and the `espeakng-loader` wheel ships one with its data, so `ensure_espeak()` points `phonemizer` at it (`set_library` **and** `set_data_path` - setting only the first dies inside the C library with an access violation, because `EspeakAPI` copies the DLL to a temporary directory and the data is never found beside it). Both engines call it: the phoneme engine before `from_pretrained` (the tokenizer builds an `EspeakBackend` inside it) and before reference phonemization, the acoustic engine in `load_models()` and in `_phonemize_word()`. Do **not** rely on `misaki/espeak.py` doing it as an import side effect - the TTS backends import lazily, so a Spanish run on Supertonic never imports Kokoro, and that is exactly the run this used to break. The registration logs where the library resolves from (INFO) or that it fell back (WARNING); it used to swallow every exception, which made a failure indistinguishable from success. `espeakng-loader` is pinned to a minor because its espeak-ng build **is** the reference transcription the calibration was fitted against. `install.py`'s `step_espeak` asks the same question through `python -m pronunciation.common.espeak` in the target environment - never `shutil.which`, which answers about the executable and is wrong in both directions.
+- **espeak-ng is registered, not installed**: `ensure_espeak()` points
+  `phonemizer` at the wheel's library with `set_library` **and**
+  `set_data_path` - setting only the first dies inside the C library with an
+  access violation. Both engines call it. Do **not** rely on misaki doing it as
+  an import side effect: the TTS backends import lazily, so a Spanish run never
+  imports Kokoro. `espeakng-loader` is pinned to a minor because its espeak-ng
+  build **is** the reference transcription the calibration was fitted against.
 
 ## Testing
 
@@ -119,11 +368,25 @@ python -m unittest discover -s tests -v              # all fast unit tests, no m
 python tests/test_speech.py user.wav [ref.wav]       # optional end-to-end (loads the model)
 ```
 
+Test files are named after the module they cover (`tests/test_paths.py` for
+`mimora/paths.py`), so a module's tests are found by name rather than listed
+here. The fast suite stubs torch, the OS, the architecture and every
+subprocess where needed, so it downloads nothing and runs anywhere.
+
 ## Code Style (Python)
 
 - No linting/formatting config - follow PEP 8.
-- **Imports inside `mimora/` are absolute** (`from mimora import config`), never relative. PEP 8 prefers them and every module in the package now uses them; the mix that existed before meant a new module's author had to guess. `pronunciation/` is the deliberate exception and stays relative (`from .config import get_config`): those subpackages are reusable GUI-agnostic libraries that must keep working if the tree is vendored or renamed, which is exactly what relative imports buy. Note the consequence for `mimora/model_fetch.py` and `mimora/gguf_fetch.py`: both can be run as plain files, and that form puts `mimora/` on `sys.path` rather than the project root, so each carries a shim that prepends the root - without it `import mimora` does not resolve.
-- Type hints used throughout (`from typing import Optional, List`).
+- **Imports inside `mimora/` are absolute** (`from mimora import config`), never
+  relative. `pronunciation/` is the deliberate exception and stays relative:
+  those subpackages are reusable libraries that must keep working if the tree is
+  vendored or renamed. Consequence for `model_fetch.py` and `gguf_fetch.py`:
+  both can be run as plain files, which puts `mimora/` on `sys.path` rather than
+  the project root, so each carries a shim that prepends the root.
+- Type hints used throughout.
 - Logging via `logging`: `%(asctime)s [%(levelname)s] (%(threadName)s) %(message)s`.
-- Use explicit `RuntimeError` with a descriptive message for runtime validation, not `assert`.
-- Library deprecation warnings are filtered in `mimora/bootstrap.py` (`early_init()`, called by `mimora/cli.py` before the heavy imports).
+- Explicit `RuntimeError` with a descriptive message for runtime validation, not
+  `assert`.
+- Library deprecation warnings are filtered in `mimora/bootstrap.py`.
+- **Comments say what breaks if the code changes, not how the code got here.**
+  Dates, release-candidate numbers, rejected hypotheses and step numbers from
+  other files belong in git history and in the task notes, not in the source.

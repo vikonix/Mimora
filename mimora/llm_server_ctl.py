@@ -127,7 +127,7 @@ class LLMServerController:
         """Command line for llama-server, or None on a bad setup.
 
         Every "cannot start" reason is logged here and reported to the caller
-        as None, so start() has a single failure path and main.py keeps its
+        as None, so start() has a single failure path and app.py keeps its
         one error message for the user.
 
         The binary is located here rather than read from a constant frozen at

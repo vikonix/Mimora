@@ -4,8 +4,7 @@
 """English practice-language profile (variants: american / british).
 
 Pure data consumed by mimora/config.py (assembled into LANGUAGE_PROFILES).
-See the module docstring in mimora/languages/__init__.py and the profile-shape
-comment above the LANGUAGE_PROFILES assembly in config.py.
+The profile format is documented in mimora/languages/__init__.py.
 """
 
 PROFILE = {
@@ -140,14 +139,14 @@ PROFILE = {
     # a short in-vocabulary word of the practiced language, so the dummy
     # synthesis raises no out-of-vocabulary warnings.
     "tts_warmup": "Hi.",
-    # Startup greeting spoken once the app is ready (main.py
+    # Startup greeting spoken once the app is ready (app.py
     # _greet_and_start), in the practiced language. The named form carries
     # a {name} placeholder; the anonymous form is used when no user name is
     # set (a "{name}"-less template avoids a dangling "Hola, !").
     "greeting_named": "Hello {name}, listen and repeat.",
     "greeting_anonymous": "Hello, listen and repeat.",
     # Shown in the source panel when the practice-text file cannot be read
-    # (main.py _load_practice_text), in the practiced language. The button
+    # (app.py _load_practice_text), in the practiced language. The button
     # name stays English - the UI language is English by design.
     "practice_text_fallback": (
         "Hello and welcome to Mimora. Edit this text and click "

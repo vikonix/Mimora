@@ -3,7 +3,7 @@
 
 """Pronunciation engine dispatcher.
 
-The host (main.py) drives pronunciation through this one module instead of a
+The host (app.py) drives pronunciation through this one module instead of a
 specific engine, so it never knows which backend is active. The backend is chosen
 by ``config.ENGINE`` (set in mimora/config.py):
 

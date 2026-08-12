@@ -34,7 +34,7 @@ def hard_exit():
     detach is exactly what crashes. TerminateProcess ends the process at
     the OS level without running any DLL detach handlers, so that crash
     never runs. The external resources that actually need releasing must
-    be handled by the caller beforehand (see main.py _shutdown_runtime);
+    be handled by the caller beforehand (see app.py _shutdown_runtime);
     logs are flushed here first. os._exit is the fallback for non-Windows.
     """
     logging.shutdown()
@@ -79,19 +79,17 @@ def relaunch_command() -> list:
     interpreter is prepended only for something that is recognisably a Python
     source file, and anything else is assumed to be self-executing.
     """
-    # __spec__ says the process was started with -m, but only when it names a
+    # __spec__ says the process was started with -m, but only when it NAMES a
     # module: spec.name is "mimora.__main__" for a package run that way, and
     # the package itself is what -m needs back.
     #
-    # It is NOT None for a console script on Windows, which is what the first
-    # live test of this function found. Scripts\mimora.exe is a launcher with a
-    # zip archive appended to it, and the __main__.py inside that archive is
-    # imported through the normal machinery - so __spec__ exists and its name
-    # is literally "__main__", which says nothing about what to pass to -m.
-    # Relaunching such a process produced `python.exe -m __main__`, a command
-    # that does not run, so the application simply closed instead of restarting.
-    # POSIX never showed it: there a console script is a source file with a
-    # shebang, started by path, and __spec__ really is None.
+    # The name test is load-bearing, not defensive. A Windows console script is
+    # a launcher with a zip archive appended, whose __main__.py is imported
+    # through the normal machinery - so __spec__ exists and is named literally
+    # "__main__". Reading that as a module yields `python.exe -m __main__`, a
+    # command that does not run, and the app closes instead of restarting.
+    # POSIX hides this: there a console script is started by path and __spec__
+    # really is None.
     spec = getattr(sys.modules.get("__main__"), "__spec__", None)
     if spec is not None and spec.name and spec.name != "__main__":
         module = spec.parent if spec.name.endswith(".__main__") else spec.name
@@ -114,7 +112,7 @@ def spawn_replacement():
     The replacement must not share the dying parent's console/stdio: when
     launched from an IDE, the IDE closes those pipes as soon as the parent
     exits and the child's first print would crash with [Errno 22] (the same
-    failure mode the main.py module-top comment describes for os.execv). So
+    failure mode the app.py module-top comment describes for os.execv). So
     stdio is pointed at DEVNULL - the app logs to logs/main.log anyway -
     and on Windows the child is detached from the console and, when the
     launcher allows it, broken out of the IDE's job object so "stop" in the
@@ -126,18 +124,15 @@ def spawn_replacement():
     """
     try:
         command = relaunch_command()
-        # The replacement continues this session's logs instead of starting
-        # them over. Added here rather than in relaunch_command(), which
-        # answers "how was this process started" and must keep answering only
-        # that: continuing the log is a property of the restart, not of the
-        # launch form. Without the flag the child opens main.log with mode="w"
-        # and truncates everything this process wrote - the first-run download,
-        # or the setting change that led here, i.e. the reason anyone opens the
-        # file afterwards.
+        # The replacement continues this session's log instead of truncating
+        # it - without the flag the child opens main.log with mode="w" and
+        # discards the first-run download or the setting change that led here,
+        # which is the reason anyone opens the file afterwards.
         #
-        # Guarded because relaunch_command() rebuilds from sys.argv: this
-        # process may itself have been started by a restart, and a second one
-        # within the same session would otherwise repeat the flag.
+        # Added here rather than in relaunch_command(), which answers "how was
+        # this process started" and must keep answering only that. Guarded
+        # because that function rebuilds from sys.argv, which may already carry
+        # the flag from an earlier restart in the same session.
         if bootstrap.APPEND_LOG_FLAG not in command:
             command.append(bootstrap.APPEND_LOG_FLAG)
         logging.info(f"Relaunching: {command}")

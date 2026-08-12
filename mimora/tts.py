@@ -21,9 +21,9 @@ Two roles live here, split on purpose:
   with either backend. The slowed reference replay stays playback-side: it
   plays the waveform at a lowered sample rate, which is backend-agnostic.
 
-``TTSManager`` remains the facade main.py composes: it owns the playback path
-and delegates synthesis to the selected backend, adding the ``sample_rate``
-property main.py uses everywhere it previously imported KOKORO_SAMPLE_RATE.
+``TTSManager`` is the facade app.py composes: it owns the playback path and
+delegates synthesis to the selected backend, exposing the active backend's rate
+as ``sample_rate`` - which app.py reads everywhere, never a constant.
 """
 
 import logging
@@ -60,8 +60,8 @@ _NULL_EVENT = Event()
 WINSOUND_STOP_GUARD_SECONDS = 0.2
 
 # Kokoro synthesizes native 24 kHz audio; a property of the model itself, so
-# the constant lives next to the backend (moved here from mimora/audio_io.py -
-# main.py now reads TTSManager.sample_rate instead of importing a constant).
+# the constant lives next to the backend rather than among the audio settings.
+# Callers read TTSManager.sample_rate instead of importing this.
 KOKORO_SAMPLE_RATE = 24_000
 
 # Supertonic 3 synthesizes native 44.1 kHz audio.
@@ -108,45 +108,30 @@ class KokoroBackend:
         # Imported here, not at module top: only the backend the active
         # variant selects should pull its ML stack into the process.
         from kokoro import KModel, KPipeline
-        # The repo id is bound from the catalogue, not spelled out again: the
-        # first-run check decides whether Kokoro is missing from that same
-        # record, so a second copy here could send the download after one repo
+        # The repo id is bound from the catalogue, never spelled out again: a
+        # second copy here could send the first-run download after one repo
         # while synthesis loaded another.
-        # .eval() is load-bearing, not ceremony. KModel is a plain nn.Module
-        # built here rather than loaded through from_pretrained, so it starts
-        # in TRAINING mode - and TextEncoder applies an nn.Dropout(0.2) per
-        # block unconditionally in forward(). A fifth of the linguistic
-        # representation was therefore being zeroed on the way to the vocoder,
-        # in the reference the user imitates and the acoustic engine scores
-        # against. Every other torch model here is already explicit about this
-        # - translator.py, and both recognizers in pronunciation/.
         #
-        # What this does NOT buy is a reproducible waveform, and the number is
-        # worth keeping because it says how much the defect was worth: two
-        # syntheses of one phrase in one voice differed by 0.67 peak (on a
-        # waveform in [-1, 1]) before, and by 0.08 after. Kokoro stays
-        # non-deterministic by construction - istftnet.py draws a random
-        # initial phase per harmonic and Gaussian excitation noise in the
-        # source module, neither gated by training mode, as every StyleTTS2
-        # vocoder does. So the difference that remains is one rendering of the
-        # same content rather than a perturbation of the content itself.
+        # .eval() is load-bearing. KModel is a plain nn.Module built here
+        # rather than loaded through from_pretrained, so it starts in TRAINING
+        # mode, and kokoro applies nn.Dropout unconditionally in forward() -
+        # zeroing a fifth of the linguistic representation in the reference the
+        # user imitates and the engine scores against. (It does not make
+        # synthesis reproducible: the vocoder draws random phase and excitation
+        # noise regardless of training mode.)
         self.model = KModel(repo_id=models_info.KOKORO.repo_id).to(
             config.DEVICE).eval()
-        # Both arguments matter, and neither is cosmetic:
+        # Both keyword arguments are load-bearing:
         #
-        # repo_id, because KPipeline otherwise defaults it to a string of its
-        # own and says so on stdout at every start. That default happens to
-        # equal ours today, which is exactly what makes it a trap: it is the
-        # second copy of the id the comment above rules out, and it decides
-        # where load_voice() fetches voices from.
+        # repo_id, because KPipeline otherwise substitutes a default of its own
+        # - a second copy of the id, which decides where load_voice() fetches
+        # from and happens to match ours today, which is what makes it a trap.
         #
-        # model, because the parameter defaults to True, and that makes
-        # KPipeline build a SECOND KModel - onto a device it picks itself
-        # (cuda when available), ignoring config.DEVICE. Nothing ever used it:
-        # every call site passes model=self.model and the library resolves
-        # `model or self.model`. So it was 82M parameters loaded, moved to the
-        # card and left there for the session, on the machine that also has to
-        # fit Wav2Vec2 and llama.cpp.
+        # model, because it defaults to True, which makes KPipeline build a
+        # SECOND KModel onto a device it picks itself (cuda when available),
+        # past config.DEVICE. Nothing reads that copy - every call site passes
+        # model=self.model - so it is 82M parameters parked on the card for the
+        # session, on the machine that also has to fit Wav2Vec2 and llama.cpp.
         self.pipeline = KPipeline(lang_code=config.TTS_LANG_CODE,
                                   repo_id=models_info.KOKORO.repo_id,
                                   model=self.model)
@@ -291,7 +276,7 @@ TTS_BACKENDS = {
 
 
 class TTSManager:
-    """Facade main.py composes: synthesis (delegated) plus playback (owned)."""
+    """Facade app.py composes: synthesis (delegated) plus playback (owned)."""
 
     def __init__(self):
         self._backend = TTS_BACKENDS[config.TTS_BACKEND]()
@@ -372,7 +357,7 @@ class TTSManager:
                 # and the recorder): that lock guards PortAudio init/teardown, and
                 # winsound does not touch PortAudio at all. Playback and recording
                 # never overlap anyway - the controller stops playback before it
-                # opens the mic (see main.py trigger_recording_start).
+                # opens the mic (see app.py trigger_recording_start).
                 #
                 # Prepend silence so the Windows Audio Session can initialize without
                 # clipping the first ~150ms. Lead-in scales with the sample rate.

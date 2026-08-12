@@ -3,7 +3,7 @@
 
 """Early process setup for the Mimora entry point.
 
-Two phases, split because they bracket the heavy imports in main.py:
+Two phases, split because they bracket the heavy imports in app.py:
 
   * ``early_init()`` must run BEFORE the heavy mimora.* imports (torch,
     transformers, Kokoro): it sets the UTF-8 environment hints, switches
@@ -151,24 +151,20 @@ def early_init():
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
     # Stop transformers from converting our .bin checkpoints to safetensors
-    # behind our back. When a repo has no safetensors file and the process is
-    # online, from_pretrained starts a background "Thread-auto_conversion" that
-    # opens (or reuses) a conversion PR on the Hub and downloads the converted
-    # weights from refs/pr/<n>. For Mimora that is pure cost: the repos we load
-    # ship .bin, we never ask for safetensors, and the thread pulls gigabytes
-    # nobody requested.
+    # behind our back. Online, with a repo that ships no safetensors,
+    # from_pretrained starts a background "Thread-auto_conversion" that opens a
+    # conversion PR on the Hub and downloads the converted weights from
+    # refs/pr/<n> - gigabytes nobody asked for, since we never request
+    # safetensors.
     #
-    # It also corrupts the cache in a way that does not heal. Killed mid-flight
-    # by the app exiting, it leaves blobs/<sha>.incomplete behind, and
-    # loader.models_cached reads any such file as "this repo is not cached" -
-    # so a complete, working repo is reported missing at every start, the
-    # first-run window offers a download, and the download cannot clear it
-    # because it does not need that file. One online session is enough to do
-    # this to a cache; model_fetch._sweep_incomplete_blobs heals one that has.
+    # It also corrupts the cache in a way that does not heal: killed mid-flight
+    # by the app exiting, it leaves blobs/<sha>.incomplete behind, which
+    # loader.models_cached reads as "not cached", so a complete repo is reported
+    # missing at every start and no download clears it (the download does not
+    # need that file). model_fetch._sweep_incomplete_blobs heals such a cache.
     #
-    # DISABLE_SAFETENSORS_CONVERSION is transformers' own switch for this
-    # (modeling_utils, can_auto_convert) and is read per call rather than
-    # frozen at import, so setting it here covers every later load.
+    # DISABLE_SAFETENSORS_CONVERSION is transformers' own switch and is read per
+    # call rather than frozen at import, so setting it here covers every load.
     os.environ["DISABLE_SAFETENSORS_CONVERSION"] = "1"
 
     # Ignore specific deprecation and model warnings from underlying libraries.

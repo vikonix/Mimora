@@ -12,24 +12,16 @@ from mimora import (llama_server_fetch, loader, model_fetch, models_info,
                     paths, spacy_model_fetch)
 from mimora.languages import english, spanish
 
-# The two roots this module resolves paths against, frozen for the run. Both
-# are absolute regardless of the working directory at launch, and both are
-# computed in mimora/paths.py - the single place that knows the difference
-# between them:
-#   BASE_DIR      - what this machine WRITES (settings, downloads, logs). The
-#                   project root when running from a clone, the OS user-data
-#                   directory when installed as a package.
-#   RESOURCE_DIR  - what ships WITH the code and is only read, in the packages
-#                   BESIDE this one (the committed model calibrations under
-#                   pronunciation/). Always the parent of the package.
-#   SHIPPED_DIR   - the same kind of file, inside this package: the starter
-#                   practice texts and the built-in theme schemas. A directory
-#                   at the top of the source tree belongs to no package and so
-#                   never reaches an installed copy, which is why these two are
-#                   separate roots rather than one.
-# In a clone all three are the same tree, which is why one constant used to do
-# every job; installed as a package they are not, and every path below picks
-# the one it means.
+# The three roots this module resolves paths against, frozen for the run and
+# absolute regardless of the launch directory. All three are computed in
+# mimora/paths.py, the single place that knows the difference between them:
+#   BASE_DIR      - what this machine WRITES (settings, downloads, logs);
+#   RESOURCE_DIR  - read-only files shipped in the packages BESIDE this one
+#                   (the committed model calibrations under pronunciation/);
+#   SHIPPED_DIR   - read-only files shipped INSIDE this package (starter
+#                   practice texts, built-in theme schemas).
+# In a clone all three are the same tree; installed as a package they are not,
+# so every path below has to pick the one it means.
 BASE_DIR = paths.data_root()
 RESOURCE_DIR = paths.resource_root()
 SHIPPED_DIR = paths.shipped_root()
@@ -274,29 +266,21 @@ if not isinstance(USER_NAME, str):
 # =====================================================================
 # Local model cache (HuggingFace) - download once, then load offline
 # =====================================================================
-# Kokoro and Wav2Vec2 are pulled from the HuggingFace Hub. We pin
-# their cache to a project-local folder so the weights live next to the code and
-# survive a cleared home-directory cache. Once every model the run actually needs
-# is present we flip the Hub into offline mode, which skips the per-start network
-# round-trip HF normally makes to re-validate file revisions - that check is what
-# makes startup feel like it "re-downloads" on every launch.
+# Kokoro and Wav2Vec2 are pulled from the HuggingFace Hub, cached in a
+# project-local folder so the weights live next to the code and survive a
+# cleared home-directory cache.
 #
-# IMPORTANT: huggingface_hub / transformers read these env vars at *import* time,
-# so they must be set before those libraries are imported. config is the first
-# project module imported by main.py (before tts/pronunciation) and runs to the end
-# during that import, so HF_HOME here and the offline flags set in the
-# "Offline-mode gating" section below (after the active engine and its model name
-# are known) all land early enough. We use setdefault() so an externally set
-# HF_HOME is respected.
+# IMPORTANT: huggingface_hub / transformers read these env vars at *import*
+# time, so they must be set before those libraries are imported. config is the
+# first project module imported and runs to the end during that import, so
+# HF_HOME here and the offline flags set in the "Offline-mode gating" section
+# below both land early enough. setdefault(), so an externally set HF_HOME wins.
 #
-# The two cache locations are defined in mimora/model_fetch.py, the module that
-# downloads into them, so the app and the downloader cannot drift apart. Only
-# the paths are shared: model_fetch.prepare_hf_env() is NOT called here on
-# purpose, because it also disables hf-xet on Windows, which is a download-time
-# workaround and not something the app should decide for a cache it merely
-# reads. The app does download on its own now (mimora/first_run_window.py), and
-# that path arms the environment itself, right before it starts fetching.
-# Already created by paths.ensure_dirs() at the top of this module.
+# The paths come from mimora/model_fetch.py, the module that downloads into
+# them, so the app and the downloader cannot drift apart. Only the paths:
+# model_fetch.prepare_hf_env() is deliberately NOT called here, because it also
+# applies download-time workarounds the app has no business applying to a cache
+# it merely reads. The download paths arm the environment themselves.
 MODEL_CACHE_DIR = model_fetch.MODEL_CACHE_DIR
 os.environ.setdefault("HF_HOME", str(MODEL_CACHE_DIR))
 
@@ -333,15 +317,12 @@ MAX_RECORD_SECONDS = _num("max_record_seconds", 20, minimum=1)
 #   silence_timeout   - seconds of continuous silence (after speech has begun)
 #                       before the take is finalized automatically.
 #   silence_threshold - RMS level (0..1) strictly above which a chunk counts as
-#                       speech rather than silence. Kept low: silence is near-zero
-#                       RMS, while quiet speech may only reach ~0.04, and the level
-#                       is averaged over a whole capture chunk (which dilutes brief
-#                       bursts) - too high a value never arms the silence timer.
-#                       Raise it only if a noisy room keeps the take from stopping.
-#                       The minimum is above zero: at 0 any real mic noise floor
-#                       (rms > 0) would count as speech and the take would never
-#                       auto-stop, silently pinning every recording to
-#                       MAX_RECORD_SECONDS.
+#                       speech. Kept low: quiet speech may only reach ~0.04 and
+#                       the level is averaged over a whole chunk, so too high a
+#                       value never arms the silence timer. Raise it only if a
+#                       noisy room keeps the take from stopping. The minimum is
+#                       above zero because at 0 the mic noise floor counts as
+#                       speech and every take runs to MAX_RECORD_SECONDS.
 SILENCE_TIMEOUT = _num("silence_timeout", 3.0, minimum=0.5)
 SILENCE_THRESHOLD = _num("silence_threshold", 0.01, minimum=0.001)
 
@@ -481,13 +462,10 @@ LLM_SERVER_STARTUP_TIMEOUT = 60
 # backend is actually selected, and LLMServerController says so at start time.
 #
 # Deliberately a function and NOT a module constant, unlike every other path in
-# this file. The first-run window (mimora/first_run_window.py) may download the
-# binary after this module has been imported, and a value frozen at import time
-# would then still be the empty string for the rest of the process -
-# LLMServerController would refuse to start on a machine that has just acquired
-# a perfectly good server. Resolving at the point of use costs a stat and an
-# occasional PATH lookup, once per app start, and makes "where is the binary" a
-# question about now rather than about import time.
+# this file: the first-run window may download the binary after this module has
+# been imported, and a value frozen at import would stay empty for the rest of
+# the process, so LLMServerController would refuse to start on a machine that
+# has just acquired a perfectly good server.
 def _resolve_llama_server(setting) -> str:
     """Absolute path of the llama-server binary to launch, or "" if none."""
     if setting is None:
@@ -546,48 +524,13 @@ EXTERNAL_N_CTX = int(_num("external_n_ctx",
 # =====================================================================
 # Language & variant profiles
 # =====================================================================
-# The practice language is DATA, not an assumption spread through the code.
-# Every language is one entry in LANGUAGE_PROFILES (each profile a pure-data
-# module in mimora/languages/); adding a language is adding a module and
-# registering it below (plus engine calibration), never a new
-# `if language == ...`.
+# The practice language is DATA, not an assumption spread through the code:
+# adding a language is a new pure-data module in mimora/languages/ exposing
+# PROFILE, imported above and registered below, plus an engine calibration -
+# never a new `if language == ...`.
 #
-# A profile describes:
-#   display_name       - shown in the window title and settings;
-#   flores_code        - FLORES-200 source code for the NLLB translator
-#                        (mimora/translator.py), e.g. "eng_Latn";
-#   default_variant    - the variant used when settings.json names none;
-#   engines            - pronunciation engines available for this language.
-#                        Availability is a language property: the acoustic
-#                        engine is English-only ASR, so a non-English profile
-#                        omits it (see available_engines);
-#   practice_text_file - default source text, relative to SHIPPED_DIR (the
-#                        package directory), i.e. "texts/<file>";
-#   variants           - the former "accents": a display key -> TTS/espeak
-#                        wiring. Each variant names its synthesis backend
-#                        ("tts_backend", default "kokoro" - see TTS_BACKEND
-#                        below) plus that backend's language code and voices:
-#                        Kokoro variants use "kokoro_lang_code" and voices
-#                        like 'af_heart' ('af_'/'bf_' = female, 'am_'/'bm_' =
-#                        male; a = American, b = British; voice data downloads
-#                        on first use); Supertonic variants use
-#                        "tts_lang_code" (ISO, e.g. "es"), voices F1..F5 /
-#                        M1..M5 and an optional "total_steps" quality knob.
-#                        espeak_language must match the variant so
-#                        pronunciation is scored against phonemes of the same
-#                        dialect (see pronunciation/phoneme/speech.py).
-#
-# Besides the wiring above, a profile also carries the language-specific text
-# the app used to hardcode: the phrase-generation prompts and asks, the
-# voice-preview phrase, and the translator and TTS warm-up texts (see the
-# english entry).
-# English (variants american/british) and Peninsular Spanish (variant castilian)
-# are defined; the code-ready future languages (French, Italian) arrive as
-# further entries with no code change beyond engine calibration.
-# Each profile is defined as a pure-data module in mimora/languages/ and
-# assembled here in definition order (language_choices() preserves it). Adding
-# a language: create mimora/languages/<name>.py exposing PROFILE, import it
-# above, and register it here - plus its engine calibration.
+# The profile format is documented in mimora/languages/__init__.py.
+# Assembled in definition order; language_choices() preserves it.
 LANGUAGE_PROFILES = {
     "english": english.PROFILE,
     "spanish": spanish.PROFILE,
@@ -846,7 +789,7 @@ if _available_engines and ENGINE not in _available_engines:
 # True when the active engine/language runs the phoneme engine without a
 # committed model calibration for its language (see engine_experimental): the
 # engine falls back to the English calibration, which is usable but not tuned.
-# The app logs a startup warning and the settings window marks it (main.py,
+# The app logs a startup warning and the settings window marks it (app.py,
 # settings_window.py). English always has a calibration, so this is False there.
 PHONEME_EXPERIMENTAL = engine_experimental()
 
@@ -911,7 +854,7 @@ PRACTICE_TEXT_FILE = _path("practice_text_file",
                                 SHIPPED_DIR / _LANG_PROFILE["practice_text_file"])
 
 # Shown in the source panel instead when PRACTICE_TEXT_FILE cannot be read
-# (main.py _load_practice_text), in the practiced language (from the profile).
+# (app.py _load_practice_text), in the practiced language (from the profile).
 PRACTICE_TEXT_FALLBACK = _LANG_PROFILE["practice_text_fallback"]
 
 # One short phrase is generated per request (non-streaming). Temperature and the
@@ -980,7 +923,7 @@ PREVIEW_PHRASE = _LANG_PROFILE["preview_phrase"]
 # active profile - language text is profile data, never a table in code.
 TTS_WARMUP = _LANG_PROFILE["tts_warmup"]
 
-# Startup greeting (main.py _greet_and_start) in the practiced language, from
+# Startup greeting (app.py _greet_and_start) in the practiced language, from
 # the active profile: GREETING_NAMED carries a {name} placeholder, filled with
 # the user name; GREETING_ANONYMOUS is the ready form for an empty name.
 GREETING_NAMED = _LANG_PROFILE["greeting_named"]
@@ -1067,27 +1010,21 @@ if TRANSLATION_LANGUAGE not in translation_targets():
 # needs is cached, every later run loads straight from disk with no network access.
 # Delete model_cache/ to force a fresh download.
 #
-# Every entry is conditional on what THIS run actually loads: the active
-# engine's Wav2Vec2 model (the dispatcher never loads the inactive engine's
-# weights, and the "none" engine loads no recognizer at all), the active TTS
-# backend's repo, and the translator only when a translation language is
-# selected. Requiring a repo the run never touches would keep the Hub online
-# for nothing, which is not a theoretical cost: with the gate open, every model
-# load revalidates over the network at every start, so one missing optional
-# model makes the whole app non-offline.
+# The set is ALL-OR-NOTHING, so every entry must be conditional on what THIS
+# run actually loads: the active engine's Wav2Vec2 model, the active TTS
+# backend's repo, and NLLB only when a translation language is selected.
+# Requiring a repo the run never touches leaves the Hub online for every model,
+# and an open gate costs a network revalidation per load at every start.
+# NLLB unconditionally is the mistake to avoid: translation is off by default,
+# so it kept the default installation from ever going offline.
 #
-# NLLB used to be required unconditionally, on the reasoning that offline mode
-# cannot be entered without it. That is true but backwards: translation is off
-# by default, so it meant the default installation never went offline at all.
-# It is conditional now, and the other half of that change is that a
-# translation language can no longer be enabled while the model is missing -
-# mimora/app.py restarts into the first-run window instead, because this
-# decision is made once, here, at import time (see mimora/first_run.py, the
-# translator level).
+# The decision is made once, at import. That is why a translation language
+# cannot be enabled while its model is missing - app.py restarts into the
+# first-run window instead (see mimora/first_run.py, the translator level).
 #
-# This is still NOT the same set as "what has to be downloaded before the app
-# can start": that question has levels and this one does not. The first-run
-# plan is therefore built the same WAY rather than taken from this constant.
+# NOT the same set as "what has to be downloaded before the app can start":
+# that question has levels and this one does not, so the first-run plan is
+# built the same WAY rather than taken from this constant.
 _ENGINE_MODEL_REPO = {
     "phoneme": WAV2VEC2_PHONEME_MODEL_NAME,   # default engine
     "acoustic": WAV2VEC2_MODEL_NAME,
@@ -1236,7 +1173,7 @@ if not isinstance(COLOR_THEME, str) or not COLOR_THEME.strip():
           f"got {COLOR_THEME!r}; using 'dark'", file=sys.stderr)
     COLOR_THEME = "dark"
 
-# Resolved palette consumed by ui.py / main.py. Starts as a copy of the
+# Resolved palette consumed by ui.py / app.py. Starts as a copy of the
 # built-in dark palette so every key is always present.
 THEME = dict(_DARK_THEME)
 
@@ -1267,7 +1204,7 @@ else:
 # =====================================================================
 # Shared Audio Device Settings
 # =====================================================================
-# Single lock coordinates PortAudio access between the mic (main.py) and
+# Single lock coordinates PortAudio access between the mic (app.py) and
 # speaker (tts.py) streams. Both modules import this object - do not create
 # separate Lock instances or they will not mutually exclude each other.
 AUDIO_LOCK = threading.Lock()
@@ -1290,5 +1227,5 @@ AUDIO_OUTPUT_DEVICE = _HW.get("AUDIO_OUTPUT_DEVICE")
 # files immediately).
 LOG_DIR = paths.log_dir()
 LOG_FILE = str(LOG_DIR / "main.log")
-# Log file for the auto-started local LLM server subprocess (see main.py).
+# Log file for the auto-started local LLM server subprocess (see app.py).
 LLM_SERVER_LOG_FILE = str(LOG_DIR / "llm_server.log")

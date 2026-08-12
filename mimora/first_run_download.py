@@ -269,23 +269,17 @@ def make_tqdm_class(state: ProgressState) -> type:
             log.debug("Progress stand-in: ignoring tqdm attribute %r.", name)
             return _noop
 
-        # tqdm's lock protocol: the one part of its API that callers reach
-        # through the CLASS rather than through an instance. __getattr__ above
-        # is defined ON the class and therefore answers for INSTANCES only, so
-        # it cannot serve a class-level lookup - which is how a stand-in that
-        # looked complete died with "type object '_ProgressTqdm' has no
-        # attribute 'get_lock'" the first time a real snapshot download reached
-        # it. huggingface_hub's _snapshot_download hands tqdm_class straight to
-        # tqdm.contrib.concurrent.thread_map, unconditionally, so this was on
-        # the path of every hub component of every first-run plan.
+        # tqdm's lock protocol: the one part of its API reached through the
+        # CLASS rather than an instance, so __getattr__ above (defined ON the
+        # class, and therefore answering for instances only) cannot serve it.
+        # This is on the path of every hub component of every first-run plan:
+        # huggingface_hub hands tqdm_class straight to thread_map, which asks
+        # the class for its lock before building a single bar.
         #
         # Implemented for real rather than as another no-op, because
-        # ensure_lock() is stateful and not merely chatty: it calls get_lock(),
-        # passes the result to set_lock(), and does `del tqdm_class._lock` on
-        # the way out. A no-op get_lock returns None, a no-op set_lock stores
-        # nothing, and that delete then raises AttributeError - the same crash
-        # three lines later. So the lock is genuinely created on demand and
-        # genuinely stored, exactly as tqdm does it.
+        # ensure_lock() is stateful: it calls get_lock(), passes the result to
+        # set_lock(), then does `del tqdm_class._lock`. No-op versions store
+        # nothing, and that delete raises AttributeError three lines later.
         @classmethod
         def get_lock(cls):
             if not hasattr(cls, "_lock"):
@@ -356,7 +350,7 @@ def _hub_online():
 
     This is the same hazard the fetchers avoid by never importing config, in
     the one shape that rule cannot prevent: the flag reaches us through the
-    process environment rather than through an import, because main.py imports
+    process environment rather than through an import, because app.py imports
     config long before the first-run window opens.
 
     Both halves are needed, and the second is the one that actually works

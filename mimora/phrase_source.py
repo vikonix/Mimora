@@ -6,7 +6,7 @@
 When config.LLM_BACKEND is "off", no language model is loaded or started:
 practice phrases are the source text's own sentences, taken verbatim and in
 order. :class:`SourceTextPhraseProvider` is a drop-in replacement for
-``LLMManager`` in the phrase-generation path (main.py ``_generate_and_prompt``
+``LLMManager`` in the phrase-generation path (app.py ``_generate_and_prompt``
 calls only ``generate_phrase``); everything downstream (TTS, translation,
 scoring) sees a plain text phrase and is unaffected by its origin.
 

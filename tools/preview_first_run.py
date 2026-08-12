@@ -224,10 +224,8 @@ STATES = ("required", "optional", "translator", "both", "all-levels",
 TOUR_STATES = tuple(state for state in STATES if state != "real")
 
 # Per state: what to press, and what has to be true. Two fields rather than one
-# paragraph, because the paragraph is read after the window is already on
-# screen and the button has already been pressed - by which time the only line
-# that mattered is the first one. Whatever explains WHY a check exists belongs
-# in the docstring above; what is printed is the instruction alone.
+# paragraph, because the instruction is read before the window is on screen and
+# the rest afterwards. Why a check exists belongs in the docstring above.
 #
 # One table rather than a branch per state: --state and --tour say the same
 # thing, and a second copy drifts on the first edit.

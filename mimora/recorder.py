@@ -35,18 +35,13 @@ AUDIO_NORMALIZATION_CEILING = 0.9    # Scales the peak target output level direc
 # How long to wait for the recording thread to finish after stopping.
 RECORD_THREAD_JOIN_TIMEOUT_SEC = 1.5
 
-# Where the diagnostic recording dumps go. The dumps are gated by the
-# "save_recordings" setting (config.SAVE_RECORDINGS, off by default): when
-# enabled, every take is written to disk as WAV so the audio can be inspected
-# independently of playback. Only three fixed files are kept, each overwritten
-# on every take (no history): the model's spoken reference, the raw mic
-# capture, and the normalized signal.
+# Where the diagnostic recording dumps go, gated by the "save_recordings"
+# setting (config.SAVE_RECORDINGS, off by default). Fixed file names,
+# overwritten on every take, no history.
 #
-# Under LOG_DIR rather than beside it: this is diagnostic output with the same
-# lifetime and the same audience as logs/main.log and the *_samples.jsonl files,
-# so it is one thing to look at when something went wrong and one thing to
-# delete afterwards. Its own subdirectory because these four names are generic
-# (model.wav, phrase.txt) and would read as anybody's files in a shared folder.
+# Under LOG_DIR because this is diagnostic output with the same lifetime and
+# audience as main.log: one place to look, one place to delete. In its own
+# subdirectory because names like model.wav are too generic to share a folder.
 RECORDS_DIR = str(config.LOG_DIR / "records")
 
 # Fixed file names for the dumped recordings (overwritten each take).

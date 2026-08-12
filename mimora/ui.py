@@ -4,7 +4,7 @@
 """View layer for the Mimora pronunciation trainer (facade).
 
 This module holds the UI as a standalone, passive :class:`TrainerView`, composed
-into the controller (``self.view``) in ``main.py`` rather than inherited. The
+into the controller (``self.view``) in ``app.py`` rather than inherited. The
 view owns every widget and renders state; the controller owns the application
 logic. Both directions across the boundary are explicit, typed contracts - the
 view shares no implicit namespace with the controller:
@@ -29,10 +29,10 @@ TrainerView is a facade over per-panel classes, each owning its widgets:
 
 The facade keeps the window chrome (header, status bar, tip line), the control
 row with the mic button, the intent methods and the feedback orchestration, and
-delegates everything panel-local. The controller-facing API is unchanged by the
-split: ``main.py`` and ``settings_window.py`` import exactly what they did
-before (TrainerView, ViewCallbacks, LENGTH_*; THEME, FONT_FAMILY, WHEEL_EVENTS,
-wheel_scroll_units are re-exported from ui_theme for settings_window).
+delegates everything panel-local. It is also the single import surface for the
+view: ``app.py`` and ``settings_window.py`` take TrainerView, ViewCallbacks and
+LENGTH_* from here, and THEME, FONT_FAMILY, WHEEL_EVENTS and wheel_scroll_units
+are re-exported from ui_theme for settings_window.
 """
 import logging
 import tkinter as tk
@@ -250,7 +250,7 @@ class TrainerView:
                      side=tk.LEFT, padx=(0, 0), pady=(6, 0))
 
         # Settings gear at the right edge of the header. Opens the settings
-        # window (see main.py on_settings_clicked). Tk buttons have no native
+        # window (see app.py on_settings_clicked). Tk buttons have no native
         # hover state (activebackground only shows while pressed), so a small
         # <Enter>/<Leave> pair brightens the glyph and fills the button like a
         # quiet outline-less icon button - otherwise the gear reads as a stray
