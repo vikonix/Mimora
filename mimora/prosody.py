@@ -9,7 +9,7 @@ So they live here, in a light module computed from the raw user and reference
 waveforms in ``app.py`` regardless of the active engine - not inside any single
 engine. Both the phoneme (``pronunciation/phoneme/``, the default) and the acoustic
 (``pronunciation/acoustic/``) engine show the exact same two charts because neither
-computes prosody anymore.
+computes prosody itself.
 
 Why a separate module from ``mimora/prosody_utils.py``: that file holds *pure*
 arithmetic helpers (``to_semitones`` / ``resample_series``) and is deliberately

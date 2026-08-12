@@ -259,10 +259,9 @@ class LayoutTests(unittest.TestCase):
 class ShippedRootTests(unittest.TestCase):
     """What ships inside the package, and that it really is inside it.
 
-    These are the tests that would have caught the packaging bug this root was
-    introduced for: the practice texts and theme schemas used to live at the
-    top of the source tree, which works perfectly in a clone and produces a
-    wheel without them.
+    These are the tests that catch the packaging bug this root exists for:
+    practice texts and theme schemas at the top of the source tree work
+    perfectly in a clone and produce a wheel without them.
     """
 
     def test_shipped_root_is_the_package_directory(self):

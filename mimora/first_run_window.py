@@ -587,7 +587,7 @@ def _detect_hardware_once() -> bool:
     """Probe the machine after a first run. True when it wrote a fresh answer.
 
     The return value is reported rather than acted on: ensure_ready restarts
-    whenever this window has run, so the probe no longer has to argue for one.
+    whenever this window has run, so the probe does not have to argue for one.
     It is kept because "did this run write the file" is worth having at the
     call site and in tests, and because a caller that stopped restarting
     unconditionally would need it again.
@@ -607,12 +607,12 @@ def _detect_hardware_once() -> bool:
     can be. Each failed sub-probe degrades into a string instead of raising -
     "torch has no CUDA (CPU-only build)", "No audio input device (microphone)
     found", "the installed llama-server is the 'linux-cpu-x64' build" - and
-    those strings are the whole diagnostic value of the module. They used to
-    reach nothing on this path: the returned dict was dropped, and
-    detect_hardware's own logs/hwdetect.log is set up by its CLI entry point,
-    which a packaged install never runs. So the findings sat in
-    hardware_config.json, where nobody looks until they already suspect
-    something, on the one code path that actually executes on a user's machine.
+    those strings are the whole diagnostic value of the module. Dropping the
+    returned dict here loses them entirely: detect_hardware's own
+    logs/hwdetect.log is set up by its CLI entry point, which a packaged
+    install never runs, so the findings would sit in hardware_config.json -
+    where nobody looks until they already suspect something - on the one code
+    path that actually executes on a user's machine.
     """
     if detect_hardware.OUTPUT_FILE.exists():
         return False

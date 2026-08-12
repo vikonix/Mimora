@@ -162,8 +162,8 @@ class TestPureLogic(unittest.TestCase):
 
 # Note: the prosody-visualisation helpers (to_semitones, resample_series) live in
 # mimora/prosody_utils.py (tests: tests/test_prosody_utils.py). The prosody
-# *extraction* (extract_f0/energy, interpolate_f0) moved to mimora/prosody.py
-# (tests: tests/test_prosody.py) - this engine no longer owns prosody.
+# *extraction* (extract_f0/energy, interpolate_f0) lives in mimora/prosody.py
+# (tests: tests/test_prosody.py) - this engine does not own prosody.
 
 
 def _run_end_to_end(user_path: str, reference_path: Optional[str]) -> None:

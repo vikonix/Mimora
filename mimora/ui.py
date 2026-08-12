@@ -147,9 +147,9 @@ class TrainerView:
     # Styles
     # ------------------------------------------------------------------
     def setup_styles(self):
-        # The first Style() instantiation applies the ttkbootstrap base theme
-        # (replacing the old ttk theme_use("clam")); later calls return the
-        # same singleton. All visible colors are then overridden from THEME.
+        # The first Style() instantiation applies the ttkbootstrap base theme;
+        # later calls return the same singleton. All visible colors are then
+        # overridden from THEME.
         self.style = ttk.Style(theme=BOOTSTRAP_THEME)
         self._apply_ttk_palette()
         # The popdown list is a classic Tk Listbox, themed via the option DB.
@@ -241,7 +241,7 @@ class TrainerView:
         # Title carries the fixed training language (no dynamic language picker):
         # brand + language shown prominently, with the descriptor as a smaller
         # subtitle. The language reads from config.TARGET_LANGUAGE so the title
-        # stays the single source of truth (replacing the old language chip).
+        # stays the single source of truth for it.
         tk.Label(header_frame, text=f"MIMORA · {config.TARGET_LANGUAGE}",
                  font=(FONT_FAMILY, FONT_SIZE_TITLE, "bold"), fg=THEME["accent"], bg=THEME["bg_main"]).pack(side=tk.LEFT)
 
@@ -275,16 +275,15 @@ class TrainerView:
                                      font=(FONT_FAMILY, FONT_SIZE_SMALL), fg=THEME["ready"], bg=THEME["bg_panel"])
         self.status_label.pack(side=tk.LEFT, padx=15, pady=4)
 
-        # The session tally (distinct-phrase count + running average) used to
-        # live here on the right of the status bar; it now lives in the hero
-        # card's progress ring (see HeroCard / update_session_stats), so the
-        # status bar carries only the transient status line on the left.
+        # The status bar carries only the transient status line on the left.
+        # The session tally (distinct-phrase count + running average) belongs to
+        # the hero card's progress ring (see HeroCard / update_session_stats).
 
         # 2a. Tip line - a single static hint sitting directly above the status
         # bar. Packed side=BOTTOM after the status bar so it lands just above it,
-        # regardless of the TOP-packed content built later. It restates the two
-        # least discoverable actions (space-to-record, Reference-replays), the
-        # role the removed instruction line used to fill.
+        # regardless of the TOP-packed content built later. It is the only place
+        # the two least discoverable actions are stated (space-to-record,
+        # Reference-replays).
         self.tip_label = tk.Label(
             self.root,
             text='Tip: press SPACE or click the mic to record. '
@@ -429,8 +428,8 @@ class TrainerView:
     def set_record_level(self, level: float):
         """Redraw the recording button with a level-driven red fill.
 
-        Recording now stops on its own after silence, so the static red glyph
-        no longer tells the user the mic is actually hearing them. The outer ring
+        Recording stops on its own after silence, so a static red glyph would
+        not tell the user the mic is actually hearing them. The outer ring
         is drawn exactly as the recording state (full radius, red); inside it a
         solid red disc grows with the live input level (``level`` is RMS in 0..1
         from the recorder): quiet -> a small disc (auto-stop is near), louder ->

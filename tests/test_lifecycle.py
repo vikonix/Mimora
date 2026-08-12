@@ -20,13 +20,13 @@ Only the first form is observable on a machine running from a checkout, and
 the third one cannot exist until the package is published - which is exactly
 why it is stubbed here rather than left to be discovered after publication.
 
-The stubbing has to be right to be worth anything, though, and it was not:
-these tests originally gave the console script ``__spec__ = None``, and the
-first live run of an installed package showed that a Windows one carries a
-spec named ``"__main__"`` (the .exe is a launcher with a zip archive appended,
-and the __main__.py inside it is imported like any module). The relaunch came
-out as ``python.exe -m __main__`` and the application closed instead of
-restarting. Both halves of that are pinned below.
+The stubbing has to be right to be worth anything, and the tempting stub is
+wrong: a Windows console script does NOT carry ``__spec__ = None``. The .exe is
+a launcher with a zip archive appended, and the __main__.py inside it is
+imported like any module, so its spec exists and is named ``"__main__"``. Read
+as a module name that gives ``python.exe -m __main__``, a command that does not
+run, and the application closes instead of restarting. Both halves are pinned
+below.
 
 Run from the project root with:
 

@@ -84,8 +84,7 @@ DEFAULT_SUPERTONIC_CACHE_DIR = MODEL_CACHE_DIR / "supertonic3"
 
 # Identity and size of every model live in mimora/models_info.py. The names
 # below BIND to those records rather than restating them: a binding cannot
-# drift from what it points at, which a second copy of the string could and did
-# (the same repo ids used to be spelled out here, in config.py and in tts.py).
+# drift from what it points at, and a second copy of the string can.
 SUPERTONIC_MODEL_NAME = models_info.SUPERTONIC.name
 SUPERTONIC_SIZE_MB = models_info.SUPERTONIC.size_mb
 
@@ -271,14 +270,14 @@ def hf_repo_cached(repo_id: str) -> bool:
     ensure_hf_models() SKIPS a repo this returns True for, so an over-generous
     answer here means a half-fetched repo that no later run ever completes.
 
-    This used to ask snapshot_download(local_files_only=True) instead, on the
-    understanding that it verifies every file of the recorded revision. It only
-    does so when trees/<commit>.json is cached, and that listing is written as a
-    side effect of snapshot_download itself (huggingface_hub 1.24.0,
-    _snapshot_download._raise_if_incomplete_snapshot returns early without it) -
-    so for a cache filled file by file by transformers, which is how a first run
-    fills it, the check silently did nothing. The filesystem check is both
-    stricter and free of the huggingface_hub import.
+    Do NOT replace this with snapshot_download(local_files_only=True). It
+    verifies every file of the recorded revision only when trees/<commit>.json
+    is cached, and that listing is written as a side effect of
+    snapshot_download itself (huggingface_hub 1.24.0,
+    _snapshot_download._raise_if_incomplete_snapshot returns early without it)
+    - so on a cache filled file by file by transformers, which is how a first
+    run fills it, the check passes without looking at anything. The filesystem
+    check is both stricter and free of the huggingface_hub import.
 
     Neither check can see a download interrupted exactly BETWEEN two files: no
     *.incomplete is left then. With files of this size an interrupt lands

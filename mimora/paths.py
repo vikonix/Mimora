@@ -22,10 +22,9 @@ that only coincide when the app runs from a clone:
   belongs to a package, and a directory at the root of the tree belongs to no
   package and is simply absent from an installed copy.
 
-Conflating the two is the bug this module exists to prevent: a single
-``BASE_DIR`` used to answer both questions, and moving it wholesale to the
-user-data directory would have sent the app looking for committed resources in
-a directory that only ever holds downloads.
+Conflating the two is the bug this module exists to prevent: one root answering
+both questions cannot move to the user-data directory without sending the app
+looking for committed resources in a directory that only ever holds downloads.
 
 The layout inside :func:`data_root` is identical in both modes on purpose. It
 means instructions, paths printed in logs and advice in error messages read the
@@ -165,13 +164,12 @@ def shipped_root() -> Path:
 
     The package directory itself, which is what makes these files survive
     packaging: setuptools puts a non-Python file into the wheel only when it
-    sits inside a package and is named in ``package-data``. The practice texts
-    and theme schemas used to live at the top of the source tree, where both
-    conditions fail silently - the wheel built fine and the installed app found
-    neither.
+    sits inside a package and is named in ``package-data``. Do not move the
+    practice texts or theme schemas to the top of the source tree: both
+    conditions fail silently there, the wheel still builds, and the installed
+    app finds neither.
 
-    Callers join the same relative path they always did (``texts/...``), so
-    the layout under this root matches the one the source tree used to have.
+    Callers join a relative path under this root (``texts/...``).
     """
     return _PACKAGE_DIR
 

@@ -10,8 +10,8 @@ There are three lists rather than one because the two subpackages under
 pronunciation/ are reusable GUI-agnostic libraries and must stay installable on
 their own. They therefore repeat torch, transformers and numpy with the same
 markers as the application - which is the duplication this script exists to
-police. (The root requirements.txt that used to be the first of the three is
-gone: the application's list lives in pyproject.toml now.)
+police. The application's own list is [project.dependencies] in pyproject.toml;
+there is no root requirements.txt.
 
 Pure parsing - no network, no installs - safe to run on any OS. The paths are
 resolved against the repository root derived from this file's location, so the

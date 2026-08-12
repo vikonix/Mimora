@@ -220,8 +220,8 @@ class _LogBridge(logging.Handler):
     """Forwards the fetcher modules' logging output into the installer's log.
 
     The download steps call functions in mimora/* instead of subprocesses, so
-    run_command's "stream the child's output into logs/install.log" no longer
-    applies to them. Without this bridge their progress and, worse, their
+    run_command's "stream the child's output into logs/install.log" does not
+    cover them. Without this bridge their progress and, worse, their
     diagnostics (checksum mismatches, the CUDA device probe) would appear on
     the console but never in the log file the user is asked to send in.
     """
@@ -595,9 +595,9 @@ def detect_gpu(log: Logger) -> tuple[str | None, tuple[int, int] | None]:
     maximum CUDA the installed driver supports and comes from
     mimora.llama_server_fetch.detect_driver_cuda() rather than from a private
     copy of the parsing: the smi header was renamed in the 610 drivers
-    ("CUDA UMD Version" in place of "CUDA Version") and only that module knew
-    about it, so this function used to report "unknown" on a perfectly healthy
-    machine. The module is stdlib-only and side-effect-free on import, so it is
+    ("CUDA UMD Version" in place of "CUDA Version"), and a second parser that
+    does not know that reports "unknown" on a perfectly healthy machine.
+    The module is stdlib-only and side-effect-free on import, so it is
     safe here, before the requirements step; its own log lines reach
     logs/install.log through bridge_module_logging().
     """
@@ -902,8 +902,8 @@ def _log_audio_devices(log: Logger) -> None:
 
     The zero case is the WSL trap: Ubuntu builds libportaudio2 with the ALSA
     backend only, while WSLg routes audio through PulseAudio, so the library
-    loads cleanly, enumerates nothing, and no error anywhere says why. The
-    installer used to leave the user with 'Audio: 0 input / 0 output' in
+    loads cleanly, enumerates nothing, and no error anywhere says why. Without
+    this line the user is left with 'Audio: 0 input / 0 output' in
     hardware_config.json and no next step.
 
     Purely informational, and silent when it cannot answer: sounddevice only
@@ -942,9 +942,9 @@ def step_check_portaudio(
     sounddevice is a cffi wrapper around PortAudio. Its Windows and macOS
     wheels bundle the library, its Linux wheels do not, and importing it
     without the system library raises OSError('PortAudio library not found').
-    That import happens inside mimora/detect_hardware.py, the last step
-    but one, so on a fresh Linux machine the installer used to abort after
-    several gigabytes of downloads over a 300 kB package. Hence the check runs
+    That import happens inside mimora/detect_hardware.py, the last step but
+    one, so on a fresh Linux machine the installer would abort there, after
+    several gigabytes of downloads, over a 300 kB package. Hence the check runs
     here, in the preflight block, next to the other things that only look.
 
     ctypes.util.find_library needs no third-party package, which is what lets
@@ -1088,11 +1088,10 @@ def step_gpu_torch(
 ) -> None:
     """Reinstall torch as a matching CUDA build.
 
-    torchaudio used to be reinstalled in the same command, because replacing
-    torch alone left a torchaudio built against the previous one. That pairing
-    problem went away with the package itself: torchaudio is no longer a
-    dependency (see the note in pyproject.toml), so there is nothing here to
-    keep in step with torch.
+    torch is replaced on its own because torchaudio is not a dependency (see
+    the note in pyproject.toml), so nothing here has to be kept in step with
+    it. Should it ever return, it has to be reinstalled in this same command,
+    or it stays built against the torch being replaced.
     """
     series = pick_cu_series(TORCH_CU_SERIES, driver_cuda)
     if series is None:
@@ -1117,15 +1116,14 @@ def step_gpu_torch(
 def step_espeak(log: Logger, confirmer: Confirmer, report: StepReport) -> None:
     """Report which espeak-ng the engines will use; offer to install one if none.
 
-    Asks the same question the consumer asks. `shutil.which("espeak-ng")`, what
-    this used to do, is a different question and was wrong in both directions:
-    phonemizer loads a shared LIBRARY, so a machine with the executable on PATH
-    but no library phonemizer can find was reported as done (on Windows that is
-    the *normal* outcome of the official installer, which writes
+    Asks the same question the consumer asks. Never `shutil.which("espeak-ng")`:
+    that is a different question and is wrong in both directions, because
+    phonemizer loads a shared LIBRARY. A machine with the executable on PATH
+    but no library phonemizer can find would be reported as done (on Windows
+    that is the *normal* outcome of the official installer, which writes
     libespeak-ng.dll while phonemizer's search looks for espeak-ng.dll), and a
     machine with no executable but the bundled espeakng-loader wheel - the
-    default setup since that wheel became a dependency - was reported as
-    needing manual work it does not need.
+    default setup - would be reported as needing manual work it does not need.
     """
     log.banner("Step 5 - espeak-ng (shared library for phonemizer)")
     library = _resolve_espeak_library(log)
@@ -1776,9 +1774,9 @@ def main() -> int:
         # probes it, and both come after pip because a 2.7 GB download is a bad
         # place to discover that the dependency install fails.
         #
-        # Step 9 also decides whether step 10 runs at all. The two used to be
-        # independent, which on a platform with no pinned build offered a 2.7 GB
-        # model right after saying that nothing here can load it.
+        # Step 9 also decides whether step 10 runs at all. Keep them coupled:
+        # independently, a platform with no pinned build is offered a 2.7 GB
+        # model right after being told that nothing here can load it.
         if args.skip_llm:
             report.add("llama-server binary", SKIPPED, "--skip-llm")
             report.add("GGUF model", SKIPPED, "--skip-llm")

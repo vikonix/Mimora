@@ -3,10 +3,10 @@
 
 """Pure helpers for prosody visualisation (no heavy dependencies).
 
-These functions used to live as static methods on the UI mixin. They hold no UI
-state and only do arithmetic, so they live here instead: that keeps them unit-
-testable without tkinter, and keeps this module importable without pulling in
-the ML stack (``pronunciation.acoustic.speech`` imports torch/transformers, so the helpers
+They hold no UI state and only do arithmetic, so they live here rather than on
+a view class: that keeps them unit-testable without tkinter, and keeps this
+module importable without pulling in the ML stack
+(``pronunciation.acoustic.speech`` imports torch/transformers, so the helpers
 deliberately do *not* live there).
 """
 

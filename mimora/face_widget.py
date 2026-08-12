@@ -303,7 +303,7 @@ class FaceWidget(tk.Canvas):
                 default) draws no outline; pass a colour so the disc stays
                 visible when its fill matches the panel behind it (e.g. a
                 white face on a white panel in the light theme). Drawn as a
-                thin 1 px rim, not the old heavy stroke.
+                thin 1 px rim.
             eye_color: colour of the eyes and eyebrows.
             mouth_color: colour of the resting mouth stroke; the darker
                 talking-mouth fill is derived from it.

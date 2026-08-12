@@ -3,7 +3,7 @@
 
 """Unit tests for the early process setup (mimora/bootstrap.py).
 
-What is worth pinning here is the one failure that used to end the startup:
+What is worth pinning here is the one failure that can end the startup:
 a log file that cannot be opened. It is reachable through a data root the
 machine cannot write to - most often a MIMORA_HOME naming a drive that is not
 there - and that variable exists to be the way OUT of a bad automatic choice,

@@ -670,9 +670,9 @@ def compute_pronunciation_score(acoustic_per_step: float,
     return round(final_score, 2)
 
 
-# Prosody (pitch & energy contours) is no longer owned by this engine. It moved
-# to the engine-agnostic ``mimora/prosody.py`` and is computed in ``main.py`` from
-# the raw user/reference waveforms, so the same charts work for every engine.
+# Prosody (pitch & energy contours) is not this engine's business: it belongs to
+# the engine-agnostic ``mimora/prosody.py``, computed by the host from the raw
+# user/reference waveforms so the same charts work for every engine.
 # ``analyze`` returns an empty ``prosody`` dict; the host fills it in.
 
 
@@ -790,8 +790,8 @@ def analyze(user_audio: np.ndarray,
             phrase. Optional only to mirror the phoneme/none signature
             ("Public API mirrors acoustic/ exactly"): THIS engine cannot score
             without it - the acoustic component is a comparison against the
-            reference - so None raises a ValueError instead of the TypeError a
-            positional-only signature used to produce.
+            reference - so None raises a ValueError, which names the problem
+            where a positional-only signature would only raise TypeError.
         user_sr: sample rate of ``user_audio`` (recording path is 16 kHz).
         reference_sr: sample rate of ``reference_audio`` (Kokoro is 24 kHz).
         voice: Kokoro voice the reference was synthesized with. Only recorded in

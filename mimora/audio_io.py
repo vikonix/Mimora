@@ -6,9 +6,8 @@
 This module owns the PortAudio/winsound plumbing that the microphone path
 (``recorder.py``) and the speaker path (``tts.py``) both need but neither
 should own. Keeping it here lets both modules depend on this neutral layer
-instead of on each other: previously ``recorder`` imported ``reset_portaudio``
-straight from ``tts``, which made the capture side depend on the synthesis
-side for purely device-level code.
+instead of on each other: the capture side must not reach into the synthesis
+side for device-level code.
 
 The lock and pipeline sample rate that coordinate the two streams live in
 ``config`` (``AUDIO_LOCK``, ``AUDIO_SAMPLE_RATE``) alongside the rest of the

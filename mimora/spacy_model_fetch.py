@@ -18,8 +18,9 @@ kokoro builds misaki, and misaki's English G2P constructor does this::
 ``spacy.cli.download`` shells out to ``sys.executable -m pip install <url>``. An
 environment created by ``uv tool install`` contains no pip, so the subprocess
 returns non-zero and ``spacy.util.run_command`` ends the process with
-``sys.exit`` - inside the loader thread, as a BaseException, which is why the
-application used to sit on "Loading models..." with nothing in the log.
+``sys.exit`` - inside the loader thread, as a BaseException. Uncaught, that
+leaves the application sitting on "Loading models..." with nothing in the log
+(hence the ``except BaseException`` in ``app.py`` ``load_components``).
 
 Declaring the model as a dependency is not open to us: spaCy models are not
 published on PyPI, they live on the ``explosion/spacy-models`` release pages,

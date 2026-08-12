@@ -71,15 +71,17 @@ def _setup_logging() -> None:
 
     Kept independent of the console output: the terminal stays concise while the
     log file preserves a timestamped, complete record for later inspection.
-    Idempotent, because the CLI is no longer the only entry point.
+    Idempotent, because the CLI is not the only entry point (first_run_window
+    calls probe_and_write directly).
 
-    An unwritable log directory costs the file and nothing else. This runs
-    before the probe, on a path that does NOT import config - so nothing has
-    called paths.ensure_dirs() and its own reporting cannot help here - and an
-    unreachable MIMORA_HOME used to end `mimora --detect-hardware` in a
-    three-deep pathlib traceback about a drive letter, from a command the user
-    was told to run by some other message. The probe itself needs no log file:
-    every line below is printed as well.
+    An unwritable log directory costs the file and nothing else, and that
+    tolerance is load-bearing. This runs before the probe, on a path that does
+    NOT import config - so nothing has called paths.ensure_dirs() and its own
+    reporting cannot help here - and an unreachable MIMORA_HOME would otherwise
+    end `mimora --detect-hardware` in a three-deep pathlib traceback about a
+    drive letter, from a command the user was told to run by some other
+    message. The probe itself needs no log file: every line below is printed
+    as well.
     """
     if logger.handlers:
         return
@@ -519,10 +521,10 @@ def warn_if_gpu_unused(device: str) -> None:
 
     # The uv flag is named on Windows only, for the reason the docstring above
     # already gives: PyPI's torch is a CUDA build on Linux and CUDA does not
-    # exist on macOS, so the gap this warning covers is one platform wide. The
-    # advice used to be printed everywhere, which on Linux sent the user to a
-    # flag that cannot help and does harm - it moves the WHOLE resolution onto
-    # the PyTorch index, with results that differ between runs.
+    # exist on macOS, so the gap this warning covers is one platform wide.
+    # Printing the advice everywhere sends a Linux user to a flag that cannot
+    # help and does harm: it moves the WHOLE resolution onto the PyTorch index,
+    # with results that differ between runs.
     if sys.platform == "win32":
         reinstall = ("`uv tool install --reinstall mimora --torch-backend auto` "
                      "(or set UV_TORCH_BACKEND=auto beforehand), or "

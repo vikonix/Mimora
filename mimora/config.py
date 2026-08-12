@@ -119,9 +119,9 @@ USER_SETTING_DEFAULTS = {
     "engine": "phoneme",
     "practice_language": "english",
     "accent": "american",
-    # Legacy alias of "accent" (see _KNOWN_USER_KEYS): read-only fallback for
-    # old settings.json files; save_user_setting drops it on the first save of
-    # either new language key. Nothing writes it anymore.
+    # Legacy alias of "accent" (see _KNOWN_USER_KEYS): a read-only fallback for
+    # older settings.json files, never written. save_user_setting drops it on
+    # the first save of either new language key.
     "english_accent": "american",
     "voice": None,
     "color_theme": "dark",
@@ -814,8 +814,8 @@ if PHONEME_GOOD_MODE not in PHONEME_GOOD_MODE_CHOICES:
 # =====================================================================
 # Acoustic + transcription model used by the pronunciation/acoustic/ module.
 # The repo ids come from mimora/models_info.py, which is also what the
-# downloaders fetch: the two used to be separate literals, so the app could ask
-# for a repo the installer had never pre-fetched. models_info imports nothing,
+# downloaders fetch: never restate one as a literal here, or the app can ask
+# for a repo the installer never pre-fetched. models_info imports nothing,
 # which is what lets config and the fetchers share it even though the fetchers
 # may not import config.
 WAV2VEC2_MODEL_NAME = models_info.WAV2VEC2_ACOUSTIC.repo_id
@@ -848,8 +848,8 @@ PRONUNCIATION_ACOUSTIC_GOOD = 0.20
 # directory settings.json is in. The default is the active language's profile
 # text, so each language ships its own starter text without a code change - and
 # because it ships inside the package, it comes from SHIPPED_DIR rather than
-# from BASE_DIR. The profile still spells the path as "texts/<file>", which is
-# the layout under SHIPPED_DIR as much as it was the layout under the old root.
+# from BASE_DIR. The profile spells the path as "texts/<file>", the layout
+# under SHIPPED_DIR.
 PRACTICE_TEXT_FILE = _path("practice_text_file",
                                 SHIPPED_DIR / _LANG_PROFILE["practice_text_file"])
 

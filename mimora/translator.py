@@ -21,12 +21,12 @@ Loading is not downloading, and on this path the two must not be confused. The
 weights are guaranteed to be on disk before anything here runs: enabling a
 translation language while they are missing restarts into the first-run window
 (``app.py`` ``_offer_translator_download``), which is the only place a
-multi-gigabyte download is shown with a progress bar. This used to be the one
-downloader with no UI at all - ``from_pretrained`` fetched 2.5 GB as a side
-effect of a load, on a worker thread, with the window showing nothing for half
-a minute. So a slow ``load_model()`` here now means a slow disk or a cold page
-cache, never a download, and ``is_loaded()`` is what lets a caller tell a
-failed load from translation simply being off.
+multi-gigabyte download is shown with a progress bar. Left to itself,
+``from_pretrained`` fetches 2.5 GB as a side effect of a load, on a worker
+thread, with the window showing nothing for half a minute. So a slow
+``load_model()`` here means a slow disk or a cold page cache, never a download,
+and ``is_loaded()`` is what lets a caller tell a failed load from translation
+simply being off.
 """
 
 import logging

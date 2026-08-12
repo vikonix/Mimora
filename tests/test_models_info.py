@@ -108,9 +108,9 @@ class CatalogueShapeTests(unittest.TestCase):
         self.assertCountEqual(repo_ids, set(repo_ids))
 
     def test_labels_carry_no_size(self):
-        # Sizes used to live inside the display labels, which is how they came
-        # to disagree with reality. The number belongs to size_mb and is
-        # formatted where it is shown. Matching a digit before the unit keeps
+        # A size baked into a display label drifts from reality unnoticed. The
+        # number belongs to size_mb and is formatted where it is shown.
+        # Matching a digit before the unit keeps
         # this from tripping over a model whose name merely contains "GB".
         for model in _all_models():
             with self.subTest(model=model.label):

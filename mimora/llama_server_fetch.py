@@ -132,11 +132,10 @@ class Variant(NamedTuple):
     device_pattern: regex that must match `llama-server --list-devices` output
         after the install, or None when the build has no GPU backend to check.
     backend: the compute backend this build was compiled with ("CUDA",
-        "Vulkan", "Metal", "CPU"), stated rather than inferred. Every message that has
-        to name it used to derive it some other way - from the platform, from
-        the variant's name prefix - and each of those derivations was a guess
-        that a new row in this table could silently invalidate. "CPU" holds
-        exactly when device_pattern is None.
+        "Vulkan", "Metal", "CPU"), stated rather than inferred. Do not derive it
+        anywhere else - from the platform, from the variant's name prefix - as
+        every such derivation is a guess that a new row in this table can
+        silently invalidate. "CPU" holds exactly when device_pattern is None.
     fallback: variant to install instead when this one passes its download and
         --version checks but fails the device check, or None to make that
         failure final. It is a property of the build rather than of whoever
@@ -589,13 +588,12 @@ def is_current(dest: Path, tag: str, variant: str, *,
     the CPU build to the CUDA build keeps the same tag, and only the variant
     tells the two apart.
 
-    A stamp that records a device-check substitution also answers for the
-    variant that was ASKED for, and that is the half this used to be missing.
-    Without it, a machine whose Vulkan build had descended to CPU looked like a
-    machine with no Vulkan build: every `install.py` run downloaded the 32 MB
-    GPU asset again, failed the same device check again and descended again,
-    because nothing on disk remembered that the question had already been
-    answered.
+    A stamp that records a device-check substitution must also answer for the
+    variant that was ASKED for. Without that half, a machine whose Vulkan build
+    has descended to CPU looks like a machine with no Vulkan build: every
+    `install.py` run downloads the 32 MB GPU asset again, fails the same device
+    check again and descends again, because nothing on disk remembers that the
+    question was already answered.
 
     ``allow_substituted=False`` asks the narrow question instead - is exactly
     this build installed - which is what an explicit ``--variant`` passes.
@@ -988,8 +986,8 @@ def ensure_llama_server(*, variant: Optional[str] = None,
     still ends up with a working CPU build instead of a failed install. Only
     the device check is retried, and only downwards: every other failure is
     raised as it happens, and the chain is finite because a variant is never
-    tried twice. What was originally asked for is written into the stamp
-    together with the reason, so the next call can tell "the GPU build is not
+    tried twice. The variant asked for is written into the stamp together with
+    the reason, so the next call can tell "the GPU build is not
     installed" from "the GPU build was tried and this is what came of it".
 
     *reconsider* asks for a recorded substitution to be ignored, so the GPU
@@ -1259,9 +1257,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     # printed after it.
     #
     # It also puts the download log on the same stream as the non-interactive
-    # progress report, which _cli_progress print()s to stdout; those two used to
-    # be split across stdout and stderr, which is worst exactly when the output
-    # is redirected to a file. Interactive progress stays on stderr on purpose
+    # progress report, which _cli_progress print()s to stdout. Splitting those
+    # two across stdout and stderr is worst exactly when the output is
+    # redirected to a file. Interactive progress stays on stderr on purpose
     # (a terminal flushes both promptly, and \r updates do not belong in a pipe).
     logging.basicConfig(level=logging.INFO, format="%(message)s",
                         stream=sys.stdout)
@@ -1271,10 +1269,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         for name, spec in sorted(VARIANTS.items()):
             # The backend is stated first because it is the thing being
             # chosen; the driver requirement is a condition on it, and only
-            # the CUDA builds have one. Deriving the whole label from
-            # min_driver_cuda alone used to describe the Vulkan build as
-            # having "no GPU requirement", which is true of the driver
-            # version and false of everything the user meant by it.
+            # the CUDA builds have one. Do not derive the whole label from
+            # min_driver_cuda alone: that describes the Vulkan build as having
+            # "no GPU requirement", true of the driver version and false of
+            # everything the user means by it.
             facts = [f"{spec.backend} backend"]
             if spec.min_driver_cuda:
                 facts.append("driver CUDA >= "

@@ -153,10 +153,10 @@ class TranslatorLevelTests(unittest.TestCase):
     def test_the_offline_gate_asks_for_it_on_the_same_condition(self):
         # The two decisions are made in different modules and must agree, in
         # both directions. Requiring NLLB with translation off would leave the
-        # Hub online at every start for a model that is never loaded (which is
-        # what it used to do); not requiring it with translation on would flip
-        # the process offline while the model is still missing, and then the
-        # download could not happen at all.
+        # Hub online at every start for a model that is never loaded; not
+        # requiring it with translation on would flip the process offline while
+        # the model is still missing, and then the download could not happen at
+        # all.
         self.assertEqual(
             models_info.NLLB.repo_id in config._CACHED_REPOS,
             bool(config.TRANSLATION_LANGUAGE))
@@ -711,9 +711,9 @@ class RefusalTests(unittest.TestCase):
 
     Each flag is mapped to a settings.json write by ensure_ready, so a flag set
     for a level that was never on screen turns a feature off that nobody
-    declined. That was reachable: the window used to record the refusal as a
-    single unconditional boolean, which was harmless only as long as there was
-    one refusable level and it could not be empty whenever this ran.
+    declined. That is what recording the refusal as one unconditional boolean
+    does: harmless only while there is a single refusable level that cannot be
+    empty whenever this runs.
 
     The window is built without __init__ on purpose. What is under test is the
     bookkeeping, the constructor is entirely Tk, and a test that needed a

@@ -354,8 +354,9 @@ class AudioRecorder:
                         logging.info("Maximum recording duration reached.")
                         # The caller routes this through its normal stop path so
                         # the take is finalized and analyzed exactly like a manual
-                        # stop; flipping is_recording directly here used to leave
-                        # the take unanalyzed and the UI stuck in recording state.
+                        # stop. Do not flip is_recording directly here: that
+                        # leaves the take unanalyzed and the UI stuck in
+                        # recording state.
                         self._on_max_duration()
                         break
 

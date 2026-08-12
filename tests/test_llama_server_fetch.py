@@ -192,7 +192,7 @@ class ProbeFailureTests(unittest.TestCase):
     """_probe reports a binary that starts and then dies on a signal.
 
     subprocess.run does not raise for that: it returns an ordinary result whose
-    output is empty, which used to surface from verify_build as "printed no
+    output is empty, which unhandled surfaces from verify_build as "printed no
     recognisable version" over an empty string. The case worth naming is SIGILL
     from an Intel Mac older than the CPU the release was compiled for.
     """

@@ -72,9 +72,9 @@ def _log_header(append: bool) -> None:
     would make it just another record. The original formatter objects are put
     back immediately, so nothing downstream can tell this happened.
 
-    The three facts are the ones every bug report opens by asking and no line
-    of the log used to state together: which build is running, which process
-    wrote these lines, and how it was started - the last one distinguishes a
+    The three facts are the ones every bug report opens by asking, and this is
+    the only line that states them together: which build is running, which
+    process wrote these lines, and how it was started - the last one tells a
     source checkout from an installed console script, which is the difference
     paths.py branches on and therefore the difference between two entirely
     different sets of file locations.
@@ -184,10 +184,10 @@ def setup_logging(log_file, append=False):
     ``append`` continues the existing file instead of truncating it. It is
     what an in-session restart passes to its own replacement process (see
     lifecycle.spawn_replacement): the app relaunches itself after the
-    first-run window and after a restart-only setting changes, and the child
-    used to open main.log with mode="w" and wipe everything the process that
-    spawned it had written - which is precisely the interesting part, the
-    whole first-run download or the setting that caused the restart. A fresh
+    first-run window and after a restart-only setting changes. Without it the
+    child opens main.log with mode="w" and wipes everything the process that
+    spawned it wrote - which is precisely the interesting part, the whole
+    first-run download or the setting that caused the restart. A fresh
     launch still starts from an empty file, so the log stays one session
     long, restarts included.
 

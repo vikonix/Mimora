@@ -93,9 +93,9 @@ class PronunciationTrainerGUI:
     """
 
     def __init__(self):
-        # No version here any more: bootstrap._log_header states it on the
-        # first line of every log, and repeating it three lines later was the
-        # kind of duplication that makes two sources of one fact.
+        # Deliberately no version here: bootstrap._log_header states it on the
+        # first line of every log, and a second copy three lines later would be
+        # a second source of one fact.
         logging.info("Starting Mimora Pronunciation Trainer...")
 
         # Core Tkinter setup
@@ -147,7 +147,7 @@ class PronunciationTrainerGUI:
         # Recording is press-to-start / auto-stop (see the recording controls
         # section). _record_key_held only tracks whether a record key (spacebar
         # or the Down arrow) is physically held, so key-autorepeat does not fire
-        # repeated toggles - it is no longer a "hold to record" flag. The actual
+        # repeated toggles - it is NOT a "hold to record" flag. The actual
         # capture lives in AudioRecorder; all four callbacks fire on the capture
         # thread, so they marshal every UI touch onto the Tk main thread via
         # root.after.
@@ -538,14 +538,14 @@ class PronunciationTrainerGUI:
         self.view.append_system_msg(f"Loaded practice text: {os.path.basename(path)}")
         logging.info(f"Practice text loaded from {path!r}.")
 
-        # Persist for the next launch, always as the absolute path. The stored
-        # form used to be relative to the project root, which stopped being a
-        # single well-defined place once the settings file and the shipped
-        # texts moved to different roots in package mode: a relative value is
-        # read back against the settings file's own directory, and the picked
-        # file is rarely under it. Relative values remain fully supported for
-        # somebody hand-editing settings.json - they are simply not what the
-        # picker writes.
+        # Persist for the next launch, always as the absolute path, never a
+        # relative one: a relative value is read back against the settings
+        # file's own directory, and a picked file is rarely under it. The
+        # project root is not an alternative base - it stopped being one
+        # well-defined place once the settings file and the shipped texts
+        # landed in different roots in package mode. Relative values remain
+        # fully supported for somebody hand-editing settings.json; they are
+        # simply not what the picker writes.
         saved = str(path)
         self.settings_ctl.persist("practice_text_file", saved)
         # Keep the runtime view current for load_practice_text and the file
@@ -1057,9 +1057,9 @@ class PronunciationTrainerGUI:
     def _toggle_recording(self):
         """One press toggles capture: start a take, or stop the running one.
 
-        Replaces the old hold-to-talk model. A take now starts on a single
-        press and stops on its own after silence (recorder VAD); pressing again
-        while it is running is the manual stop. trigger_recording_start /
+        A take starts on a single press and stops on its own after silence
+        (recorder VAD); pressing again while it is running is the manual stop.
+        There is no hold-to-talk path. trigger_recording_start /
         trigger_recording_stop keep their own guards, so this only routes.
         """
         if self.recorder.is_active():
@@ -1550,14 +1550,13 @@ class PronunciationTrainerGUI:
         still occupy the server port the new process needs.
 
         Every step is best-effort and none may prevent the exit. What this
-        guards against is specific: an exception here used to propagate into
-        the Tk callback that called it, which skipped hard_exit() while
-        _closing was already True - so the window stayed open and every further
-        attempt to close it returned on the first line. The app became
-        unquittable by an audio device that raised on the way out, and
-        restart_app additionally never reached spawn_replacement(), turning a
-        settings restart into a hang. Leaking a subprocess is the lesser
-        failure, and the log says which step leaked it.
+        guards against is specific: an exception here must not propagate into
+        the Tk callback that called it, because that skips hard_exit() while
+        _closing is already True - the window then stays open and every further
+        attempt to close it returns on the first line. One audio device raising
+        on the way out makes the app unquittable, and restart_app never reaches
+        spawn_replacement(), turning a settings restart into a hang. Leaking a
+        subprocess is the lesser failure, and the log says which step leaked it.
         """
         self.shutdown_event.set()
         for name, action in (("playback", self.playback.stop),
@@ -1693,8 +1692,8 @@ def run(append_log: bool = False):
         # window's Quit button, its close box, or Escape, including mid-
         # download. Declining the optional level is the opposite outcome, it
         # starts the app with llm_backend "off", and ensure_ready logs that
-        # itself. The two used to share this line, which made a log read as a
-        # refusal when the download had merely been interrupted.
+        # itself. The two must not share this line: it would make a log read as
+        # a refusal when the download was merely interrupted.
         logging.info("First-run setup cancelled; exiting before startup.")
         # hard_exit rather than SystemExit, for the same reason quit_app uses
         # it: the download runs on a daemon thread that may be mid-transfer,

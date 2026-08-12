@@ -191,9 +191,9 @@ class LLMServerController:
             # restart main.log is continued, and a server log that starts
             # over would cover only the second half of a session whose app
             # log covers all of it. Reached on the restart-from-settings
-            # path, where the old process shut this server down and the new
-            # one starts its own; the first-run restart happens before any
-            # server exists.
+            # path, where the departing process shuts this server down and the
+            # replacement starts its own; the first-run restart happens before
+            # any server exists.
             log_mode = bootstrap.log_file_mode()
             self._log_file = open(log_path, log_mode,
                                   encoding="utf-8", buffering=1)

@@ -3,14 +3,14 @@
 
 """Point phonemizer at the bundled espeak-ng, for both pronunciation engines.
 
-Why this is not a system dependency any more
---------------------------------------------
+Why no system install is needed
+------------------------------
 ``phonemizer`` talks to espeak-ng through a shared library, not through the
 ``espeak-ng`` executable, and ``espeakng_loader`` ships that library together
 with its data directory as an ordinary wheel. Registering it removes the one
-step of the install that pip could not perform. A system install stays a valid
+step of the install that pip cannot perform. A system install stays a valid
 setup - it is what a standalone install of one of these subpackages without
-``espeakng_loader`` falls back to - but it is no longer required.
+``espeakng_loader`` falls back to - but it is not required.
 
 Why the engines register it themselves
 --------------------------------------
@@ -42,11 +42,11 @@ the data directory is never found "next to" the loaded library.
 
 Diagnostics
 -----------
-The registration used to swallow every exception silently, which made a
-failure indistinguishable from success: the process carried on with a system
-espeak-ng if one existed, and quietly scored against a different transcription
-if one did not. Hence the INFO/WARNING pair - the same idea as the "spaCy
-pipeline ... resolves from" line in ``mimora/app.py``.
+The registration must never swallow its exceptions silently: that makes a
+failure indistinguishable from success, because the process carries on with a
+system espeak-ng if one exists and quietly scores against a different
+transcription if one does not. Hence the INFO/WARNING pair - the same idea as
+the "spaCy pipeline ... resolves from" line in ``mimora/app.py``.
 
 Also runnable, which is what ``install.py``'s ``step_espeak`` uses::
 

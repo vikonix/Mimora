@@ -103,7 +103,7 @@ class HeroCard:
         # single "text" option like a Label).
         self._bind_copy_menu(self.phrase_text,
                              getter=lambda: self.phrase_text.get("1.0", "end-1c"))
-        # Same "-" placeholder the old Label started with.
+        # Placeholder until the first phrase arrives.
         self.set_phrase("-")
 
         # Translation inside the same card, right under the phrase: just dimmer,

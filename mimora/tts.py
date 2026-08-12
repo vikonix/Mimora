@@ -340,9 +340,9 @@ class TTSManager:
         if full_audio.size == 0:
             return
 
-        # Normalise the peak to avoid clipping. Applied before the platform
-        # branch so playback loudness is identical on the winsound and
-        # sounddevice paths (it used to run only for winsound).
+        # Normalise the peak to avoid clipping. Must stay ahead of the platform
+        # branch, so playback loudness is identical on the winsound and
+        # sounddevice paths.
         peak = np.max(np.abs(full_audio))
         if peak > 0:
             full_audio = full_audio / peak * 0.9

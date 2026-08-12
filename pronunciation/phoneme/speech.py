@@ -72,9 +72,9 @@ from pronunciation.common.audio import (
     waveform_digest,
 )
 
-# Bundled espeak-ng registration, shared with the acoustic engine (this engine
-# used to hold its own copy). See that module for why the engines register it
-# themselves rather than relying on Kokoro/misaki's import side effect.
+# Bundled espeak-ng registration, shared with the acoustic engine rather than
+# copied per engine. See that module for why the engines register it themselves
+# rather than relying on Kokoro/misaki's import side effect.
 from pronunciation.common.espeak import ensure_espeak
 
 
@@ -152,9 +152,8 @@ def _load_model_calibration(lang: str) -> Tuple[dict, Path]:
     part of the result rather than recomputed by the caller because the two can
     differ: on the fallback the data is English while *lang* is not, and a
     caller that spelled the name itself would report a file that does not
-    exist. That is precisely what the startup log used to do for Spanish -
-    "no model calibration for 'es'" immediately followed by
-    "file=es_model_calibration.json".
+    exist - a startup log reading "no model calibration for 'es'" immediately
+    followed by "file=es_model_calibration.json".
     """
     path = _model_calibration_path(lang)
     data = _read_json(path)
@@ -528,7 +527,7 @@ def _ensure_loaded() -> None:
 
 # espeak registration lives in pronunciation.common.espeak (ensure_espeak is
 # imported above), shared with the acoustic engine so a fix to it reaches both.
-# It used to be a private copy here, which left the acoustic engine with none.
+# Do not take a private copy here: that leaves the other engine unregistered.
 
 
 # Audio preparation lives in pronunciation.common.audio (_prepare_waveform is

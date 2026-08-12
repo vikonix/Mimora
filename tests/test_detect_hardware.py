@@ -215,8 +215,8 @@ class UnwritableDataRootTests(unittest.TestCase):
     people following advice rather than by people debugging. It also does NOT
     import config, which means paths.ensure_dirs() never runs on this path and
     its own reporting cannot cover it: everything here has to be handled where
-    it happens. An unreachable MIMORA_HOME used to end the command in a
-    three-deep pathlib traceback about a drive letter.
+    it happens. An unreachable MIMORA_HOME would otherwise end the command in
+    a three-deep pathlib traceback about a drive letter.
     """
 
     def setUp(self):

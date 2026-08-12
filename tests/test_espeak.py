@@ -17,7 +17,7 @@ Four questions, one per class:
     system espeak-ng existed or where importing Kokoro had registered one.
   * Does install.py's step_espeak ask the consumer's question (which resolves)
     rather than `shutil.which("espeak-ng")` (does the executable exist)? The
-    two disagree, and the old check was wrong in both directions.
+    two disagree, and the which-based check is wrong in both directions.
 """
 
 import subprocess
@@ -131,8 +131,8 @@ class RegistrationTests(unittest.TestCase):
         with mock.patch.dict(sys.modules, {"espeakng_loader": None}):
             with self.assertLogs(espeak.__name__, level="WARNING") as logs:
                 self.assertFalse(espeak.ensure_espeak())
-        # Silence was the old behaviour (`except Exception: pass`) and made a
-        # failure indistinguishable from success, so the message matters.
+        # Silence here (`except Exception: pass`) makes a failure
+        # indistinguishable from success, so the message matters.
         self.assertIn("system espeak-ng", "\n".join(logs.output))
 
     def test_success_says_where_the_library_came_from(self):

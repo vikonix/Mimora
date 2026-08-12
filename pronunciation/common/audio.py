@@ -6,9 +6,9 @@
 Both engines (``pronunciation.acoustic`` / ``pronunciation.phoneme``) and the
 host's prosody layer (``mimora/prosody.py``) must prepare audio identically:
 the score and the prosody contours have to be measured on the same signal.
-These helpers used to be mirrored in all three modules on purpose (the engines
-must not import from ``mimora``); this module is the single shared copy that
-keeps the layering intact - it lives beside ``PronunciationResult`` in
+Mirroring them per module keeps the layering intact (the engines must not
+import from ``mimora``) but lets the three copies drift apart. This module is
+the single shared copy instead: it lives beside ``PronunciationResult`` in
 ``pronunciation.common``, which everything is already allowed to depend on.
 
 Deliberately free of torch/transformers, and librosa is imported lazily inside
