@@ -252,6 +252,16 @@ class ProgressKwargsTests(unittest.TestCase):
         self.assertEqual(
             model_fetch.progress_kwargs(takes_no_hook, self._Sink), {})
 
+    def test_positional_only_parameter_is_dropped(self):
+        # The hook is passed by name, so a parameter that can only be filled
+        # positionally is not a parameter this call can use - matching on the
+        # name alone would produce the very TypeError the helper prevents.
+        def positional_only(repo_id, tqdm_class=None, /):
+            pass
+
+        self.assertEqual(
+            model_fetch.progress_kwargs(positional_only, self._Sink), {})
+
     def test_unreadable_signature_is_dropped(self):
         # Some C entry points have no signature inspect can read. Losing the
         # bar is the safe answer there; raising inside a multi-gigabyte

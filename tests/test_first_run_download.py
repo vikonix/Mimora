@@ -34,10 +34,11 @@ MB = first_run_download.BYTES_PER_MB
 
 # The same condition the huggingface_hub pin in pyproject.toml carries. Where
 # it holds, every hub entry point this package calls takes tqdm_class and the
-# bar counts bytes. On Intel macOS transformers 4.x caps the hub below 1.0,
-# part of the hook is missing, and model_fetch.progress_kwargs drops it - so
-# the upstream canary below would report a broken library instead of a
-# supported fallback.
+# bar counts bytes. On Intel macOS transformers 4.x caps the hub below 1.0 and
+# hf_hub_download is missing the argument, which model_fetch.progress_kwargs
+# handles - so the canary below asks that half of the question only where the
+# pin applies, or it would report a broken library instead of a supported
+# fallback.
 HUB_IS_PINNED = not (platform.system() == "Darwin"
                      and platform.machine() == "x86_64")
 
@@ -241,13 +242,20 @@ class TqdmStandInTests(unittest.TestCase):
             first_run_download.ProgressState(1))
         self.assertIsNot(self.cls.get_lock(), other.get_lock())
 
-    @unittest.skipUnless(HUB_IS_PINNED,
-                         "Intel macOS resolves huggingface_hub below the pin")
     def test_the_upstream_hook_still_exists(self):
         # The whole approach rests on this argument being public. If a version
         # bump removes it, this fails here instead of silently freezing the bar.
+        # snapshot_download is checked everywhere: it has taken the argument
+        # since hub 0.x, so its absence is a broken library on any platform.
+        # hf_hub_download has it from 1.24 only, which is what the pin asks for
+        # and what Intel macOS cannot resolve, so it is checked where the pin
+        # applies. The fallback for the other case is asserted below.
         from huggingface_hub import hf_hub_download, snapshot_download
-        for func in (hf_hub_download, snapshot_download):
+
+        checked = [snapshot_download]
+        if HUB_IS_PINNED:
+            checked.append(hf_hub_download)
+        for func in checked:
             with self.subTest(func=func.__name__):
                 self.assertIn("tqdm_class",
                               inspect.signature(func).parameters)

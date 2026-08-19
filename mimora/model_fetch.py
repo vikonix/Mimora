@@ -319,7 +319,7 @@ def supertonic_cached() -> bool:
 # ---------------------------------------------------------------------------
 
 def progress_kwargs(download_fn: Callable[..., Any],
-                    tqdm_class: Optional[type]) -> dict:
+                    tqdm_class: Optional[type]) -> dict[str, Any]:
     """Return the ``tqdm_class`` keyword for *download_fn*, or nothing.
 
     huggingface_hub does not offer that hook on every entry point of every
@@ -330,8 +330,15 @@ def progress_kwargs(download_fn: Callable[..., Any],
     the whole download with it.
 
     Asking the signature rather than the version number keeps one rule in one
-    place and needs no platform branch. A callable declaring ``**kwargs``
-    counts as accepting the keyword, so a wrapper around the hub still gets it.
+    place and needs no platform branch. The hook is passed BY NAME, so a
+    positional-only parameter does not count as accepting it.
+
+    A callable declaring ``**kwargs`` does count, so a wrapper around the hub
+    still reports progress - and that is the one shape this check cannot
+    answer for: such a wrapper in front of an old hf_hub_download swallows the
+    question and raises TypeError anyway. It stays theoretical because
+    huggingface_hub's own decorators keep the wrapped signature
+    (functools.wraps), so inspect.signature reads the real parameters.
 
     An unreadable signature answers "no" on purpose: a progress bar that does
     not move costs cosmetics, a TypeError costs the download.
@@ -342,7 +349,9 @@ def progress_kwargs(download_fn: Callable[..., Any],
         parameters = inspect.signature(download_fn).parameters.values()
     except (TypeError, ValueError):
         parameters = ()
-    accepted = any(p.name == "tqdm_class" or p.kind is p.VAR_KEYWORD
+    accepted = any(p.kind is p.VAR_KEYWORD
+                   or (p.name == "tqdm_class"
+                       and p.kind is not p.POSITIONAL_ONLY)
                    for p in parameters)
     if not accepted:
         log.info("This huggingface_hub takes no tqdm_class on %s - the "
