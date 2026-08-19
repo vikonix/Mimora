@@ -217,8 +217,12 @@ their module-level imports so `install.py` can use them before the requirements
 step:
 
 - [`mimora/model_fetch.py`](mimora/model_fetch.py) - everything a run always
-  needs (both Wav2Vec2 repos, Kokoro, NLLB, Supertonic). Owns the cache layout
-  and `prepare_hf_env()`.
+  needs (both Wav2Vec2 repos, Kokoro, NLLB, Supertonic). Owns the cache layout,
+  `prepare_hf_env()` and `progress_kwargs()` - the rule that decides whether
+  the installed huggingface_hub may be handed a `tqdm_class`, which
+  `gguf_fetch` asks as well. Dropping that check passes the keyword to a hub
+  that has no such parameter, and the first run dies on the required GGUF
+  component wherever the pin in `pyproject.toml` does not apply.
 - [`mimora/gguf_fetch.py`](mimora/gguf_fetch.py) - the GGUF chat model. Split
   from the above by what is skippable: with `lm-studio` or `off`, neither the
   binary nor the GGUF is needed.
@@ -264,6 +268,13 @@ answered in `first_run.py` instead.
   first-run window in any of its states without a first run, because the window
   only appears on a machine that is missing something and that is never the
   machine it is being written on.
+- [`tools/check_tqdm_hook.py`](tools/check_tqdm_hook.py) - tests
+  `model_fetch.progress_kwargs` against the huggingface_hub that this
+  environment actually resolved, with a real download of a few kilobytes. The
+  fast suite cannot: it downloads nothing and describes the hub with fakes, so
+  it says what the code does when `tqdm_class` is absent and never whether it
+  is absent here. Run it after raising the huggingface_hub pin, and once on
+  every platform the pin's marker excludes.
 
 ### Shipped data
 

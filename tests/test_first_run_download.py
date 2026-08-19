@@ -10,7 +10,7 @@ network, and they are the two that fail silently rather than loudly:
   double-counted byte stream makes the bar lie, and no exception is ever
   raised;
 * the shape of the tqdm stand-in against the exact call forms huggingface_hub
-  uses. The library is not pinned anywhere (it arrives transitively), and if a
+  uses. The pin in pyproject.toml fixes a minimum, not the behaviour, so if a
   future version stops calling our object the way we expect, the bar simply
   stops moving. A red test here is the only warning we get.
 
@@ -22,6 +22,7 @@ Run from the project root with:
 import inspect
 import logging
 import os
+import platform
 import unittest
 from unittest import mock
 
@@ -30,6 +31,15 @@ from mimora import (config, first_run, first_run_download, gguf_fetch,
                     spacy_model_fetch)
 
 MB = first_run_download.BYTES_PER_MB
+
+# The same condition the huggingface_hub pin in pyproject.toml carries. Where
+# it holds, every hub entry point this package calls takes tqdm_class and the
+# bar counts bytes. On Intel macOS transformers 4.x caps the hub below 1.0,
+# part of the hook is missing, and model_fetch.progress_kwargs drops it - so
+# the upstream canary below would report a broken library instead of a
+# supported fallback.
+HUB_IS_PINNED = not (platform.system() == "Darwin"
+                     and platform.machine() == "x86_64")
 
 _saved_level = logging.NOTSET
 
@@ -231,6 +241,8 @@ class TqdmStandInTests(unittest.TestCase):
             first_run_download.ProgressState(1))
         self.assertIsNot(self.cls.get_lock(), other.get_lock())
 
+    @unittest.skipUnless(HUB_IS_PINNED,
+                         "Intel macOS resolves huggingface_hub below the pin")
     def test_the_upstream_hook_still_exists(self):
         # The whole approach rests on this argument being public. If a version
         # bump removes it, this fails here instead of silently freezing the bar.
@@ -239,6 +251,16 @@ class TqdmStandInTests(unittest.TestCase):
             with self.subTest(func=func.__name__):
                 self.assertIn("tqdm_class",
                               inspect.signature(func).parameters)
+
+    def test_a_hub_without_the_hook_is_a_supported_fallback(self):
+        # The other half of the canary, and the one that runs everywhere: an
+        # entry point without the argument must be tolerated rather than
+        # called with it. This is what keeps the Intel macOS first run alive.
+        def old_hf_hub_download(repo_id, filename, local_dir=None):
+            pass
+
+        self.assertEqual(
+            model_fetch.progress_kwargs(old_hf_hub_download, self.cls), {})
 
     def test_the_fetchers_accept_and_forward_it(self):
         for func in (model_fetch.ensure_hf_models, gguf_fetch.ensure_gguf):

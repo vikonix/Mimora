@@ -103,6 +103,32 @@ class EnsureGgufTests(unittest.TestCase):
         # The parent must exist before hf_hub_download is asked to write there.
         self.assertTrue(self.target.parent.is_dir())
 
+    def test_a_hub_that_takes_the_hook_receives_it(self):
+        seen = {}
+
+        def new_hf_hub_download(*, repo_id, filename, local_dir,
+                                tqdm_class=None):
+            seen["tqdm_class"] = tqdm_class
+            return str(self.target)
+
+        with patch("huggingface_hub.hf_hub_download",
+                   new=new_hf_hub_download, create=True):
+            gguf_fetch.ensure_gguf(self.target, tqdm_class=object)
+        self.assertIs(seen["tqdm_class"], object)
+
+    def test_a_hub_without_the_hook_still_downloads(self):
+        # hf_hub_download gained tqdm_class later than snapshot_download did,
+        # and Intel macOS is held below that version by transformers 4.x. This
+        # is the one call that dies there when the keyword is passed blind, and
+        # it is the required-level component, so the first run cannot proceed.
+        def old_hf_hub_download(*, repo_id, filename, local_dir):
+            return str(self.target)
+
+        with patch("huggingface_hub.hf_hub_download",
+                   new=old_hf_hub_download, create=True):
+            result = gguf_fetch.ensure_gguf(self.target, tqdm_class=object)
+        self.assertEqual(result, self.target)
+
     def test_download_failure_becomes_a_gguf_fetch_error(self):
         with patch("huggingface_hub.hf_hub_download",
                    side_effect=RuntimeError("no network"), create=True):

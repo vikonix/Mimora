@@ -93,8 +93,9 @@ def ensure_gguf(target: Optional[Path] = None, *,
     blobs/snapshots layout.
 
     *tqdm_class* is huggingface_hub's own progress-bar hook, forwarded
-    untouched; see model_fetch.ensure_hf_models for why it is omitted from the
-    call instead of being passed as None.
+    untouched. hf_hub_download is the entry point that gained it LAST (hub
+    1.24, against 0.x for snapshot_download), so this is the call that breaks
+    on an old hub: model_fetch.progress_kwargs decides whether it goes.
     """
     path = Path(target) if target is not None else DEFAULT_GGUF_PATH
     if not force and gguf_present(path):
@@ -116,7 +117,7 @@ def ensure_gguf(target: Optional[Path] = None, *,
         downloaded = hf_hub_download(
             repo_id=GGUF_REPO_ID, filename=path.name,
             local_dir=str(path.parent),
-            **({} if tqdm_class is None else {"tqdm_class": tqdm_class}),
+            **model_fetch.progress_kwargs(hf_hub_download, tqdm_class),
         )
     except Exception as exc:  # noqa: BLE001 - network, disk, gated repo
         raise GgufFetchError(

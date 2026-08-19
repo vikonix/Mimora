@@ -205,11 +205,14 @@ dependencies = [
     # --- model downloads --------------------------------------------------
     # Arrives transitively but pinned because first_run_download.py passes
     # huggingface_hub's own tqdm_class hook to snapshot_download and
-    # hf_hub_download to count bytes for the progress bar; a version without
-    # that parameter turns the required-level download into a TypeError. 1.24 is
-    # the version the aggregation was verified against. Intel macOS is left
+    # hf_hub_download to count bytes for the progress bar. 1.24 is the first
+    # version where hf_hub_download takes it as well (snapshot_download has
+    # since 0.x) and the version the aggregation was verified against; below it
+    # the first-run bar reports no bytes for the GGUF. Intel macOS is left
     # unconstrained on purpose - transformers 4.x caps the hub below 1.0 there,
-    # so a pin would make that platform unsatisfiable.
+    # so a pin would make that platform unsatisfiable. That is why the keyword
+    # must never be passed blind: model_fetch.progress_kwargs reads the
+    # signature first, and dropping that check breaks the Intel macOS first run.
     "huggingface_hub>=1.24; platform_system != 'Darwin' or platform_machine != 'x86_64'",
     # Nothing here imports click and no dependency of ours declares it: it used
     # to arrive only because huggingface_hub 1.x requires it. That stayed

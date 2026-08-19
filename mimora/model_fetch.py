@@ -47,12 +47,13 @@ Design notes
 from __future__ import annotations
 
 import argparse
+import inspect
 import logging
 import os
 import sys
 import tempfile
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 if __package__ in (None, ""):
     # Executed as a plain script (python mimora/model_fetch.py) rather than
@@ -317,6 +318,40 @@ def supertonic_cached() -> bool:
 # Downloads
 # ---------------------------------------------------------------------------
 
+def progress_kwargs(download_fn: Callable[..., Any],
+                    tqdm_class: Optional[type]) -> dict:
+    """Return the ``tqdm_class`` keyword for *download_fn*, or nothing.
+
+    huggingface_hub does not offer that hook on every entry point of every
+    version: snapshot_download has taken it since 0.x, hf_hub_download only
+    since 1.24. Intel macOS resolves the hub below 1.0 - transformers 4.x caps
+    it there, and that cap cannot be lifted while torch stays at 2.2.2 - so a
+    call that passes the keyword unconditionally dies with TypeError and takes
+    the whole download with it.
+
+    Asking the signature rather than the version number keeps one rule in one
+    place and needs no platform branch. A callable declaring ``**kwargs``
+    counts as accepting the keyword, so a wrapper around the hub still gets it.
+
+    An unreadable signature answers "no" on purpose: a progress bar that does
+    not move costs cosmetics, a TypeError costs the download.
+    """
+    if tqdm_class is None:
+        return {}
+    try:
+        parameters = inspect.signature(download_fn).parameters.values()
+    except (TypeError, ValueError):
+        parameters = ()
+    accepted = any(p.name == "tqdm_class" or p.kind is p.VAR_KEYWORD
+                   for p in parameters)
+    if not accepted:
+        log.info("This huggingface_hub takes no tqdm_class on %s - the "
+                 "download runs without progress reporting.",
+                 getattr(download_fn, "__name__", download_fn))
+        return {}
+    return {"tqdm_class": tqdm_class}
+
+
 def ensure_hf_models(repos: Optional[Sequence[models_info.HfRepo]] = None, *,
                      force: bool = False,
                      tqdm_class: Optional[type] = None) -> None:
@@ -331,9 +366,8 @@ def ensure_hf_models(repos: Optional[Sequence[models_info.HfRepo]] = None, *,
     *tqdm_class* is huggingface_hub's own hook for replacing the progress bar,
     forwarded untouched. The app's first-run window passes a stand-in that
     records bytes instead of drawing (mimora/first_run_download.py); the CLI
-    and install.py pass nothing and keep the normal bars. It is omitted from
-    the call rather than passed as None so that a huggingface_hub without the
-    argument still works - it is not pinned anywhere and arrives transitively.
+    and install.py pass nothing and keep the normal bars. Whether it reaches
+    the hub at all is progress_kwargs' decision - see there.
     """
     prepare_hf_env()
     try:
@@ -343,7 +377,7 @@ def ensure_hf_models(repos: Optional[Sequence[models_info.HfRepo]] = None, *,
             "huggingface_hub is not installed - install the project "
             "requirements first (python install.py).") from exc
 
-    progress_arg = {} if tqdm_class is None else {"tqdm_class": tqdm_class}
+    progress_arg = progress_kwargs(snapshot_download, tqdm_class)
 
     failures: list[str] = []
     for repo in repos if repos is not None else HF_MODEL_REPOS:

@@ -213,6 +213,60 @@ class HfRepoCachedTests(unittest.TestCase):
             self.assertTrue(model_fetch.hf_repo_cached("repo/one"))
 
 
+class ProgressKwargsTests(unittest.TestCase):
+    """The hook goes only to a callable that declares it.
+
+    huggingface_hub grew tqdm_class on hf_hub_download later than on
+    snapshot_download, and Intel macOS is held below that version by
+    transformers 4.x, so an unconditional keyword is a TypeError there.
+    """
+
+    class _Sink:
+        """Stands in for the first-run window's tqdm replacement."""
+
+    def test_no_hook_asks_for_nothing(self):
+        def accepts_it(repo_id, tqdm_class=None):
+            pass
+
+        self.assertEqual(model_fetch.progress_kwargs(accepts_it, None), {})
+
+    def test_declared_parameter_is_used(self):
+        def accepts_it(repo_id, tqdm_class=None):
+            pass
+
+        self.assertEqual(model_fetch.progress_kwargs(accepts_it, self._Sink),
+                         {"tqdm_class": self._Sink})
+
+    def test_var_keyword_counts_as_accepting(self):
+        def accepts_anything(repo_id, **kwargs):
+            pass
+
+        self.assertEqual(
+            model_fetch.progress_kwargs(accepts_anything, self._Sink),
+            {"tqdm_class": self._Sink})
+
+    def test_old_hub_signature_is_dropped(self):
+        def takes_no_hook(repo_id, local_dir=None):
+            pass
+
+        self.assertEqual(
+            model_fetch.progress_kwargs(takes_no_hook, self._Sink), {})
+
+    def test_unreadable_signature_is_dropped(self):
+        # Some C entry points have no signature inspect can read. Losing the
+        # bar is the safe answer there; raising inside a multi-gigabyte
+        # download is not.
+        class Opaque:
+            @property
+            def __signature__(self):
+                raise ValueError("no signature")
+
+            def __call__(self, *args, **kwargs):
+                pass
+
+        self.assertEqual(model_fetch.progress_kwargs(Opaque(), self._Sink), {})
+
+
 class EnsureHfModelsTests(unittest.TestCase):
     """Every repo is attempted even when one fails, and the failures are
     reported together rather than aborting on the first one."""
@@ -237,6 +291,21 @@ class EnsureHfModelsTests(unittest.TestCase):
                       side_effect=lambda repo_id: downloaded.append(repo_id),
                       create=True):
             model_fetch.ensure_hf_models(self.repos, force=True)
+        self.assertEqual(downloaded, ["repo/one", "repo/two"])
+
+    def test_a_hub_without_the_hook_still_downloads(self):
+        # The Intel macOS shape: transformers 4.x caps huggingface_hub below
+        # the version whose entry points take tqdm_class. Passing the keyword
+        # blind raises TypeError and loses the download.
+        downloaded = []
+
+        def old_snapshot_download(repo_id):
+            downloaded.append(repo_id)
+
+        with patch.object(model_fetch, "hf_repo_cached", return_value=False), \
+                patch("huggingface_hub.snapshot_download",
+                      new=old_snapshot_download, create=True):
+            model_fetch.ensure_hf_models(self.repos, tqdm_class=object)
         self.assertEqual(downloaded, ["repo/one", "repo/two"])
 
     def test_reports_every_failure_at_once(self):

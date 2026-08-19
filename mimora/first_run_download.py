@@ -31,6 +31,14 @@ How the byte counts are obtained
   names is needed - :func:`make_tqdm_class` builds a stand-in that records the
   bytes and discards the drawing.
 
+  Both of those hold for the pinned huggingface_hub only. Where the pin does
+  not apply (Intel macOS, held below hub 1.0 by transformers 4.x)
+  hf_hub_download has no such argument at all and snapshot_download hands it
+  to the file counter instead of the byte bars, so
+  :func:`mimora.model_fetch.progress_kwargs` drops it and the bar advances one
+  step per finished component rather than continuously. Downloads still run;
+  only the reporting is coarser.
+
   Monkeypatching file_download.hf_tqdm, the obvious alternative, would not work
   at all: that name no longer exists (huggingface_hub 1.24.0 imports tqdm.auto
   directly and builds bars through _get_progress_bar_context), and a patch by
