@@ -275,6 +275,16 @@ answered in `first_run.py` instead.
   it says what the code does when `tqdm_class` is absent and never whether it
   is absent here. Run it after raising the huggingface_hub pin, and once on
   every platform the pin's marker excludes.
+- [`tools/check_wheel.py`](tools/check_wheel.py) - checks a built wheel before
+  it is uploaded; `wheel.bat` calls it after the build and `twine check`. One
+  version in the tree, the archive, METADATA and the file name; METADATA and
+  the console script against `pyproject.toml`; no top-level module; and the
+  archive against the working tree, file by file and in both directions. That
+  last pair replaced a list of string searches ("is this fix in the wheel")
+  that grew by one line per release and answered the same question - was this
+  built from the current code - for one fix at a time. It installs nothing and
+  uses no network: a file name in the index is spent once and for all, so the
+  artefact is checked before the upload rather than after it.
 
 ### Shipped data
 
