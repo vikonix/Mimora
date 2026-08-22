@@ -15,4 +15,4 @@ Pronunciation analysis lives in the separate top-level ``pronunciation`` package
 # Every re-upload costs a version number: PyPI accepts a filename once and for
 # all. A pre-release is still what a plain `pip install mimora` resolves to
 # while no stable 1.1.0 exists, and can be yanked if it turns out wrong.
-__version__ = "1.1.0rc7"
+__version__ = "1.1.0"
