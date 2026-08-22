@@ -100,6 +100,17 @@ does without the `transformers 5.3` fix for CVE-2026-4372, which is acceptable
 for a local app that loads only fixed, trusted models. Every other platform
 keeps the hardened pins.
 
+The **local chat model** is the one piece that depends on the macOS version
+itself, because Mimora runs llama.cpp's own `llama-server` binary. llama.cpp
+builds its **Apple Silicon** asset on a current macOS runner and sets no
+deployment target, so the binary inherits that runner's minimum: **macOS 26**.
+The Intel asset sets **13.3** explicitly. Below its minimum Mimora says so
+before it downloads anything and carries on without the local model, so
+everything else still works. To get phrase generation back on such a Mac, set
+the **LLM backend** to LM Studio, or build llama.cpp yourself and name the
+result in `"llama_server_path"`. See
+[llama-server](docs/installation-manual.md#get-the-llama-server-binary).
+
 `tkinter` comes with the python.org installer, but not with Homebrew Python.
 `install.py` adds the matching `python-tk@<version>` formula for the interpreter
 it runs in. If you set things up by hand on Homebrew Python, match your version,
