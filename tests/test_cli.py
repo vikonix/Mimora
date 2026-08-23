@@ -18,6 +18,12 @@ form still works, `--version` still prints, it just takes ten seconds first. So
 the test below reads cli.py's module-level imports and says so out loud, and two
 behavioural tests pin the order around them.
 
+A second property lives here because it belongs to the same entry point: the
+two native pieces no wheel can supply - tkinter and PortAudio - must fail with
+the command that installs them rather than with a traceback, and everything
+else must keep its traceback. `install.py` checks both before the first launch,
+but the recommended install path is the published wheel, which never runs it.
+
 Run from the project root with:
 
     python -m unittest tests.test_cli
@@ -225,6 +231,81 @@ class AppendLogFlagTests(unittest.TestCase):
         # constant alone would keep both sides agreeing with each other and
         # silently stop matching the destination read in cli.main().
         self.assertEqual(cli.bootstrap.APPEND_LOG_FLAG, "--append-log")
+
+
+class NativeDependencyHintTests(unittest.TestCase):
+    """The two Linux failures a wheel install cannot prevent, made readable."""
+
+    def _tkinter_hint(self, manager):
+        """The hint for a missing tkinter on a machine that has `manager`."""
+        with mock.patch.object(sys, "platform", "linux"), \
+                mock.patch.object(cli.shutil, "which",
+                                  side_effect=lambda name: name == manager):
+            return cli._native_hint_for(
+                ModuleNotFoundError("No module named 'tkinter'", name="tkinter"))
+
+    def test_the_package_name_follows_the_distribution(self):
+        # The reason this is a lookup and not one string: the same missing
+        # module has three different cures.
+        self.assertIn("python3-tk", self._tkinter_hint("apt-get"))
+        self.assertIn("python3-tkinter", self._tkinter_hint("dnf"))
+        self.assertIn("pacman -S tk", self._tkinter_hint("pacman"))
+
+    def test_an_unknown_distribution_still_gets_prose(self):
+        with mock.patch.object(sys, "platform", "linux"), \
+                mock.patch.object(cli.shutil, "which", return_value=None):
+            hint = cli._native_hint_for(
+                ModuleNotFoundError("No module named 'tkinter'", name="tkinter"))
+        self.assertIn("package manager", hint)
+
+    def test_a_missing_portaudio_names_its_package(self):
+        with mock.patch.object(cli.shutil, "which",
+                               side_effect=lambda name: name == "apt-get"):
+            hint = cli._native_hint_for(OSError("PortAudio library not found"))
+        self.assertIn("libportaudio2", hint)
+
+    def test_anything_else_keeps_its_traceback(self):
+        # The half that matters more: a real bug must not be dressed up as a
+        # missing system package and stripped of its traceback.
+        self.assertIsNone(cli._native_hint_for(
+            ModuleNotFoundError("No module named 'torch'", name="torch")))
+        self.assertIsNone(cli._native_hint_for(OSError("disk full")))
+
+    def test_main_reports_the_missing_package_instead_of_a_traceback(self):
+        """The wiring: main() must actually consult the hint.
+
+        Without this, deleting the try/except in main() leaves every test
+        above green while the user gets the traceback back.
+
+        The stand-in below is a package, not an application module: `from
+        mimora import app` reads the attribute off the package first and only
+        falls back to importing the submodule when that raises AttributeError.
+        So `__path__` answers AttributeError (the import machinery asks for it
+        first, and treating the stand-in as a plain module is what routes the
+        lookup through the attribute) while `app` raises the failure under
+        test - the same exception mimora/app.py raises on a Linux box without
+        python3-tk, and nothing heavy is imported to produce it.
+        """
+        class PackageWithoutTkinter(types.ModuleType):
+            def __getattr__(self, name):
+                if name != "app":
+                    raise AttributeError(name)
+                raise ModuleNotFoundError(
+                    "No module named 'tkinter'", name="tkinter")
+
+        with mock.patch.object(cli.bootstrap, "early_init"), \
+                mock.patch.object(sys, "argv", ["mimora"]), \
+                mock.patch.object(sys, "platform", "linux"), \
+                mock.patch.object(cli.shutil, "which",
+                                  side_effect=lambda name: name == "apt-get"), \
+                mock.patch.dict(sys.modules,
+                                {"mimora": PackageWithoutTkinter("mimora")}), \
+                redirect_stdout(io.StringIO()):
+            with self.assertRaises(SystemExit) as caught:
+                cli.main()
+        # SystemExit carries the message as its code, which is what the
+        # interpreter prints to stderr before exiting with 1.
+        self.assertIn("python3-tk", str(caught.exception.code))
 
 
 if __name__ == "__main__":

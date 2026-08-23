@@ -14,7 +14,7 @@ other two left incomplete:
 
 The sections below are independent of each other. The Python dependencies are
 the first one; everything after it is a native piece that pip cannot supply
-(espeak-ng, PortAudio), a platform quirk (emoji fonts, the CUDA build of
+(espeak-ng, tkinter, PortAudio), a platform quirk (emoji fonts, the CUDA build of
 PyTorch), or a component that is downloaded rather than installed (the
 llama-server binary, the GGUF chat model). The last two arrive on the first
 start of the app as well, which is why they are steps and not requirements.
@@ -92,6 +92,36 @@ or `pronunciation/acoustic/` can work:
 Switching espeak-ng versions is not free: the scoring calibration was fitted
 against the transcription of the bundled build, which is why `espeakng-loader`
 is pinned to a minor in `pyproject.toml`.
+
+## Tk on Linux (tkinter)
+
+`tkinter` is not a package on PyPI. It is a standard-library module that exists
+only if the interpreter was built against Tcl/Tk, and Debian and Ubuntu ship
+that part separately, so a system Python without it fails at `import tkinter`
+no matter how many pip requirements succeed:
+
+```bash
+sudo apt-get install python3-tk        # Debian / Ubuntu
+sudo dnf install python3-tkinter       # Fedora
+sudo pacman -S tk                      # Arch
+```
+
+The package installs into the base interpreter's stdlib, which every virtual
+environment built from it sees directly (a venv isolates `site-packages`, not
+the stdlib), so the module becomes importable at once: nothing to reinstall and
+no environment to recreate.
+
+Which machines this hits is not obvious, because uv reuses a **system**
+interpreter when it finds one of the requested version and downloads its own
+only otherwise - and the build it downloads (python-build-standalone) carries
+Tcl/Tk inside. So `uv tool install mimora --python 3.12` needs the package
+above on Ubuntu 24.04 (system 3.12) and Debian 12 (3.11), and needs nothing on
+a distribution whose system Python is 3.13, where uv has to fetch a 3.12 of its
+own. Adding `--managed-python` forces that second path everywhere and needs no
+root, but it does not help with PortAudio below.
+
+On macOS the python.org installer bundles Tcl/Tk and Homebrew Python does not;
+there the package is `python-tk@<version>`, matching the interpreter in use.
 
 ## Audio on Linux (PortAudio)
 

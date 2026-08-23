@@ -87,6 +87,7 @@ Work on:    colder
 - **Windows** is the primary target. macOS and Linux are supported as well.
 - A microphone and speakers.
 - **espeak-ng** is needed by `phonemizer`, but it is **not a separate install**: the library and its data ship in the `espeakng-loader` wheel, which comes with the dependencies. A system install stays a valid fallback, see [espeak-ng](docs/installation-manual.md#espeak-ng-no-separate-install-needed).
+- **tkinter** (Linux only) - the Tk GUI toolkit, packaged apart from the interpreter (`python3-tk` on Debian/Ubuntu). It is not on PyPI, so no installer can supply it; Windows and python.org macOS builds carry it already. See [Tk on Linux](docs/installation-manual.md#tk-on-linux-tkinter).
 - **PortAudio** (Linux only) - the native library behind recording and playback (`libportaudio2` on Debian/Ubuntu). The Windows and macOS wheels bundle it, the Linux ones do not. See [Audio on Linux](docs/installation-manual.md#audio-on-linux-portaudio).
 
 ### macOS notes
@@ -184,6 +185,22 @@ and `pipx install uv` install it as well. If you already have uv, check the
 version (`uv --version`) and update it with `uv self update`: the GPU flag below
 needs 0.9.20 or newer.
 
+**On Linux, install two system packages first.** Neither is on PyPI, so no
+installer can supply them, and each one stops the app at a different import:
+`tkinter` when the window is built, PortAudio when audio starts.
+
+```bash
+# Debian / Ubuntu
+sudo apt install python3-tk libportaudio2
+```
+
+Fedora: `sudo dnf install python3-tkinter portaudio`. Arch: `sudo pacman -S tk
+portaudio`. Details in [Tk on
+Linux](docs/installation-manual.md#tk-on-linux-tkinter) and [Audio on
+Linux](docs/installation-manual.md#audio-on-linux-portaudio). Add a monochrome
+emoji font as well, or the mic button draws blank boxes (see [Emoji icons on
+Linux](docs/installation-manual.md#emoji-icons-on-linux-mic-button-shows-a-blank-box)).
+
 Then install Mimora and start it:
 
 ```bash
@@ -223,12 +240,6 @@ python -m venv .venv
 pip install mimora
 mimora
 ```
-
-**On Linux** one native library comes from the system rather than from a wheel:
-`sudo apt-get install libportaudio2` (see [Audio on
-Linux](docs/installation-manual.md#audio-on-linux-portaudio)). Add a monochrome
-emoji font as well, or the mic button draws blank boxes (see [Emoji icons on
-Linux](docs/installation-manual.md#emoji-icons-on-linux-mic-button-shows-a-blank-box)).
 
 The install itself downloads no models. The first start does, and it asks first
 (see [Models](#models)). Those downloads and your settings live in the operating

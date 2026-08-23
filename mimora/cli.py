@@ -31,8 +31,80 @@ it most. The console script is the only entry an installed package puts on PATH.
 """
 
 import argparse
+import shutil
+import sys
 
 from mimora import __version__, bootstrap
+
+# The two native pieces `install.py` checks before the first launch
+# (step_check_tkinter, step_check_portaudio). A wheel install runs neither
+# check, so what follows is all that stands between a user and a bare
+# traceback. Package names differ per distribution: Debian and Ubuntu split Tk
+# off as python3-tk, Fedora calls it python3-tkinter, Arch just tk.
+_INSTALL_COMMAND = {
+    "apt-get": "sudo apt install",
+    "dnf": "sudo dnf install",
+    "pacman": "sudo pacman -S",
+}
+_TKINTER_PACKAGE = {"apt-get": "python3-tk", "dnf": "python3-tkinter", "pacman": "tk"}
+_PORTAUDIO_PACKAGE = {"apt-get": "libportaudio2", "dnf": "portaudio", "pacman": "portaudio"}
+
+
+def _package_hint(packages: dict[str, str]) -> str:
+    """Return the install command for the first package manager found.
+
+    Best effort by design: an unknown distribution gets prose instead of a
+    command, which is still better than the ModuleNotFoundError it replaces.
+    """
+    for manager, package in packages.items():
+        if shutil.which(manager):
+            return f"    {_INSTALL_COMMAND[manager]} {package}"
+    return "    (install it with your distribution's package manager)"
+
+
+def _missing_tkinter_message() -> str:
+    """Explain a failed `import tkinter` and name the package that fixes it."""
+    if sys.platform == "darwin":
+        # Homebrew Python omits Tcl/Tk, and its formula is per minor version.
+        version = f"{sys.version_info.major}.{sys.version_info.minor}"
+        hint = f"    brew install python-tk@{version}"
+    else:
+        hint = _package_hint(_TKINTER_PACKAGE)
+    return (
+        "Mimora needs tkinter, the Tk GUI toolkit.\n"
+        "It belongs to the standard library, but it is packaged apart from the\n"
+        "interpreter and is not on PyPI, so no installer can add it:\n"
+        f"{hint}\n"
+        "It lands in the interpreter's own stdlib, so nothing has to be\n"
+        "reinstalled afterwards - just start Mimora again."
+    )
+
+
+def _missing_portaudio_message() -> str:
+    """Explain a failed sounddevice import and name the package that fixes it."""
+    return (
+        "Mimora needs PortAudio, the native library behind recording and\n"
+        "playback. The Linux wheels of sounddevice do not carry it:\n"
+        f"{_package_hint(_PORTAUDIO_PACKAGE)}\n"
+        "Then start Mimora again."
+    )
+
+
+def _native_hint_for(exc: BaseException) -> str | None:
+    """Return advice for the two native pieces a wheel install cannot supply.
+
+    None for anything else, which is what keeps a real bug's traceback intact.
+    Kept apart from main() so that the mapping can be asked directly, without
+    reproducing a failing import.
+    """
+    if (isinstance(exc, ImportError) and exc.name == "tkinter"
+            and sys.platform != "win32"):
+        # Windows Python installers bundle Tcl/Tk, so a missing tkinter there
+        # means a broken interpreter, not a missing system package.
+        return _missing_tkinter_message()
+    if isinstance(exc, OSError) and "PortAudio" in str(exc):
+        return _missing_portaudio_message()
+    return None
 
 
 def main() -> None:
@@ -85,6 +157,18 @@ def main() -> None:
     # Deliberately a function-local import. At module level it would run
     # before parse_args() above and make --version pay for the whole
     # application load.
-    from mimora import app
+    #
+    # The two failures caught here are the native pieces no wheel can supply
+    # and no installer checks on this path: tkinter, missing from app.py, and
+    # PortAudio, missing from sounddevice under mimora.tts. Both would
+    # otherwise end in a traceback that names the module but not the cure.
+    # Everything else keeps its traceback, because everything else is a bug.
+    try:
+        from mimora import app
+    except (ImportError, OSError) as exc:
+        hint = _native_hint_for(exc)
+        if hint is None:
+            raise
+        raise SystemExit(hint) from exc
 
     app.run(append_log=args.append_log)
