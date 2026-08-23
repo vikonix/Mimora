@@ -79,7 +79,8 @@ import tkinter as tk
 from tkinter import messagebox
 from typing import Container, NamedTuple, Optional, Sequence
 
-from mimora import config, detect_hardware, first_run, first_run_download
+from mimora import (bootstrap, config, detect_hardware, first_run,
+                    first_run_download)
 from mimora.ui_theme import (FONT_FAMILY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
                              FONT_SIZE_SMALL, FONT_SIZE_TITLE, THEME,
                              FlatButton)
@@ -647,6 +648,11 @@ def ensure_ready() -> str:
 
     Called before the GUI exists, so it may block: the checks are a handful of
     stat calls and the window runs its own event loop.
+
+    Everything past the "nothing is missing" return is also written to the
+    append-only install log, which is why that half sits in a ``with`` block.
+    It is opened THERE and not at the top of the function, so an ordinary
+    launch neither writes to the file nor creates it.
     """
     plan = first_run.build_plan()
 
@@ -668,63 +674,75 @@ def ensure_ready() -> str:
             and not plan.missing_translator):
         return READY
 
-    outcome = FirstRunWindow(plan).run()
+    # Everything from here on is an installation, and it is logged twice on
+    # purpose: main.log covers this run, the install log outlives it. The
+    # summary is passed in rather than logged again because build_plan() has
+    # already logged it, above, where no handler for this file existed yet.
+    with bootstrap.install_log(config.INSTALL_LOG_FILE,
+                               intro=first_run.plan_summary(plan)):
+        outcome = FirstRunWindow(plan).run()
 
-    if outcome.quit_requested:
-        return CANCELLED
+        if outcome.quit_requested:
+            return CANCELLED
 
-    if outcome.optional_declined:
-        # The result, not the refusal: one fact in one place, visible and
-        # reversible in the settings window where llm_backend already lives.
-        log.info("Optional download declined - switching llm_backend to 'off'.")
-        config.save_user_setting("llm_backend", "off")
-        config.LLM_BACKEND = "off"
+        if outcome.optional_declined:
+            # The result, not the refusal: one fact in one place, visible
+            # and reversible in the settings window where llm_backend
+            # already lives.
+            log.info("Optional download declined - switching llm_backend "
+                     "to 'off'.")
+            config.save_user_setting("llm_backend", "off")
+            config.LLM_BACKEND = "off"
 
-    if outcome.translator_declined:
-        # Same principle, the other setting. Writing it back matters more here
-        # than for llm_backend: this level is non-empty only because
-        # translation_language was set, and leaving it set with no model on
-        # disk would offer this same window at every start.
-        log.info("Translator download declined - turning translation off.")
-        config.save_user_setting("translation_language", "")
-        config.TRANSLATION_LANGUAGE = ""
+        if outcome.translator_declined:
+            # Same principle, the other setting. Writing it back matters
+            # more here than for llm_backend: this level is non-empty only
+            # because translation_language was set, and leaving it set with
+            # no model on disk would offer this same window at every start.
+            log.info("Translator download declined - turning translation "
+                     "off.")
+            config.save_user_setting("translation_language", "")
+            config.TRANSLATION_LANGUAGE = ""
 
-    # Run here rather than after the restart: the llama-server binary has just
-    # landed, and whether it reaches the GPU is the one thing the probe cannot
-    # answer before it exists.
-    probed = _detect_hardware_once()
+        # Run here rather than after the restart: the llama-server binary
+        # has just landed, and whether it reaches the GPU is the one thing
+        # the probe cannot answer before it exists.
+        probed = _detect_hardware_once()
 
-    # Restart when the machine no longer matches what config read while it was
-    # being imported. Two things can have changed it: the probe above, and the
-    # window itself - models arrived, or a refusal rewrote a setting. Those
-    # values are read once and all over the code, so a fresh process is the
-    # honest way to apply them.
-    #
-    # The offline gate is the reason this is unconditional rather than tied to
-    # the probe. config decides during its import whether huggingface_hub may
-    # reach the network, from what was cached AT THAT MOMENT, so a process that
-    # has just downloaded the last missing model spends its whole session
-    # online revalidating models that are now on disk. (Testing this needs a
-    # cold launch: spawn_replacement() passes no env=, so a restarted child
-    # inherits HF_HUB_OFFLINE=1 from a parent that had set it.)
-    #
-    # Asked as "did the plan actually change" rather than "did the window run",
-    # and that is the loop guard: a component can be reported as fetched while
-    # the plan still calls it missing (a stray *.incomplete blob does exactly
-    # that, and no download clears it), so restarting on "the window ran" would
-    # reopen the same window forever. This way that machine starts once, with a
-    # log line naming the repo.
-    #
-    # A binary downloaded just now needs no restart: llm_server_ctl resolves
-    # the path when it builds the command line (config.resolve_llama_server_path).
-    before = _missing_keys(plan)
-    after = _missing_keys(first_run.build_plan())
-    if probed or before != after:
-        return RESTART
+        # Restart when the machine no longer matches what config read while
+        # it was being imported. Two things can have changed it: the probe
+        # above, and the window itself - models arrived, or a refusal rewrote
+        # a setting. Those values are read once and all over the code, so a
+        # fresh process is the honest way to apply them.
+        #
+        # The offline gate is the reason this is unconditional rather than
+        # tied to the probe. config decides during its import whether
+        # huggingface_hub may reach the network, from what was cached AT THAT
+        # MOMENT, so a process that has just downloaded the last missing
+        # model spends its whole session online revalidating models that are
+        # now on disk. (Testing this needs a cold launch: spawn_replacement()
+        # passes no env=, so a restarted child inherits HF_HUB_OFFLINE=1 from
+        # a parent that had set it.)
+        #
+        # Asked as "did the plan actually change" rather than "did the window
+        # run", and that is the loop guard: a component can be reported as
+        # fetched while the plan still calls it missing (a stray *.incomplete
+        # blob does exactly that, and no download clears it), so restarting
+        # on "the window ran" would reopen the same window forever. This way
+        # that machine starts once, with a log line naming the repo.
+        #
+        # A binary downloaded just now needs no restart: llm_server_ctl
+        # resolves the path when it builds the command line
+        # (config.resolve_llama_server_path).
+        before = _missing_keys(plan)
+        after = _missing_keys(first_run.build_plan())
+        if probed or before != after:
+            return RESTART
 
-    log.warning("The first-run window ran but nothing changed: %s is still "
-                "reported as missing. Starting anyway (a restart would only "
-                "reopen the same window). A stray *.incomplete file in the "
-                "repo's blobs/ directory is the usual cause - see "
-                "mimora/loader.py models_cached.", ", ".join(sorted(after)))
-    return READY
+        log.warning("The first-run window ran but nothing changed: %s is "
+                    "still reported as missing. Starting anyway (a restart "
+                    "would only reopen the same window). A stray *.incomplete "
+                    "file in the repo's blobs/ directory is the usual cause - "
+                    "see mimora/loader.py models_cached.",
+                    ", ".join(sorted(after)))
+        return READY

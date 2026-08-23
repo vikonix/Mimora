@@ -165,5 +165,141 @@ class LogHeaderTests(unittest.TestCase):
         self.assertIn("restarted in-session", lines[2])
 
 
+class InstallLogTests(unittest.TestCase):
+    """The second log file: what an installation did, kept across launches.
+
+    Its whole reason to exist is that main.log is one run long. What the
+    first-run window downloaded has to still be readable after the next launch
+    has truncated main.log, so the two properties worth pinning are that the
+    file is appended rather than opened fresh, and that everything logged
+    inside the block reaches it - from any module and any thread, because the
+    download runs on a worker.
+    """
+
+    def setUp(self):
+        import tempfile
+
+        root = logging.getLogger()
+        saved_handlers, saved_level = root.handlers[:], root.level
+        self.addCleanup(self._restore, root, saved_handlers, saved_level)
+        # The block's own records have to pass the root logger's level, which
+        # is WARNING in a bare test process and INFO in the running app.
+        root.setLevel(logging.INFO)
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.path = Path(directory.name) / "install.log"
+
+    @staticmethod
+    def _restore(root, handlers, level):
+        for handler in root.handlers[:]:
+            root.removeHandler(handler)
+        for handler in handlers:
+            root.addHandler(handler)
+        root.setLevel(level)
+
+    def _lines(self):
+        return self.path.read_text(encoding="utf-8").splitlines()
+
+    def test_records_from_inside_the_block_reach_the_file(self):
+        with bootstrap.install_log(self.path):
+            logging.getLogger("mimora.first_run_download").info(
+                "Fetching the recognizer (1264 MB) ...")
+        body = "\n".join(self._lines())
+        self.assertIn("Fetching the recognizer (1264 MB) ...", body)
+        # A real record, so it carries the level and the timestamp - only the
+        # header is bare.
+        self.assertIn("[INFO]", body)
+
+    def test_nothing_reaches_the_file_after_the_block(self):
+        # The handler is on the root logger, so leaving it there would send the
+        # whole session into a file that is supposed to hold one installation.
+        with bootstrap.install_log(self.path):
+            pass
+        # A named logger rather than logging.info: the module-level call
+        # configures the root logger when it has no handler, which is exactly
+        # the state this test leaves it in.
+        logging.getLogger("mimora.app").info(
+            "an ordinary record of the session that follows")
+        self.assertNotIn("an ordinary record", "\n".join(self._lines()))
+
+    def test_the_handler_is_removed_even_when_the_block_raises(self):
+        root = logging.getLogger()
+        before = len(root.handlers)
+        with self.assertRaises(RuntimeError):
+            with bootstrap.install_log(self.path):
+                raise RuntimeError("the download failed")
+        self.assertEqual(len(root.handlers), before)
+
+    def test_the_file_opens_with_the_rule_and_the_build(self):
+        from mimora import __version__
+
+        with bootstrap.install_log(self.path):
+            pass
+        lines = self._lines()
+        self.assertEqual(lines[0], bootstrap._HEADER_RULE)
+        self.assertIn(__version__, lines[1])
+        self.assertTrue(lines[2].startswith("Launched: "))
+
+    def test_the_intro_lines_land_under_the_header_and_nowhere_else(self):
+        # The caller's summary of what is about to be installed. It goes into
+        # this file only: the same lines are already in main.log, logged by
+        # build_plan before this file had a handler.
+        console = io.StringIO()
+        with contextlib.redirect_stdout(console):
+            with bootstrap.install_log(self.path,
+                                       intro=["Startup plan: 1 of 4"]):
+                pass
+        self.assertEqual(self._lines()[3], "Startup plan: 1 of 4")
+        self.assertNotIn("Startup plan", console.getvalue())
+
+    def test_a_second_run_is_appended_below_the_first(self):
+        # The property the whole file exists for. A blank line separates the
+        # two sections; a fresh file still opens with the rule.
+        log = logging.getLogger("mimora.first_run_download")
+        with bootstrap.install_log(self.path):
+            log.info("the first installation")
+        with bootstrap.install_log(self.path):
+            log.info("the second installation")
+        lines = self._lines()
+        self.assertIn("the first installation", "\n".join(lines))
+        self.assertEqual(lines.count(bootstrap._HEADER_RULE), 2)
+        self.assertEqual(lines[4], "")
+
+    def test_the_muted_loggers_are_kept_out_of_this_file_only(self):
+        # httpx logs one line per request, and an install is hundreds of them
+        # with signed CDN URLs in each. They are noise in main.log too, but
+        # main.log is replaced every launch while this file only grows.
+        console = io.StringIO()
+        with contextlib.redirect_stdout(console):
+            bootstrap.setup_logging(self.path.parent / "main.log")
+            with bootstrap.install_log(self.path):
+                logging.getLogger("httpx").info("HTTP Request: GET https://...")
+                logging.getLogger("mimora.first_run_download").info(
+                    "-> done: Kokoro-82M")
+            for handler in logging.getLogger().handlers[:]:
+                if isinstance(handler, logging.FileHandler):
+                    logging.getLogger().removeHandler(handler)
+                    handler.close()
+        written = "\n".join(self._lines())
+        self.assertNotIn("HTTP Request", written)
+        self.assertIn("-> done: Kokoro-82M", written)
+        # The filter is on this handler alone: the session log and the console
+        # still carry the request line, which is where it is worth having.
+        self.assertIn("HTTP Request", console.getvalue())
+
+    def test_an_unopenable_file_costs_the_file_and_not_the_download(self):
+        console = io.StringIO()
+        with mock.patch.object(logging, "FileHandler",
+                               side_effect=OSError(3, "no such drive")), \
+                contextlib.redirect_stdout(console):
+            bootstrap.setup_logging(self.path.parent / "main.log")
+            with bootstrap.install_log(Path("Z:/nope/logs/install.log")):
+                logging.getLogger("mimora.first_run_download").info(
+                    "the download kept going")
+        printed = console.getvalue()
+        self.assertIn("the download kept going", printed)
+        self.assertIn("no such drive", printed)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -14,10 +14,16 @@ Two phases, split because they bracket the heavy imports in app.py:
     and logs it), which would otherwise turn basicConfig into a silent
     no-op and leave main.log empty.
 
+``install_log()`` is a third piece and belongs to neither phase: a second,
+append-only file for the stretch of a run that installs something, so that
+what a first run downloaded is still readable after the next launch has
+truncated main.log.
+
 Only stdlib imports here, so ``from mimora import bootstrap`` stays free
 and can precede everything heavy.
 """
 
+import contextlib
 import logging
 import os
 import sys
@@ -63,6 +69,88 @@ def _launch_command() -> str:
     return " ".join(f'"{part}"' if " " in part else part for part in parts)
 
 
+def _header_lines(append: bool) -> list[str]:
+    """The lines a log opens with, as text.
+
+    Built rather than logged so the same header can be written to a file that
+    is not the root logger's - see :func:`install_log`. Two spellings of it
+    would drift, and the header is the one part of a log that is read before
+    anything is known about the run.
+
+    The three facts are the ones every bug report opens by asking: which build
+    is running, which process wrote these lines, and how it was started - the
+    last one tells a source checkout from an installed console script, which is
+    the difference paths.py branches on and therefore the difference between
+    two entirely different sets of file locations.
+    """
+    # Function-local so the module-level rule above ("only stdlib imports")
+    # stays literally true. mimora/__init__.py is a version string and a
+    # docstring, and it has necessarily been imported already for this module
+    # to exist, so the cost is a dictionary lookup.
+    from mimora import __version__
+
+    lines = []
+    if append:
+        # Only when continuing a file: the blank line separates this run from
+        # the previous one, and a fresh log is supposed to OPEN with the rule
+        # rather than with an empty line.
+        lines.append("")
+    lines.append(_HEADER_RULE)
+    lines.append(f"Mimora {__version__}  |  pid {os.getpid()}"
+                 + ("  |  continues the log above (restarted in-session)"
+                    if append else ""))
+    lines.append(f"Launched: {_launch_command()}")
+    return lines
+
+
+def open_log_section(handler: logging.Handler, log_file, intro=()) -> None:
+    """Open one handler's file with the run header, below what it holds.
+
+    For the two append-only logs, `install_log`'s and the hardware probe's:
+    both are read by scrolling to the run one is interested in, so each run has
+    to start with something findable. A blank line separates it from the
+    previous run and is written only when there IS one, so a fresh file still
+    opens with the rule.
+
+    ``intro`` is written into this file only, under the header - the caller's
+    summary of what the section is about. Nothing here travels through the root
+    logger, so the console and main.log see none of it.
+    """
+    try:
+        # Asked before anything is written, and of the path rather than the
+        # handler: the handler has already created the file, so its own view
+        # cannot tell an empty new file from one that holds ten runs.
+        continued = os.path.getsize(log_file) > 0
+    except OSError:
+        continued = False
+    _emit_to(handler, ([""] if continued else []) + _header_lines(append=False)
+             + list(intro))
+
+
+def _emit_to(handler: logging.Handler, lines) -> None:
+    """Write *lines* to one handler as bare text, bypassing the root logger.
+
+    For the files that open with a header of their own (see
+    :func:`open_log_section`): the records are built here and handed straight
+    to the handler, so nothing reaches the console or main.log a second time -
+    the caller's summary would otherwise be logged twice in the same run.
+
+    The formatter is swapped for a bare one and put back, the same trick and
+    for the same reason as :func:`_log_header` - a header line is a header
+    line, and a timestamp in front of the rule would make it just another
+    record.
+    """
+    previous = handler.formatter
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    try:
+        for line in lines:
+            handler.handle(logging.LogRecord(
+                name=__name__, level=logging.INFO, pathname=__file__, lineno=0,
+                msg="%s", args=(line,), exc_info=None))
+    finally:
+        handler.setFormatter(previous)
+
+
 def _log_header(append: bool) -> None:
     """Open the run's log with a bare rule and what this process is.
 
@@ -72,12 +160,7 @@ def _log_header(append: bool) -> None:
     would make it just another record. The original formatter objects are put
     back immediately, so nothing downstream can tell this happened.
 
-    The three facts are the ones every bug report opens by asking, and this is
-    the only line that states them together: which build is running, which
-    process wrote these lines, and how it was started - the last one tells a
-    source checkout from an installed console script, which is the difference
-    paths.py branches on and therefore the difference between two entirely
-    different sets of file locations.
+    What the lines say, and why those facts, is in :func:`_header_lines`.
 
     In append mode it also marks the seam. Two processes write around it, and
     for a moment they write at the same time: the parent lives on until its
@@ -85,28 +168,14 @@ def _log_header(append: bool) -> None:
     Without a separator that stretch reads as one confused process, and the pid
     on the line above is what tells the two apart.
     """
-    # Function-local so the module-level rule above ("only stdlib imports")
-    # stays literally true. mimora/__init__.py is a version string and a
-    # docstring, and it has necessarily been imported already for this module
-    # to exist, so the cost is a dictionary lookup.
-    from mimora import __version__
-
     root = logging.getLogger()
     bare = logging.Formatter("%(message)s")
     previous = [handler.formatter for handler in root.handlers]
     for handler in root.handlers:
         handler.setFormatter(bare)
     try:
-        if append:
-            # Only when continuing a file: the blank line separates this run
-            # from the previous one, and a fresh log is supposed to OPEN with
-            # the rule rather than with an empty line.
-            logging.info("")
-        logging.info("%s", _HEADER_RULE)
-        logging.info("Mimora %s  |  pid %d%s", __version__, os.getpid(),
-                     "  |  continues the log above (restarted in-session)"
-                     if append else "")
-        logging.info("Launched: %s", _launch_command())
+        for line in _header_lines(append):
+            logging.info("%s", line)
     finally:
         # Restored even if a handler raises mid-header: a log that lost its
         # timestamps for the rest of the run would be a worse outcome than a
@@ -125,6 +194,78 @@ def log_file_mode():
     restart and the server's log covers only what happened after it.
     """
     return "a" if _append_logs else "w"
+
+
+# Kept OUT of the install log, matched on the top-level logger name. httpx
+# logs one INFO line per request and a first run is hundreds of them: of the
+# first install log measured, 106 KB of 112 KB were request lines carrying
+# signed CDN URLs. They stay in main.log, which covers one run and is replaced
+# by the next launch - this file is appended to for the life of the machine, so
+# there the same lines accumulate instead. Nothing diagnostic is lost: a failed
+# download reaches this file as the traceback first_run_download logs.
+_INSTALL_LOG_MUTED = ("httpx",)
+
+
+def _wanted_in_install_log(record: logging.LogRecord) -> bool:
+    """False for the third-party chatter the install log does not keep."""
+    return record.name.split(".", 1)[0] not in _INSTALL_LOG_MUTED
+
+
+@contextlib.contextmanager
+def install_log(log_file, intro=()):
+    """Mirror everything logged inside the block into an append-only file.
+
+    What the first-run window does is an installation, and main.log cannot keep
+    it: that file covers one run and the next launch truncates it, so the
+    record of a four-gigabyte download is gone by the time anybody asks what
+    was downloaded. This is the file that survives, and it is the wheel
+    install's counterpart to the logs/install.log that install.py writes -
+    which is not in the wheel at all.
+
+    The mode is ``"a"``, hardcoded rather than taken from
+    :func:`log_file_mode`: never truncating is the whole point of this file,
+    and an in-session restart (which is what that function answers for) would
+    only add one more section.
+
+    The handler goes on the ROOT logger, so the block captures every module and
+    every thread, the download worker included. Keeping only ``mimora.*``
+    instead would be the tempting shortcut and would drop exactly the
+    third-party traceback that explains a failure; what is dropped is named
+    instead, one logger at a time, in :data:`_INSTALL_LOG_MUTED`, and only on
+    this handler.
+
+    ``intro`` is written into this file only, under the header (see
+    :func:`open_log_section`): the caller's summary of what is about to be
+    installed.
+
+    A file that cannot be opened costs the file and not the installation, the
+    same rule as :func:`setup_logging` - the download itself is unaffected and
+    is still logged as usual.
+    """
+    try:
+        handler = logging.FileHandler(log_file, mode="a", encoding="utf-8")
+    except OSError as exc:
+        logging.error("No install log this run: %s could not be opened (%s). "
+                      "The download itself is unaffected and is logged as "
+                      "usual.", log_file, exc)
+        yield
+        return
+
+    handler.setLevel(logging.INFO)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT))
+    handler.addFilter(_wanted_in_install_log)
+    # Written before the handler is attached, so the header cannot be preceded
+    # by a record of some other thread that logged in the meantime.
+    open_log_section(handler, log_file, intro)
+    root = logging.getLogger()
+    root.addHandler(handler)
+    try:
+        yield
+    finally:
+        # Removed before it is closed, and in this order: a background thread
+        # that logs between the two would otherwise reach a closed file.
+        root.removeHandler(handler)
+        handler.close()
 
 
 def early_init():

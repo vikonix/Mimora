@@ -1229,3 +1229,9 @@ LOG_DIR = paths.log_dir()
 LOG_FILE = str(LOG_DIR / "main.log")
 # Log file for the auto-started local LLM server subprocess (see app.py).
 LLM_SERVER_LOG_FILE = str(LOG_DIR / "llm_server.log")
+# What the first-run window installed, appended and never truncated (see
+# bootstrap.install_log). main.log cannot hold it: that file covers one run, so
+# the next launch replaces the record of the download. The name is install.py's
+# deliberately - that script is not in the wheel, and in a clone, where both
+# install paths exist, the two then write one history instead of two.
+INSTALL_LOG_FILE = str(LOG_DIR / "install.log")

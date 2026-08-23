@@ -438,6 +438,30 @@ def _optional_components() -> tuple[tuple[Component, ...], Optional[str]]:
 # The plan
 # ---------------------------------------------------------------------------
 
+def plan_summary(plan: Plan) -> list[str]:
+    """The plan as the lines that describe it in a log: counts, then what is
+    missing.
+
+    Returned as text rather than logged, because it has a second reader: the
+    install log opens with these lines (see first_run_window.ensure_ready),
+    and it is written before any record of that phase reaches a handler.
+    Formatting the same summary in two places would let the two spellings
+    drift.
+    """
+    lines = [
+        f"Startup plan: {len(plan.missing_required)} of {len(plan.required)} "
+        f"required components missing ({plan.missing_required_mb} MB), "
+        f"{len(plan.missing_optional)} of {len(plan.optional)} optional "
+        f"({plan.missing_optional_mb} MB), "
+        f"{len(plan.missing_translator)} of {len(plan.translator)} translator "
+        f"({plan.missing_translator_mb} MB)."
+    ]
+    lines += [f"    missing: {component.label}, {component.size_mb} MB"
+              for component in (plan.missing_required + plan.missing_optional
+                                + plan.missing_translator)]
+    return lines
+
+
 def build_plan() -> Plan:
     """Inspect the machine against the active configuration.
 
@@ -452,15 +476,6 @@ def build_plan() -> Plan:
                 llama_server_blocked=llama_server_blocked,
                 translator=_translator_components())
 
-    log.info("Startup plan: %d of %d required components missing (%d MB), "
-             "%d of %d optional (%d MB), %d of %d translator (%d MB).",
-             len(plan.missing_required), len(plan.required),
-             plan.missing_required_mb,
-             len(plan.missing_optional), len(plan.optional),
-             plan.missing_optional_mb,
-             len(plan.missing_translator), len(plan.translator),
-             plan.missing_translator_mb)
-    for component in (plan.missing_required + plan.missing_optional
-                      + plan.missing_translator):
-        log.info("    missing: %s, %d MB", component.label, component.size_mb)
+    for line in plan_summary(plan):
+        log.info("%s", line)
     return plan

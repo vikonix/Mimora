@@ -565,6 +565,16 @@ class EnsureReadyTests(unittest.TestCase):
     the same window forever.
     """
 
+    def setUp(self):
+        # ensure_ready opens the install log for real, so it is pointed at a
+        # temporary directory: without this the suite would append to the
+        # logs/install.log of the machine it runs on.
+        import tempfile
+
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.install_log = Path(directory.name) / "install.log"
+
     def _window_outcome(self, **kwargs):
         """An Outcome with everything false except what the caller names.
 
@@ -599,6 +609,8 @@ class EnsureReadyTests(unittest.TestCase):
                 mock.patch.object(first_run_window, "_detect_hardware_once",
                                   return_value=probed) as probe, \
                 mock.patch.object(config, "save_user_setting") as saved, \
+                mock.patch.object(config, "INSTALL_LOG_FILE",
+                                  str(self.install_log)), \
                 mock.patch.object(config, "LLM_BACKEND", config.LLM_BACKEND), \
                 mock.patch.object(config, "TRANSLATION_LANGUAGE",
                                   config.TRANSLATION_LANGUAGE):
@@ -704,6 +716,24 @@ class EnsureReadyTests(unittest.TestCase):
         self.assertEqual(result, first_run_window.RESTART)
         saved.assert_called_once_with("llm_backend", "off")
         self.assertEqual(self.live_backend, "off")
+
+    def test_a_run_that_installs_nothing_leaves_no_install_log(self):
+        # The file is the record of an installation, so a launch that finds
+        # everything in place must not open it - which is why the window half
+        # of ensure_ready, and not the whole function, is inside the block.
+        plan = first_run.Plan(required=(), optional=(),
+                              llama_server_blocked=None)
+        self._ensure_ready(self._window_outcome(), plan)
+        self.assertFalse(self.install_log.exists())
+
+    def test_the_first_run_is_recorded_in_a_file_that_survives(self):
+        # main.log covers one run and the next launch truncates it, so this
+        # file is the only place the download is still readable afterwards. It
+        # opens with the plan, which names what was about to be fetched.
+        self._ensure_ready(self._window_outcome(), self._translator_plan())
+        written = self.install_log.read_text(encoding="utf-8")
+        self.assertIn("Startup plan:", written)
+        self.assertIn("missing: X, 2483 MB", written)
 
 
 class RefusalTests(unittest.TestCase):

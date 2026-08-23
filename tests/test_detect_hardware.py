@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from mimora import detect_hardware, llama_server_fetch
+from mimora import bootstrap, detect_hardware, llama_server_fetch
 
 # Fake install location: the probe only ever reads its .name for a message.
 EXE = Path("/opt/mimora/bin/llama/llama-server")
@@ -266,8 +266,8 @@ class UnwritableDataRootTests(unittest.TestCase):
     def test_an_unwritable_output_file_is_reported_not_raised(self):
         stderr = io.StringIO()
         # _setup_logging is stubbed rather than allowed to run: the real one
-        # opens the project's own logs/hwdetect.log with mode="w", and a test
-        # that truncates a log file is a test with a side effect.
+        # opens the project's own logs/hwdetect.log, and a test that adds a
+        # run to a real log file is a test with a side effect.
         with patch.object(detect_hardware, "_setup_logging"), \
                 patch.object(detect_hardware, "probe_and_write",
                              side_effect=OSError(3, "no such drive")), \
@@ -278,6 +278,54 @@ class UnwritableDataRootTests(unittest.TestCase):
         self.assertEqual(exit_code, 1)
         self.assertIn("no such drive", stderr.getvalue())
         self.assertIn(str(detect_hardware.OUTPUT_FILE), stderr.getvalue())
+
+
+class LogFileHistoryTests(unittest.TestCase):
+    """logs/hwdetect.log keeps every probe, not only the last one.
+
+    The file answers "why was this machine detected the way it was", and that
+    is asked about a probe some later probe has already replaced - a driver was
+    installed, a binary was swapped. Truncating per run answered it for the one
+    run nobody is asking about.
+    """
+
+    def setUp(self):
+        import tempfile
+
+        # The module logger is process-global and this test empties it, which
+        # is also what makes _setup_logging's idempotence guard let us in.
+        logger = detect_hardware.logger
+        saved = logger.handlers[:]
+        logger.handlers.clear()
+        self.addCleanup(lambda: (logger.handlers.clear(),
+                                 logger.handlers.extend(saved)))
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        self.log_file = Path(directory.name) / "hwdetect.log"
+
+    def _probe_once(self, message):
+        """One run's worth of logging, with the handler closed afterwards."""
+        with patch.object(detect_hardware, "LOG_DIR", self.log_file.parent), \
+                patch.object(detect_hardware, "LOG_FILE", self.log_file):
+            detect_hardware._setup_logging()
+            detect_hardware.logger.info(message)
+        # Closed here rather than at cleanup: on Windows the directory cannot
+        # be removed while the handler holds the file open, and the next call
+        # needs the guard above to let it in.
+        for handler in detect_hardware.logger.handlers[:]:
+            detect_hardware.logger.removeHandler(handler)
+            handler.close()
+
+    def test_a_second_probe_is_added_below_the_first(self):
+        self._probe_once("the first probe")
+        self._probe_once("the second probe")
+
+        lines = self.log_file.read_text(encoding="utf-8").splitlines()
+        self.assertIn("the first probe", "\n".join(lines))
+        self.assertIn("the second probe", "\n".join(lines))
+        # Each run opens with the header, so the sections can be told apart.
+        self.assertEqual(lines.count(bootstrap._HEADER_RULE), 2)
+        self.assertEqual(lines[0], bootstrap._HEADER_RULE)
 
 
 class WarnIfGpuUnusedTests(unittest.TestCase):

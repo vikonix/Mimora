@@ -91,7 +91,16 @@ installs or imports llama-cpp-python.
   `setup_logging()` after them (from `app.run()`, `force=True` replacing
   handlers installed during the imports). Owns log continuity across an
   in-session restart (`--append-log` / `APPEND_LOG_FLAG`) and the
-  `DISABLE_SAFETENSORS_CONVERSION` switch.
+  `DISABLE_SAFETENSORS_CONVERSION` switch. `install_log()` belongs to neither
+  phase: a root handler on an **append-only** second file for the length of a
+  `with` block, so that what the first-run window downloaded outlives the next
+  launch truncating `main.log`. It writes the same `logs/install.log` that
+  `install.py` writes, which is the point - that script is not in the wheel,
+  so on a wheel install nothing else records what was installed. What that file
+  does NOT keep is named in `_INSTALL_LOG_MUTED` (`httpx`, one INFO line per
+  request), by logger name and on that handler only - `main.log` keeps them.
+  `open_log_section()` writes a run header into one handler's file, blank-line
+  separated from what is already there; `detect_hardware` uses it as well.
 - [`mimora/ui.py`](mimora/ui.py) - `TrainerView`: the view facade `app.py`
   composes. Window chrome, control row, `enter_*` intent methods, feedback
   orchestration; delegates panel-local work to
@@ -206,7 +215,10 @@ installs or imports llama-cpp-python.
   package rather than in `tools/` on one criterion: it has to run on the
   **user's** machine, and a packaged install has neither `tools/` nor
   `install.py`. The GPU question it answers is not "is there a card" but "can
-  the installed LLM binary use it". Also home of `warn_if_gpu_unused()`.
+  the installed LLM binary use it". Also home of `warn_if_gpu_unused()`. Its
+  `logs/hwdetect.log` is **appended**, one header-opened section per probe: the
+  file is read to find out why a machine was detected the way it was, which is
+  asked about a probe a later one has already replaced.
 
 ### Downloads and first run
 
@@ -263,7 +275,12 @@ answered in `first_run.py` instead.
   `RESTART`, and restarts **whenever the plan changed** - see the module
   docstring and the comment at the end of `ensure_ready` for why that is the
   loop guard and why `config` is stale by then. `first_run_window` owns a
-  short-lived `tk.Tk()` root and **must not build ttk widgets**.
+  short-lived `tk.Tk()` root and **must not build ttk widgets**. Everything
+  past its "nothing is missing" return runs inside `bootstrap.install_log`,
+  and that order is the rule: opened any earlier, an ordinary launch would
+  append a section to `logs/install.log` for an installation that never
+  happened. `first_run.plan_summary()` exists so the same summary can open
+  that file without being logged into `main.log` twice.
 - [`tools/preview_first_run.py`](tools/preview_first_run.py) - shows the
   first-run window in any of its states without a first run, because the window
   only appears on a machine that is missing something and that is never the

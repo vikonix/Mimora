@@ -27,9 +27,10 @@ of the very file this module is about to rewrite. The rule is the same as for
 the three fetchers: ``mimora.paths`` yes, ``mimora.config`` no.
 
 It only relies on packages the project already uses (torch, sounddevice) plus
-the stdlib-only mimora.llama_server_fetch; each probe degrades gracefully if
-its package is missing or broken, and any such problem is recorded in the
-"warnings" list of the output file.
+the stdlib-only mimora.bootstrap, mimora.paths and mimora.llama_server_fetch
+(bootstrap for the run header its log file opens with); each probe degrades
+gracefully if its package is missing or broken, and any such problem is
+recorded in the "warnings" list of the output file.
 """
 
 import ctypes
@@ -49,7 +50,7 @@ if __package__ in (None, ""):
     # would not resolve. Same shim, and the same reason, as in the fetchers.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from mimora import paths
+from mimora import bootstrap, paths
 
 # The output is a config artifact read by mimora/config.py, so it goes to the
 # config directory rather than next to this module. Both locations come from
@@ -67,12 +68,21 @@ logger = logging.getLogger("hwdetect")
 
 
 def _setup_logging() -> None:
-    """Attach a file handler writing to logs/hwdetect.log (overwritten per run).
+    """Attach a file handler appending to logs/hwdetect.log.
 
     Kept independent of the console output: the terminal stays concise while the
     log file preserves a timestamped, complete record for later inspection.
     Idempotent, because the CLI is not the only entry point (first_run_window
     calls probe_and_write directly).
+
+    Appended rather than overwritten, and every run opens with the header
+    bootstrap.open_log_section writes. The question this file answers is "why
+    was this machine detected the way it was", and it is usually asked about a
+    probe that has since been followed by another one - a driver was installed,
+    a binary replaced, MIMORA_HOME moved. Truncating per run answered it for
+    the last probe only, which is the one nobody is asking about. The volume
+    makes it free: a probe writes about a dozen lines, and it runs once per
+    first run or when the user asks for it.
 
     An unwritable log directory costs the file and nothing else, and that
     tolerance is load-bearing. This runs before the probe, on a path that does
@@ -90,7 +100,7 @@ def _setup_logging() -> None:
     logger.propagate = False
     try:
         LOG_DIR.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(LOG_FILE, mode="w", encoding="utf-8")
+        handler = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")
     except OSError as exc:
         print(f"Note: no log file this run - could not open {LOG_FILE} "
               f"({exc}). The probe still runs and prints its result below.",
@@ -104,6 +114,9 @@ def _setup_logging() -> None:
         logger.addHandler(logging.NullHandler())
         return
     handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    # Before the handler is attached, so this run's section opens the file
+    # rather than starting under the first line the probe happens to log.
+    bootstrap.open_log_section(handler, LOG_FILE)
     logger.addHandler(handler)
 
 # llama-3.2-3b-instruct has 28 transformer layers; -1 below means "offload all".
