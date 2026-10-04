@@ -9,7 +9,6 @@ clearing are view-local widget operations with no application logic, so they
 live here; the controller still reads the text via ``get_text``.
 """
 import tkinter as tk
-from tkinter import scrolledtext
 from typing import Callable
 
 from mimora import config
@@ -22,12 +21,14 @@ from mimora.ui_theme import (
     Tooltip,
     bind_hover,
 )
+# Imported after ui_theme, which disables the ttkbootstrap autostyle hook.
+import ttkbootstrap as ttk
 
 
 class PracticePanel:
     """Collapsible practice-text editor.
 
-    Owns the caption toggle, Paste/Clear buttons, the ScrolledText editor and
+    Owns the caption toggle, Paste/Clear buttons, the Text editor and
     the collapsed preview label. The collapse flag routes through
     ``on_collapsed_toggled`` so the controller can apply and persist it exactly
     like the other visibility toggles.
@@ -93,12 +94,20 @@ class PracticePanel:
             header, text="", font=(FONT_FAMILY, FONT_SIZE_SMALL, "italic"),
             fg=THEME["text_muted"], bg=THEME["bg_main"], anchor=tk.W)
 
-        self.text = scrolledtext.ScrolledText(
-            self.frame, bg=THEME["bg_panel"], fg=THEME["text"], insertbackground=THEME["text_bright"],
+        # A Text plus a ttk scrollbar in one frame, not ScrolledText: that
+        # widget makes a classic scrollbar, which ignores THEME and is drawn
+        # in the light system colors. toggle() shows and hides this frame.
+        self._editor = tk.Frame(self.frame, bg=THEME["bg_main"])
+        self._editor.pack(fill=tk.X, pady=4)
+        scrollbar = ttk.Scrollbar(self._editor, orient=tk.VERTICAL)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.text = tk.Text(
+            self._editor, bg=THEME["bg_panel"], fg=THEME["text"], insertbackground=THEME["text_bright"],
             font=(FONT_FAMILY, FONT_SIZE_BODY), wrap=tk.WORD, bd=0, height=7,
             highlightthickness=1, highlightbackground=THEME["border"], highlightcolor=THEME["accent"],
-            padx=10, pady=8)
-        self.text.pack(fill=tk.X, pady=4)
+            padx=10, pady=8, yscrollcommand=scrollbar.set)
+        scrollbar.configure(command=self.text.yview)
+        self.text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         # The editor is packed above by default; hide it now if the persisted
         # state says collapsed (same late-apply idiom as the prosody toggles).
@@ -162,12 +171,11 @@ class PracticePanel:
         collapsed = self.collapsed.get()
         self._caption.config(
             text="▸ Practice text:" if collapsed else "▾ Practice text:")
-        # ScrolledText delegates pack/pack_forget to its outer .frame but NOT
-        # winfo_manager: asking the Text itself always answers "pack" (it is
-        # permanently packed inside that frame), so probe the frame instead.
-        shown = self.text.frame.winfo_manager() == "pack"
+        # Probe the editor frame, not the Text: the Text is permanently
+        # packed inside that frame and always answers "pack".
+        shown = self._editor.winfo_manager() == "pack"
         if collapsed and shown:
-            self.text.pack_forget()
+            self._editor.pack_forget()
             self._paste_btn.pack_forget()
             self._clear_btn.pack_forget()
             # Swap the editor row for the one-line text preview next to the caption.
@@ -178,7 +186,7 @@ class PracticePanel:
             # panel frame, and the buttons pack after the caption (LEFT packing
             # preserves their order).
             self._preview.pack_forget()
-            self.text.pack(fill=tk.X, pady=4)
+            self._editor.pack(fill=tk.X, pady=4)
             self._paste_btn.pack(side=tk.LEFT, padx=(10, 0))
             self._clear_btn.pack(side=tk.LEFT, padx=(6, 0))
 

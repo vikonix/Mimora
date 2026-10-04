@@ -26,9 +26,9 @@ from ttkbootstrap.style import Bootstyle
 # theme's colors, discarding the explicit THEME bg/fg this view passes (buttons
 # turned theme-blue, the phrase label white, panels grey). The view themes
 # every classic widget itself, so the hook is unwanted globally - including for
-# widgets created inside libraries (scrolledtext internals, the FaceWidget
-# canvas), which the per-widget ``autostyle=False`` flag cannot reach. Only the
-# classic-widget hook is disabled; ttk widgets (the comboboxes) keep their
+# widgets created inside other modules (the FaceWidget canvas), which the
+# per-widget ``autostyle=False`` flag cannot reach. Only the classic-widget
+# hook is disabled; ttk widgets (the comboboxes, the scrollbars) keep their
 # ttkbootstrap styling. Verified against ttkbootstrap 1.x internals - see the
 # version pin in pyproject.toml.
 Bootstyle.update_tk_widget_style = staticmethod(lambda widget=None: None)

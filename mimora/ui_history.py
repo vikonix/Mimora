@@ -19,6 +19,8 @@ from mimora.ui_theme import (
     WHEEL_EVENTS,
     wheel_scroll_units,
 )
+# Imported after ui_theme, which disables the ttkbootstrap autostyle hook.
+import ttkbootstrap as ttk
 
 
 class HistoryPanel:
@@ -43,8 +45,10 @@ class HistoryPanel:
         self.canvas = tk.Canvas(
             outer, bg=THEME["bg_panel"], highlightthickness=1,
             highlightbackground=THEME["border"], bd=0)
-        scrollbar = tk.Scrollbar(outer, orient=tk.VERTICAL,
-                                 command=self.canvas.yview)
+        # ttk, not tk: the classic scrollbar ignores THEME and is drawn in
+        # the light system colors (styled by "Vertical.TScrollbar" in ui.py).
+        scrollbar = ttk.Scrollbar(outer, orient=tk.VERTICAL,
+                                  command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
         self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
