@@ -29,7 +29,7 @@ from tkinter import filedialog, messagebox
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from mimora import config
+from mimora import config, window_icon
 # Reuse the main view's resolved palette, platform font and wheel-event
 # helpers so the settings window matches the app theme exactly and scrolls
 # on every platform (ui.py builds/hosts all of these).
@@ -376,6 +376,9 @@ class SettingsWindow:
 
         self.top = tk.Toplevel(parent)
         self.top.title("Mimora - Settings")
+        # The icon that this window gets from the main window is the small
+        # one, and Windows stretches it on a scaled display.
+        window_icon.sharpen_window_icon(self.top)
         self.top.configure(bg=THEME["bg_main"])
         self.top.transient(parent)    # stays above the main window
         self._place_near(parent)

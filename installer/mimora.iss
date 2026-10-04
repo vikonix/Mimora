@@ -25,6 +25,10 @@ DisableProgramGroupPage=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 LicenseFile=..\LICENSE
+; The same file that the application windows use (mimora\window_icon.py).
+SetupIconFile=..\mimora\icons\mimora.ico
+; The icon in the "Installed apps" list of Windows.
+UninstallDisplayIcon={app}\mimora.ico
 OutputDir=Output
 OutputBaseFilename=Mimora-{#AppVersion}-windows-x64-setup
 Compression=lzma2
@@ -42,6 +46,9 @@ Source: "build\uv.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "build\*.whl"; DestDir: "{app}"; Flags: ignoreversion
 Source: "install.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "fetch_models.py"; DestDir: "{app}"; Flags: ignoreversion
+; For the shortcuts and the uninstall entry. The copy inside the wheel is deep
+; in the uv tool environment, and its path is not stable.
+Source: "..\mimora\icons\mimora.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Tasks]
 ; Each check box is the user's agreement to that download. A component that
@@ -56,8 +63,11 @@ Name: "acoustic"; Description: "Model of the alternative acoustic engine (1.3 GB
 [Icons]
 ; mimora-gui.exe starts without a console window. The second shortcut keeps
 ; the console, because that is the only place a startup error is visible.
-Name: "{group}\Mimora"; Filename: "{app}\bin\mimora-gui.exe"; WorkingDir: "{app}"
-Name: "{group}\Mimora (console, for diagnostics)"; Filename: "{app}\bin\mimora.exe"; WorkingDir: "{app}"
+; AppUserModelID is the same value as APP_USER_MODEL_ID in
+; mimora\window_icon.py. With different values, a pinned shortcut and the
+; running window become two separate taskbar buttons.
+Name: "{group}\Mimora"; Filename: "{app}\bin\mimora-gui.exe"; WorkingDir: "{app}"; IconFilename: "{app}\mimora.ico"; AppUserModelID: "vikonix.Mimora"
+Name: "{group}\Mimora (console, for diagnostics)"; Filename: "{app}\bin\mimora.exe"; WorkingDir: "{app}"; IconFilename: "{app}\mimora.ico"
 Name: "{group}\Uninstall Mimora"; Filename: "{uninstallexe}"
 
 ; There is no [Run] section: a [Run] entry cannot read the exit code of its

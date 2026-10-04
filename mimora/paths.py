@@ -209,6 +209,15 @@ def shipped_themes_dir() -> Path:
     return shipped_root() / "themes"
 
 
+def shipped_icons_dir() -> Path:
+    """The application icon files that travel with the code.
+
+    Inside the package for the same reason as the themes: a wheel carries a
+    data file only from there. Read by mimora/window_icon.py.
+    """
+    return shipped_root() / "icons"
+
+
 def models_dir() -> Path:
     """The GGUF chat model downloaded by gguf_fetch."""
     return data_root() / "models"

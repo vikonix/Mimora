@@ -41,7 +41,7 @@ import numpy as np
 
 from mimora import (config, detect_hardware, first_run, first_run_window,
                     lifecycle, models_info, prosody, spacy_model_fetch,
-                    splash)
+                    splash, window_icon)
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.phrase_source import SourceTextPhraseProvider
@@ -100,7 +100,11 @@ class PronunciationTrainerGUI:
         logging.info("Starting Mimora Pronunciation Trainer...")
 
         # Core Tkinter setup
+        # The taskbar identity first: Windows reads it when the taskbar
+        # button of the window appears.
+        window_icon.set_app_user_model_id()
         self.root = tk.Tk()
+        window_icon.apply_window_icon(self.root)
         self.root.title(f"Mimora · {config.TARGET_LANGUAGE} - Pronunciation Trainer v{__version__}")
 
         # Fixed width; the window spans the full usable screen height. We query the

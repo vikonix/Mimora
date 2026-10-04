@@ -80,7 +80,7 @@ from tkinter import messagebox
 from typing import Container, NamedTuple, Optional, Sequence
 
 from mimora import (bootstrap, config, detect_hardware, first_run,
-                    first_run_download, splash)
+                    first_run_download, splash, window_icon)
 from mimora.ui_theme import (FONT_FAMILY, FONT_SIZE_BODY, FONT_SIZE_CAPTION,
                              FONT_SIZE_SMALL, FONT_SIZE_TITLE, THEME,
                              FlatButton)
@@ -199,7 +199,11 @@ class FirstRunWindow:
 
         # The splash stays on top of other windows, and would cover this one.
         splash.close()
+        # This window can be the first one of the process, so it sets the
+        # taskbar identity too.
+        window_icon.set_app_user_model_id()
         self.root = tk.Tk()
+        window_icon.apply_window_icon(self.root)
         # "First run" is a lie on the one path that reaches this window from an
         # installed machine: turning translation on restarts into it with
         # nothing else missing. The header and the blocks read correctly either

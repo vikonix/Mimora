@@ -275,7 +275,7 @@ namespaces = false
 # calibration.json that used to sit beside it and now lives under the user's
 # config/ directory.
 [tool.setuptools.package-data]
-mimora = ["texts/*.txt", "themes/*_schema.json"]
+mimora = ["texts/*.txt", "themes/*_schema.json", "icons/*"]
 "pronunciation.phoneme" = ["*_model_calibration.json"]
 
 [tool.setuptools.dynamic]

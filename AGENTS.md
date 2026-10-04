@@ -92,6 +92,15 @@ installs or imports llama-cpp-python.
   window created there stops answering. The child ends when the pipe to
   the parent closes, so no exit path can leave it on the screen.
   **Stdlib-only at module level.**
+- [`mimora/window_icon.py`](mimora/window_icon.py) - the application icon.
+  `set_app_user_model_id()` must run **before the first `tk.Tk()`** of the
+  process (the main window and the first-run window both call it), or Windows
+  groups the window with python.exe and shows the Python icon.
+  `APP_USER_MODEL_ID` is repeated in `installer/mimora.iss`; change both or
+  neither. A failure to load the icon is logged and never stops a window.
+  On Windows each new `Toplevel` calls `sharpen_window_icon()`: the icon
+  that it gets from the root is the small one and is blurred on a scaled
+  display (the process is not DPI-aware).
 - [`mimora/bootstrap.py`](mimora/bootstrap.py) - early process setup,
   stdlib-only. Two phases that **must not be merged or reordered**:
   `early_init()` runs before the heavy imports (from `cli.py`),
@@ -326,6 +335,10 @@ answered in `first_run.py` instead.
   package for the same reason. A user file of the same name in `config/themes/`
   replaces a shipped one; `config._DARK_THEME` stays the last-resort fallback
   and the definition of which colour keys are valid.
+- [`mimora/icons/`](mimora/icons/) - the application icon (`mimora.ico` for
+  Windows, `mimora-256.png` for Tk on Linux and macOS), inside the package for
+  the same reason. The installer takes `mimora.ico` from here too. The vector
+  source is `docs/mimora-icon.svg`; the files here are renders of it.
 
 ## State Machine (pronunciation loop)
 
