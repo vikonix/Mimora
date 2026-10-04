@@ -33,6 +33,14 @@ OutputDir=Output
 OutputBaseFilename=Mimora-{#AppVersion}-windows-x64-setup
 Compression=lzma2
 SolidCompression=yes
+; Inno Setup 6.7 and later start Setup with RedirectionGuard, and the programs
+; that Setup starts get it too. uv creates a directory junction for its Python
+; without administrator rights, and Windows then refuses the path with error
+; 448 (untrusted mount point). The protection is for elevated processes; this
+; Setup is not elevated. Older compilers do not know the directive.
+#if Ver >= EncodeVer(6,7,0)
+RedirectionGuard=no
+#endif
 
 [InstallDelete]
 ; An upgrade must not leave the old wheel: install.cmd takes the wheel by mask.
