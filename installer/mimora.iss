@@ -17,6 +17,20 @@ AppName=Mimora
 AppVersion={#AppVersion}
 AppPublisher=Valeriy Kovalev
 AppPublisherURL=https://github.com/vikonix/Mimora
+; The version resource of the Setup file. An executable file without one is
+; a sign that antivirus programs count against the file.
+VersionInfoCompany=Valeriy Kovalev
+VersionInfoProductName=Mimora
+VersionInfoDescription=Mimora Setup
+VersionInfoCopyright=Copyright (c) 2026 Valeriy Kovalev
+VersionInfoTextVersion={#AppVersion}
+VersionInfoProductTextVersion={#AppVersion}
+; The numeric field accepts digits and dots only. A pre-release version
+; (1.2.0rc1, 1.2.0.dev1, 1.2.0.post1) contains one of these letters and
+; would stop the compiler, so the field then keeps its default 0.0.0.0.
+#if Pos("a", AppVersion) + Pos("b", AppVersion) + Pos("c", AppVersion) + Pos("d", AppVersion) + Pos("p", AppVersion) == 0
+VersionInfoVersion={#AppVersion}
+#endif
 ; Per-user installation: no administrator rights, and uv can write into {app}.
 PrivilegesRequired=lowest
 DefaultDirName={localappdata}\Programs\Mimora
