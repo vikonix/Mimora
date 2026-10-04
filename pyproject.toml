@@ -220,6 +220,11 @@ dependencies = [
     # package's dependency would repeat this silence everywhere the day the hub
     # drops it.
     "click>=8.4.2",
+    # Root certificates for the two downloaders that use urllib
+    # (mimora/net.py). It arrives transitively through httpx, and is named
+    # for the same reason as click above: without it those downloads fail on
+    # a new Windows installation, and nothing else would say why.
+    "certifi>=2024.7.4",
 
     # --- user interface ---------------------------------------------------
     # Themed ttk widgets, imported as a drop-in "ttk". Capped below 2.0:
@@ -243,6 +248,13 @@ Issues = "https://github.com/vikonix/Mimora/issues"
 # `python -m mimora` into the same function.
 [project.scripts]
 mimora = "mimora.cli:main"
+
+# The same entry point without a console window, for the shortcut that the
+# Windows installer creates. The `mimora` command above stays the one to use
+# for diagnostics: a windowless process shows no traceback and no --version
+# output. On Linux and macOS the two scripts are identical.
+[project.gui-scripts]
+mimora-gui = "mimora.cli:main"
 
 # Discovered rather than listed by hand. The previous explicit list had silently
 # lost mimora.languages, without which config.LANGUAGE_PROFILES cannot be built

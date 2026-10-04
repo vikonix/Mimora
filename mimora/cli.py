@@ -14,8 +14,8 @@ setup and the library warning filters only take effect if they run before the
 libraries are imported.
 
 **Only the standard library may be imported at module level here** (plus
-``mimora.bootstrap``, which is stdlib-only itself, and ``mimora.__init__``,
-which defines nothing but ``__version__``). Anything heavier would defeat the
+``mimora.bootstrap`` and ``mimora.splash``, which are stdlib-only themselves,
+and ``mimora.__init__``, which defines nothing but ``__version__``). Anything heavier would defeat the
 purpose of the module.
 
 Three launch forms reach :func:`main`, and all three behave identically:
@@ -34,7 +34,7 @@ import argparse
 import shutil
 import sys
 
-from mimora import __version__, bootstrap
+from mimora import __version__, bootstrap, splash
 
 # The two native pieces `install.py` checks before the first launch
 # (step_check_tkinter, step_check_portaudio). A wheel install runs neither
@@ -153,6 +153,9 @@ def main() -> None:
     # slow part, so this is the first sign of life the user gets. flush=True
     # defeats stdout buffering when the output is redirected.
     print("starting ...", flush=True)
+    # The same sign of life for a launch without a console. After the two
+    # branches above, which answer at once and need no window.
+    splash.show()
 
     # Deliberately a function-local import. At module level it would run
     # before parse_args() above and make --version pay for the whole
@@ -166,6 +169,9 @@ def main() -> None:
     try:
         from mimora import app
     except (ImportError, OSError) as exc:
+        # Closed before the message below, not left to the exit handler: the
+        # splash stays on top of other windows.
+        splash.close()
         hint = _native_hint_for(exc)
         if hint is None:
             raise

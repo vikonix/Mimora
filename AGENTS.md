@@ -85,6 +85,13 @@ installs or imports llama-cpp-python.
   torch, so neither can live in `app.py`. The function-local `from mimora import
   app` is load-bearing, not a style choice. **Stdlib-only at module level.**
   [`mimora/__main__.py`](mimora/__main__.py) is a shim over the same `main()`.
+- [`mimora/splash.py`](mimora/splash.py) - the startup splash, shown by
+  `cli.main()` before the heavy import and closed by `app.run()` once the
+  main window exists (and by the first-run window, which it would cover).
+  It runs in **its own process**: the main thread is busy importing and a
+  window created there stops answering. The child ends when the pipe to
+  the parent closes, so no exit path can leave it on the screen.
+  **Stdlib-only at module level.**
 - [`mimora/bootstrap.py`](mimora/bootstrap.py) - early process setup,
   stdlib-only. Two phases that **must not be merged or reordered**:
   `early_init()` runs before the heavy imports (from `cli.py`),
@@ -250,6 +257,13 @@ step:
   pip - and a `uv tool` environment has no pip. Unpacked under the data root
   and **appended** to `sys.path` (appended, so a model installed on purpose
   keeps winning).
+
+- [`mimora/net.py`](mimora/net.py) - `ssl_context()` for the two downloaders
+  that use urllib (`llama_server_fetch`, `spacy_model_fetch`): the system
+  certificate store plus certifi. Without it both fail with
+  CERTIFICATE_VERIFY_FAILED on a new Windows installation, whose store is
+  almost empty. **Stdlib-only at module level**; certifi is imported inside
+  the function and may be absent.
 
 None of them aggregates "everything that is missing": which set matters depends
 on the active engine and TTS backend, i.e. on `config`, so that question is

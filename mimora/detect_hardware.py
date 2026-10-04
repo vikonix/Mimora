@@ -348,6 +348,8 @@ def _query_nvidia_smi(warnings: list) -> dict | None:
             ["nvidia-smi", "--query-gpu=name,memory.total",
              "--format=csv,noheader,nounits"],
             capture_output=True, text=True, timeout=10,
+            # Without the flag a windowless launch flashes a console window.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     # OSError rather than FileNotFoundError alone: an nvidia-smi that exists
     # but cannot be executed (no permission bit, a broken driver package that
@@ -374,6 +376,8 @@ def _list_video_adapters() -> list[str]:
             ["powershell", "-NoProfile", "-Command",
              "(Get-CimInstance Win32_VideoController).Name"],
             capture_output=True, text=True, timeout=20,
+            # Without the flag a windowless launch flashes a console window.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         return [line.strip() for line in out.stdout.splitlines() if line.strip()]
     except (FileNotFoundError, subprocess.TimeoutExpired):

@@ -1,0 +1,71 @@
+name: "Windows installer"
+
+# A version tag publishes the installer to the release of that tag.
+# A manual run only builds it and keeps it as a workflow artifact.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+# contents: write is necessary to attach the installer to the release.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Install uv"
+        uses: astral-sh/setup-uv@v6
+
+      - name: "Build the wheel"
+        run: uv build --wheel --out-dir dist
+
+      - name: "Read the version and check it against the tag"
+        id: meta
+        shell: pwsh
+        run: |
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          # Wheel name format: mimora-<version>-py3-none-any.whl
+          $version = $wheel.Name.Split('-')[1]
+          # A tag that does not match the package version would publish an
+          # installer whose file name and contents disagree.
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match package version $version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: "Collect the installer payload"
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force installer\build | Out-Null
+          Copy-Item dist\*.whl installer\build\
+          # The installer carries its own uv.exe, so the user's computer does
+          # not need uv or Python before the installation.
+          Copy-Item (Get-Command uv).Source installer\build\uv.exe
+          # The Visual C++ runtime that torch and llama-server need: a clean
+          # Windows does not have it.
+          Invoke-WebRequest https://aka.ms/vs/17/release/vc_redist.x64.exe -OutFile installer\build\vc_redist.x64.exe
+
+      - name: "Compile the installer"
+        shell: pwsh
+        run: |
+          # Does nothing if the runner image already has Inno Setup.
+          choco install innosetup -y --no-progress
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.meta.outputs.version }}" installer\mimora.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: "Keep the installer as a workflow artifact"
+        uses: actions/upload-artifact@v4
+        with:
+          name: mimora-windows-installer
+          path: installer/Output/*.exe
+          if-no-files-found: error
+
+      - name: "Attach the installer to the release"
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: installer/Output/*.exe

@@ -79,7 +79,7 @@ if __package__ in (None, ""):
     # model_fetch and gguf_fetch.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from mimora import paths
+from mimora import net, paths
 
 log = logging.getLogger(__name__)
 
@@ -686,7 +686,10 @@ def _download(url: str, target: Path, expected_sha256: str,
     request = urllib.request.Request(
         url, headers={"User-Agent": "mimora-llama-server-fetch/1.0"})
     try:
-        with urllib.request.urlopen(request, timeout=_HTTP_TIMEOUT_SEC) as response:
+        # The explicit context is what makes this work on a new Windows
+        # installation - see mimora/net.py.
+        with urllib.request.urlopen(request, timeout=_HTTP_TIMEOUT_SEC,
+                                    context=net.ssl_context()) as response:
             length = response.headers.get("Content-Length")
             total = int(length) if length and length.isdigit() else None
             digest = hashlib.sha256()

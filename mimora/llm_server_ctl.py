@@ -205,8 +205,13 @@ class LLMServerController:
                     "\n----- log continues here: server restarted in-session "
                     "-----\n")
             try:
+                # CREATE_NO_WINDOW: started from the windowless launcher,
+                # the server would otherwise open its own console window
+                # and keep it on screen for the whole session. The flag
+                # exists on Windows only, and 0 is the neutral value.
                 self._process = subprocess.Popen(
-                    cmd, stdout=self._log_file, stderr=self._log_file)
+                    cmd, stdout=self._log_file, stderr=self._log_file,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except Exception:
                 # Don't leak the just-opened log file when the launch itself
                 # fails (e.g. a missing interpreter); the exception still

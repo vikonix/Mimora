@@ -40,7 +40,8 @@ from tkinter import messagebox, ttk
 import numpy as np
 
 from mimora import (config, detect_hardware, first_run, first_run_window,
-                    lifecycle, models_info, prosody, spacy_model_fetch)
+                    lifecycle, models_info, prosody, spacy_model_fetch,
+                    splash)
 from mimora.llm import LLMManager
 from mimora.llm_server_ctl import LLMServerController
 from mimora.phrase_source import SourceTextPhraseProvider
@@ -1730,4 +1731,7 @@ def run(append_log: bool = False):
 
     # Named gui, not app: inside this module "app" is the module itself.
     gui = PronunciationTrainerGUI()
+    # The main window exists now and takes over from the splash that
+    # cli.main() started.
+    splash.close()
     gui.run()

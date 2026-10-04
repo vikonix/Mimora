@@ -42,10 +42,19 @@ from unittest import mock
 import mimora
 from mimora import cli
 
-# What cli.py is allowed to take from its own package at module level. Both are
-# stdlib-only themselves: __init__ defines nothing but __version__, and
-# bootstrap is the early process setup that has to run before anything heavy.
-ALLOWED_FROM_PACKAGE = {"__version__", "bootstrap"}
+# What cli.py is allowed to take from its own package at module level. All are
+# stdlib-only themselves: __init__ defines nothing but __version__, bootstrap
+# is the early process setup that has to run before anything heavy, and splash
+# starts the window that is visible during the heavy import.
+ALLOWED_FROM_PACKAGE = {"__version__", "bootstrap", "splash"}
+
+
+def setUpModule():
+    # cli.main() starts the splash, which is a real process with a real
+    # window. No test in this file may open one.
+    patcher = mock.patch.object(cli.splash, "show")
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
 
 
 def _fake_app(run):

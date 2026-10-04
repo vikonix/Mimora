@@ -74,4 +74,7 @@ prototypes-pronunciation/
 
 # Run scripts
 run_mimora.*
-wheel.bat
+make_wheel.bat
+make_install.bat
+# Compiled Windows installer (installer/build/ is covered by build/)
+installer/Output/

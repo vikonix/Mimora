@@ -94,7 +94,7 @@ if __package__ in (None, ""):
     # three fetchers.
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from mimora import models_info, paths
+from mimora import models_info, net, paths
 
 log = logging.getLogger(__name__)
 
@@ -244,7 +244,10 @@ def _download(url: str, target: Path, expected_sha256: Optional[str],
     request = urllib.request.Request(
         url, headers={"User-Agent": "mimora-spacy-model-fetch/1.0"})
     try:
-        with urllib.request.urlopen(request, timeout=_HTTP_TIMEOUT_SEC) as response:
+        # The explicit context is what makes this work on a new Windows
+        # installation - see mimora/net.py.
+        with urllib.request.urlopen(request, timeout=_HTTP_TIMEOUT_SEC,
+                                    context=net.ssl_context()) as response:
             length = response.headers.get("Content-Length")
             total = int(length) if length and length.isdigit() else None
             digest = hashlib.sha256()

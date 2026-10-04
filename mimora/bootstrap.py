@@ -282,6 +282,14 @@ def early_init():
     """
     os.environ.setdefault("PYTHONUTF8", "1")
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    # A windowless launch (the mimora-gui script) has no console, and both
+    # streams are None there. print() accepts that, but a library that calls
+    # sys.stderr.write() directly stops the application with an
+    # AttributeError, so each missing stream gets a sink.
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
     for stream in (sys.stdout, sys.stderr):
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
