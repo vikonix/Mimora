@@ -11,14 +11,22 @@ through LLMManager (llm.py).
 The server speaks the same OpenAI-compatible API as LM Studio and answers 503
 while the model is still loading, so the readiness poll is just
 LLMManager.check_connection against config.LLM_SERVER_URL.
+
+A server already listening on the port is used as it is rather than replaced:
+an app that died without quit_app leaves one behind, another local app started
+with the same port and key may serve a larger model there, and a second server
+could not bind the port anyway (see _use_running_server).
 """
 
+import json
 import logging
 import os
 import re
+import socket
 import subprocess
 import threading
 import time
+import urllib.request
 from pathlib import Path
 from typing import Optional
 
@@ -27,6 +35,16 @@ from mimora.llm import LLMManager
 
 # How long to wait for a graceful exit before killing the subprocess.
 SERVER_TERMINATE_TIMEOUT_SEC = 5
+
+# How long the port probe waits for a TCP connection. The port is on this
+# machine and the answer comes from the kernel, so this is a guard against a
+# blocked network stack and not a real wait.
+PORT_PROBE_TIMEOUT_SEC = 0.5
+
+# How long the /props read of a ready server may take. That server has
+# already answered /v1/models, so this is a guard against a hang and not a
+# wait either.
+PROPS_TIMEOUT_SEC = 2.0
 
 # llama-server tuning that must never be left to the binary's own defaults.
 # All three were measured against the previous backend before this one became
@@ -68,6 +86,50 @@ def llama_server_command(exe_path: str, model_path: str, host: str, port: int,
         "--api-key", api_key,
         "--no-ui",
     ]
+
+
+def port_is_busy(host: str, port: int) -> bool:
+    """True when something already listens on *host:port*.
+
+    Asked before every launch, because llama-server cannot bind a port that is
+    taken and exits at once when it tries. A plain TCP connection is the whole
+    test: it sends no HTTP request, answers in microseconds on a local port,
+    and reports a port held by a program that does not speak the API just as
+    well as one held by a server that does.
+    """
+    try:
+        with socket.create_connection((host, port), PORT_PROBE_TIMEOUT_SEC):
+            return True
+    except OSError:
+        # Refused, unreachable or timed out: nothing is listening there.
+        return False
+
+
+def server_properties(host: str, port: int, api_key: str) -> Optional[dict]:
+    """The /props answer of a running llama-server, or None.
+
+    Not asked through the OpenAI client: /props is llama.cpp's own endpoint and
+    sits outside the /v1 prefix that client is built around, so a plain GET is
+    shorter and does not depend on the library's internals. The key is sent
+    because the server is started with --api-key and answers 401 without it.
+
+    None for every failure, including an answer that is not a JSON object:
+    the only caller is diagnostic, and a server that answers must never be
+    refused over what this function could not read.
+    """
+    url = f"http://{host}:{port}/props"
+    request = urllib.request.Request(
+        url, headers={"Authorization": f"Bearer {api_key}"})
+    try:
+        with urllib.request.urlopen(request,
+                                    timeout=PROPS_TIMEOUT_SEC) as answer:
+            payload = json.load(answer)
+    except (OSError, ValueError) as exc:
+        # OSError covers urllib's URLError and HTTPError (another server has no
+        # /props at all), ValueError a body that is not JSON.
+        logging.info("Could not read %s: %s", url, exc)
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def log_compute_devices(exe_path: str) -> None:
@@ -122,6 +184,18 @@ class LLMServerController:
         # terminate it. One-way by design: start() runs once per process
         # (load_components) and is never retried after shutdown.
         self._shutdown_requested = False
+        # Set when start() found a server already listening and used it as it
+        # is. That server keeps the model, context size and GPU layers it was
+        # started with, which are not necessarily the ones this run configured.
+        self.adopted = False
+        # One short sentence for the user when start() refused a busy port, or
+        # None. Only that refusal sets it: every other failure is explained by
+        # app.py's _server_failure_message, which knows more about the setup.
+        self.last_error: Optional[str] = None
+        # Per-slot context the ready server reports through /props, or None
+        # when it did not say. Read for a launched server as well as for an
+        # adopted one: the server can start with less than it was asked for.
+        self.served_n_ctx: Optional[int] = None
 
     def _build_command(self) -> Optional[list]:
         """Command line for llama-server, or None on a bad setup.
@@ -159,15 +233,145 @@ class LLMServerController:
             config.LLM_SERVER_PORT, config.EXTERNAL_N_GPU_LAYERS,
             config.EXTERNAL_N_CTX, config.LLM_SERVER_API_KEY)
 
+    def _use_running_server(self, llm_mgr: LLMManager) -> bool:
+        """Use a server that already listens on the configured port.
+
+        Two cases reach this. Nothing terminates the subprocess when the app
+        dies without quit_app (a crash, "stop" in an IDE, taskkill), so the
+        server keeps the port and the VRAM; and another local app started with
+        the same port and key may already serve a larger model than this
+        machine could hold twice. A launch would fail to bind in both, and
+        report a broken setup although a working server is right there - so
+        that server is used instead, and is left running on exit exactly as it
+        was found.
+
+        Returns True when such a server answered. Returns False with a
+        last_error when the port is held by something that does not answer the
+        API, because a launch cannot have that port either. A free port is
+        neither case: False with no error, and start() goes on to launch.
+        """
+        host, port = config.LLM_SERVER_HOST, config.LLM_SERVER_PORT
+        if not port_is_busy(host, port):
+            return False
+
+        logging.info("Port %s:%s is already in use - asking what is there.",
+                     host, port)
+        if not llm_mgr.check_connection(silent=True):
+            logging.error(
+                "Port %s:%s is in use by something that does not answer the "
+                "OpenAI API with this run's key. A new llama-server cannot "
+                "bind that port, so no server is started.", host, port)
+            self.last_error = (
+                f"Port {port} is in use by another program. Close it (an old "
+                f"llama-server from a crashed session is the usual cause) and "
+                f"start Mimora again.")
+            return False
+
+        self.adopted = True
+        logging.warning(
+            "Using the llama-server that already listens on %s:%s. Its model, "
+            "context size and GPU layers are the ones it was started with, "
+            "not the ones this run configured.", host, port)
+        self._log_served_model(llm_mgr)
+        self.served_n_ctx = self._log_served_context(host, port)
+        return True
+
+    @staticmethod
+    def _log_served_model(llm_mgr: LLMManager) -> None:
+        """Record which model the adopted server serves; note a mismatch.
+
+        Diagnostics only, and silent about its own failures: the server has
+        already answered, so nothing here may turn a usable server into a
+        failed start.
+
+        llama-server reports the GGUF file it loaded as the model id, which is
+        what makes the comparison possible at all. Another OpenAI-compatible
+        server may report a name of its own, and the mismatch is then a line in
+        the log for whoever reads it after strange phrases - not a refusal,
+        because the name says nothing about whether the server works.
+        """
+        try:
+            served = [model.id for model in llm_mgr.client.models.list().data]
+        except Exception as exc:
+            logging.info("Could not read the model list of the running "
+                         "server: %s", exc)
+            return
+        logging.info("The running server reports these models: %s",
+                     ", ".join(served) or "(none)")
+        expected = os.path.basename(config.EXTERNAL_MODEL_PATH or "")
+        if expected and not any(expected in name for name in served):
+            logging.warning(
+                "The running server does not report %s, the model this run "
+                "configured. Phrases come from whatever that server has "
+                "loaded.", expected)
+
+    @staticmethod
+    def _log_served_context(host: str, port: int) -> Optional[int]:
+        """Record the context size of the ready server; warn if it is small.
+
+        Returns that size, or None when the server did not report one.
+
+        The number that matters most about a server this run did not start: a
+        prompt sized for a larger context is cut by a smaller one silently, on
+        the server, and nothing else in the app would report it. A server this
+        run started is asked too, because it is the only record of the context
+        the server actually got. A larger context than configured costs only
+        VRAM, so only the harmful direction is a warning.
+
+        The value read is the per-slot context (`n_ctx` of
+        default_generation_settings), which is the one a request actually gets.
+        With --parallel 1 it equals --ctx-size, and a foreign server started
+        with several slots is exactly the case where the two differ.
+
+        Diagnostic like _log_served_model: a server that answers is never
+        refused over this.
+        """
+        props = server_properties(host, port, config.LLM_SERVER_API_KEY)
+        if props is None:
+            return None
+        settings = props.get("default_generation_settings")
+        n_ctx = settings.get("n_ctx") if isinstance(settings, dict) else None
+        # bool is a subclass of int, and a JSON true is not a context size.
+        if not isinstance(n_ctx, int) or isinstance(n_ctx, bool):
+            logging.info("The running server did not report a context size.")
+            return None
+        logging.info("The running server has a context size of %s tokens; "
+                     "this run is configured for %s.",
+                     n_ctx, config.EXTERNAL_N_CTX)
+        if n_ctx < config.EXTERNAL_N_CTX:
+            logging.warning(
+                "The running server has a smaller context (%s tokens) than "
+                "this run configured (%s). A long prompt is cut by that "
+                "server, not by Mimora.", n_ctx, config.EXTERNAL_N_CTX)
+        return n_ctx
+
     def start(self, llm_mgr: LLMManager) -> bool:
         """Launch the server subprocess and block until it responds.
 
         Readiness is probed through ``llm_mgr``, whose client is (re)pointed
         at the local server here - the same client the app then uses for
-        generation. Returns False on an unusable configuration (see
+        generation. Returns False on a busy port (see _use_running_server, the
+        only case that sets last_error), an unusable configuration (see
         _build_command), an early subprocess exit, a startup timeout, or when
         shutdown() has already been requested.
+
+        Nothing is launched when a server already answers on the port: True
+        then means "a server is ready", not "this controller owns one".
         """
+        self.adopted = False
+        self.last_error = None
+        self.served_n_ctx = None
+        # Before the port check, not after the launch: that check asks this
+        # client whether whatever holds the port answers the API.
+        llm_mgr.init_client(base_url=config.LLM_SERVER_URL,
+                            api_key=config.LLM_SERVER_API_KEY)
+        if self._use_running_server(llm_mgr):
+            return True
+        if self.last_error is not None:
+            # The port is taken by something that does not answer the API: a
+            # launch would only fail to bind it, so there is nothing to try.
+            return False
+
         cmd = self._build_command()
         if cmd is None:
             return False
@@ -192,8 +396,9 @@ class LLMServerController:
             # over would cover only the second half of a session whose app
             # log covers all of it. Reached on the restart-from-settings
             # path, where the departing process shuts this server down and the
-            # replacement starts its own; the first-run restart happens before
-            # any server exists.
+            # replacement starts its own (an adopted server is left running
+            # and is adopted again); the first-run restart happens before any
+            # server exists.
             log_mode = bootstrap.log_file_mode()
             self._log_file = open(log_path, log_mode,
                                   encoding="utf-8", buffering=1)
@@ -221,8 +426,6 @@ class LLMServerController:
                 raise
 
         deadline = time.time() + config.LLM_SERVER_STARTUP_TIMEOUT
-        llm_mgr.init_client(base_url=config.LLM_SERVER_URL,
-                            api_key=config.LLM_SERVER_API_KEY)
         while time.time() < deadline:
             # Snapshot the process reference: shutdown() (called from quit_app
             # on the Tk main thread while this loop runs on the loader thread)
@@ -239,6 +442,8 @@ class LLMServerController:
                 return False
             if llm_mgr.check_connection(silent=True):
                 logging.info("LLM server is ready.")
+                self.served_n_ctx = self._log_served_context(
+                    config.LLM_SERVER_HOST, config.LLM_SERVER_PORT)
                 return True
             time.sleep(1.0)
 
@@ -252,7 +457,10 @@ class LLMServerController:
         """Terminate the subprocess (kill on timeout) and close its log file.
 
         Safe to call repeatedly and when the server was never started - every
-        step is a no-op then. Also called by start() on its failure paths, so
+        step is a no-op then, which is also what leaves a server adopted by
+        _use_running_server running: it is not this process's subprocess, and
+        another app may still use it. Also called by start() on its failure
+        paths, so
         it can run concurrently on the loader thread and the Tk main thread
         (quit_app); the lock makes the check-then-use on the process and log
         file atomic - the loser of the race sees None and does nothing. Also

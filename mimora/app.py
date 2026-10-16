@@ -42,7 +42,7 @@ import numpy as np
 from mimora import (config, detect_hardware, first_run, first_run_window,
                     lifecycle, models_info, prosody, spacy_model_fetch,
                     splash, window_icon)
-from mimora.llm import LLMManager
+from mimora.llm import LLMManager, phrase_sampling
 from mimora.llm_server_ctl import LLMServerController
 from mimora.phrase_source import SourceTextPhraseProvider
 from mimora.tts import TTSManager
@@ -427,6 +427,38 @@ class PronunciationTrainerGUI:
                     self.root.after(0, self.view.server_failed)
                     return
                 self.root.after(0, self.view.append_system_msg, "LLM server is ready.")
+                # Before the window becomes ready, so the first phrase already
+                # uses the sampling values for the server that answers.
+                self.llm_mgr.adopted_server = self.llm_server.adopted
+                # Logged because the values are chosen by a flag and are not
+                # visible anywhere else in a run: the log is the only proof of
+                # which pair this server received.
+                temperature, top_p = phrase_sampling(self.llm_server.adopted)
+                logging.info(
+                    "Phrase sampling: temperature=%s, top_p=%s (%s server).",
+                    temperature, top_p,
+                    "adopted" if self.llm_server.adopted else "own")
+                if self.llm_server.adopted:
+                    # Said in the window and not only in the log: phrases now
+                    # come from a server this run did not configure, which
+                    # explains a model or a speed the settings do not.
+                    self.root.after(
+                        0, self.view.append_system_msg,
+                        f"Using the llama-server already running on "
+                        f"{config.LLM_SERVER_HOST}:{config.LLM_SERVER_PORT}. "
+                        f"It keeps the model it was started with.")
+                served_n_ctx = self.llm_server.served_n_ctx
+                if (served_n_ctx is not None
+                        and served_n_ctx < config.EXTERNAL_N_CTX):
+                    # A warning and not a refusal: short prompts still fit.
+                    # In the message list, because the status line is
+                    # overwritten by the next state change at once.
+                    self.root.after(
+                        0, self.view.append_error_msg,
+                        f"Warning: the LLM server has a context of "
+                        f"{served_n_ctx} tokens instead of "
+                        f"{config.EXTERNAL_N_CTX}. Long prompts may not fit. "
+                        f"See logs/main.log.")
             else:
                 self.llm_mgr.init_client()
                 if not self.llm_mgr.check_connection():
@@ -482,7 +514,13 @@ class PronunciationTrainerGUI:
         everything is downloaded and no llama.cpp build is pinned for the
         platform, this message is the only thing the user ever sees - at every
         single start.
+
+        A busy port comes first and is not a question about the setup at all:
+        the controller refused it before looking at the binary, and its own
+        sentence names the port.
         """
+        if self.llm_server.last_error:
+            return f"Error: {self.llm_server.last_error}"
         status = first_run.llama_server_status()
         if status == first_run.SERVER_PRESENT:
             # The binary is there and was still not usable, which is a question

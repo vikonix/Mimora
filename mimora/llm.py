@@ -7,7 +7,7 @@ import random
 import hashlib
 import logging
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 from openai import OpenAI
 from mimora import config
 from mimora.phrase_source import split_sentences
@@ -22,6 +22,43 @@ LLM_TIMEOUT = 30.0
 # configures it: no setting selects it and no code overrides it. A caller that
 # ever talks to a server which does route by model name passes LLMManager(model=...).
 PLACEHOLDER_MODEL = "local-model"
+
+
+def request_extra_body(backend: str) -> Optional[dict]:
+    """Fields outside the OpenAI API to send with a phrase request, or None.
+
+    Only llama-server gets one: chat_template_kwargs.enable_thinking=False.
+    llama-server passes enable_thinking=true to a thinking model's chat
+    template by default (Gemma, as served by SpeakLoop on the same port). The
+    model then spends the whole PHRASE_GEN_MAX_TOKENS budget on reasoning,
+    which the server returns in reasoning_content, and message.content - the
+    only field this module reads - comes back empty. A template without the
+    variable (Llama 3.2, the model Mimora starts itself) ignores it.
+
+    LM Studio gets None: it has its own thinking switch, and an unknown field
+    there is a risk with nothing to gain.
+
+    A new dict on every call, so no caller can change what the next request
+    sends.
+    """
+    if backend != "llama-server":
+        return None
+    return {"chat_template_kwargs": {"enable_thinking": False}}
+
+
+def phrase_sampling(adopted_server: bool) -> Tuple[float, float]:
+    """Temperature and top_p for a phrase request.
+
+    An adopted llama-server serves a larger model than the one Mimora starts
+    itself, and at the small model's values it repeats the same phrase much
+    more often (see ADOPTED_PHRASE_GEN_TEMPERATURE in config). The pair is
+    chosen per request rather than once, because the flag is set only after
+    the server answered.
+    """
+    if adopted_server:
+        return (config.ADOPTED_PHRASE_GEN_TEMPERATURE,
+                config.ADOPTED_PHRASE_GEN_TOP_P)
+    return config.PHRASE_GEN_TEMPERATURE, config.PHRASE_GEN_TOP_P
 
 # Opening-style hints for "full" sentences. One is picked at random per
 # request: a stateless prompt with a fixed text otherwise makes a small model
@@ -181,6 +218,10 @@ class LLMManager:
         self.client = None
         # Model name sent in API requests (see PLACEHOLDER_MODEL above).
         self.model = model or PLACEHOLDER_MODEL
+        # True when the llama-server was adopted, not started by this run
+        # (app.py sets it from LLMServerController.adopted). Selects the
+        # sampling values for a larger model (see phrase_sampling).
+        self.adopted_server = False
         # Sliding-window state over the source text (see _current_window):
         # start index, how many phrases were generated at this position, and a
         # hash of the text the state belongs to (text edits reset the window).
@@ -303,18 +344,20 @@ class LLMManager:
                 {"role": "user", "content": user_prompt},
             ]
 
+            temperature, top_p = phrase_sampling(self.adopted_server)
             try:
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
-                    temperature=config.PHRASE_GEN_TEMPERATURE,
+                    temperature=temperature,
                     # Sent explicitly rather than left to the server: a default
                     # is not a promise, and sampling must not change just
                     # because another backend answered (see PHRASE_GEN_TOP_P).
-                    top_p=config.PHRASE_GEN_TOP_P,
+                    top_p=top_p,
                     max_tokens=max_tokens,
                     stream=False,
                     timeout=LLM_TIMEOUT,
+                    extra_body=request_extra_body(config.LLM_BACKEND),
                 )
             except Exception:
                 # Connectivity/timeout: retrying would only stack timeouts on

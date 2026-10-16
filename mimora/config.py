@@ -867,6 +867,14 @@ PHRASE_GEN_TEMPERATURE = 0.7
 # differently the moment a backend changes its mind. 0.9 is the value the
 # phrases in the logs were generated with.
 PHRASE_GEN_TOP_P = 0.9
+# The same two values for an adopted llama-server (see llm_server_ctl), which
+# serves a larger model than the one Mimora starts itself (SpeakLoop's Gemma
+# on the same port). A larger model has a sharper token distribution, so at
+# the values above it repeats the same most-likely phrase far more often;
+# these spread the topics. Not used for the own server: the small model is
+# tuned at the values above and makes more broken phrases at these.
+ADOPTED_PHRASE_GEN_TEMPERATURE = 1.0
+ADOPTED_PHRASE_GEN_TOP_P = 0.95
 PHRASE_GEN_MAX_TOKENS = 40
 _PHRASE_GEN = _LANG_PROFILE["phrase_gen"]
 # str.format template: {min_words}/{max_words} are filled by mimora/llm.py

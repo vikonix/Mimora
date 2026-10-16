@@ -185,12 +185,27 @@ installs or imports llama-cpp-python.
 - [`mimora/llm.py`](mimora/llm.py) - `LLMManager`: OpenAI-compatible client,
   one phrase per non-streaming request. The model name is a placeholder because
   both supported servers ignore the field; `LLMManager(model=...)` is the escape
-  hatch for a server that does route by name.
+  hatch for a server that does route by name. `request_extra_body()` sends
+  `chat_template_kwargs.enable_thinking=false` **to llama-server only**: an
+  adopted server with a thinking model (Gemma from SpeakLoop) otherwise spends
+  the whole token budget on `reasoning_content` and every phrase comes back
+  empty. `phrase_sampling()` sends `ADOPTED_PHRASE_GEN_*` (1.0/0.95) to an
+  adopted server and `PHRASE_GEN_*` (0.7/0.9) to the own one: a larger model
+  repeats itself at the small model's values, and the small model breaks
+  phrases at the larger one's. `app.py` sets `llm_mgr.adopted_server`.
 - [`mimora/llm_server_ctl.py`](mimora/llm_server_ctl.py) -
   `LLMServerController`: subprocess lifecycle. `llama_server_command()` is a
   pure builder holding the tuning that must never be left to the binary's
   defaults; `start()` blocks until the server answers, `shutdown()` is safe from
-  two threads at once.
+  two threads at once. `_use_running_server()` is the fork before the launch:
+  a server that already answers on the port is **adopted** as it is and never
+  terminated on exit (a crashed session left it, or another local app such as
+  SpeakLoop serves a larger model on the same port and key); a port held by
+  anything that does not answer the API is refused, with the one sentence in
+  `last_error` that `app.py` shows. The served model ids and the per-slot
+  context from `/props` (outside `/v1`, so a plain GET) are logged for an
+  adopted server, the context for a launched one too; both are diagnostic and
+  never refuse a server that answers.
 - [`mimora/translator.py`](mimora/translator.py) - `TranslatorManager`: offline
   NLLB-200 translation, loaded lazily, CPU by default. **Loading is not
   downloading here** - the weights are guaranteed present, because selecting a
