@@ -13,6 +13,7 @@ Pronunciation analysis lives in the separate top-level ``pronunciation`` package
 # pyproject.toml reads this value dynamically; runtime code imports it from here.
 #
 # Every re-upload costs a version number: PyPI accepts a filename once and for
-# all. A pre-release is still what a plain `pip install mimora` resolves to
-# while no stable 1.1.0 exists, and can be yanked if it turns out wrong.
-__version__ = "1.1.0"
+# all. A pre-release can be yanked if it turns out wrong. While a stable
+# release exists, a plain `pip install mimora` ignores pre-releases: testers
+# need an exact pin or `--pre` (`--prerelease allow` for uv).
+__version__ = "1.2.0rc1"
