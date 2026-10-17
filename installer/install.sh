@@ -1,0 +1,280 @@
+#!/bin/sh
+# Installs Mimora on macOS and Linux with uv, for a user who uses a terminal.
+#
+# Install or upgrade:
+#   curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh
+#
+# Uninstall:
+#   curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh -s -- --uninstall
+#
+# Environment variables:
+#   MIMORA_VERSION      install this exact version, for example 1.2.0rc1.
+#                       After an exact version, "uv tool upgrade mimora" does
+#                       not upgrade; run this script again without the variable.
+#   MIMORA_NO_SHORTCUT  any value: do not create the Linux application menu entry.
+#
+# The models are not downloaded here: the first start of Mimora asks for them.
+# This script does not run sudo and does not change shell startup files. It
+# prints the commands that need them.
+#
+# POSIX sh, not bash: "| sh" is dash on Debian and Ubuntu.
+
+set -eu
+
+step() {
+    printf '==> %s\n' "$1"
+}
+
+warn() {
+    printf 'WARNING: %s\n' "$1" >&2
+}
+
+die() {
+    printf 'ERROR: %s\n' "$1" >&2
+    exit 1
+}
+
+# Downloads a URL to standard output with curl or wget.
+download() {
+    if command -v curl >/dev/null 2>&1; then
+        curl -LsSf "$1"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO- "$1"
+    else
+        die "Neither curl nor wget was found. Install one of them and run this command again."
+    fi
+}
+
+# Prints the full path of uv, or nothing. The full path is necessary because
+# the uv installer changes PATH only for new terminal windows.
+find_uv() {
+    if command -v uv >/dev/null 2>&1; then
+        command -v uv
+        return 0
+    fi
+    # The directories where the official uv installer puts uv, in the order
+    # that the installer itself uses.
+    for dir in "${UV_INSTALL_DIR:-}" "${XDG_BIN_HOME:-}" "$HOME/.local/bin"; do
+        if [ -n "$dir" ] && [ -x "$dir/uv" ]; then
+            printf '%s\n' "$dir/uv"
+            return 0
+        fi
+    done
+    return 0
+}
+
+install_uv() {
+    step "Installing uv (the official installer from Astral)"
+    download https://astral.sh/uv/install.sh | sh \
+        || die "The uv installation failed. Read the messages above."
+}
+
+# The sounddevice wheel for Linux does not carry PortAudio, and Mimora does
+# not start without it. Prints the install command for this distribution, or
+# nothing when the library is present or the check is not possible.
+portaudio_hint() {
+    ldconfig_cmd=""
+    for candidate in ldconfig /sbin/ldconfig /usr/sbin/ldconfig; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            ldconfig_cmd="$candidate"
+            break
+        fi
+    done
+    # Without ldconfig (NixOS, for example) the library cannot be found this
+    # way. The application itself names the missing library at start.
+    [ -n "$ldconfig_cmd" ] || return 0
+    if "$ldconfig_cmd" -p 2>/dev/null | grep -q 'libportaudio\.so\.2'; then
+        return 0
+    fi
+
+    distro=""
+    if [ -r /etc/os-release ]; then
+        # ID and ID_LIKE only, in a subshell, so that no other variable of
+        # os-release changes this script.
+        distro=$(. /etc/os-release && printf '%s %s' "${ID:-}" "${ID_LIKE:-}")
+    fi
+    case " $distro " in
+        *" debian "* | *" ubuntu "*) printf 'sudo apt install libportaudio2\n' ;;
+        *" fedora "* | *" rhel "*) printf 'sudo dnf install portaudio\n' ;;
+        *" arch "*) printf 'sudo pacman -S portaudio\n' ;;
+        *" opensuse"*) printf 'sudo zypper install libportaudio2\n' ;;
+        *) printf 'install the PortAudio library (libportaudio.so.2) with the package manager\n' ;;
+    esac
+}
+
+# The icon ships inside the package. Its path contains the Python version, so
+# a copy goes to the icon theme directory, where the menu entry finds it by name.
+install_icon() {
+    tool_dir=$("$1" tool dir)
+    icon_source=$(find "$tool_dir/mimora/lib" -path '*/site-packages/mimora/icons/mimora-256.png' 2>/dev/null | head -n 1)
+    if [ -z "$icon_source" ]; then
+        warn "The Mimora icon was not found. The menu entry has no icon."
+        return 0
+    fi
+    mkdir -p "$icon_dir"
+    cp "$icon_source" "$icon_dir/mimora.png"
+}
+
+create_desktop_entry() {
+    uv=$1
+    bin_dir=$2
+    # A version without the mimora-gui script (1.1.0 and older) would give
+    # a menu entry that starts nothing.
+    if [ ! -x "$bin_dir/mimora-gui" ]; then
+        warn "$bin_dir/mimora-gui was not found, so no menu entry was created."
+        return 0
+    fi
+    step "Creating the application menu entry $desktop_file"
+    install_icon "$uv"
+    mkdir -p "$(dirname "$desktop_file")"
+    # Exec is quoted, because the home directory can contain spaces.
+    cat >"$desktop_file" <<DESKTOP
+[Desktop Entry]
+Type=Application
+Name=Mimora
+Comment=Pronunciation trainer
+Exec="$bin_dir/mimora-gui"
+Icon=mimora
+Terminal=false
+Categories=Education;
+DESKTOP
+    # Some desktops read the menu only from this cache. Without the tool the
+    # entry appears after the next login.
+    if command -v update-desktop-database >/dev/null 2>&1; then
+        update-desktop-database "$(dirname "$desktop_file")" >/dev/null 2>&1 || true
+    fi
+}
+
+data_dir() {
+    if [ -n "${MIMORA_HOME:-}" ]; then
+        printf '%s\n' "$MIMORA_HOME"
+    elif [ "$os" = macos ]; then
+        printf '%s\n' "$HOME/Library/Application Support/Mimora"
+    else
+        printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/mimora"
+    fi
+}
+
+install_mimora() {
+    uv=$(find_uv)
+    if [ -n "$uv" ]; then
+        step "Using uv: $uv"
+    else
+        install_uv
+        uv=$(find_uv)
+        [ -n "$uv" ] || die "uv was installed, but it was not found. Open a new terminal and run this command again."
+    fi
+
+    portaudio_command=""
+    if [ "$os" = linux ]; then
+        portaudio_command=$(portaudio_hint)
+    fi
+
+    package=mimora
+    if [ -n "${MIMORA_VERSION:-}" ]; then
+        package="mimora==$MIMORA_VERSION"
+    fi
+    step "Installing $package (Python, PyTorch and the dependencies, this can take several minutes)"
+    # --upgrade: a second run of this script is an upgrade.
+    # --managed-python: always the Python build of uv. It carries tkinter; a
+    #   system Python on Linux does not, without the python3-tk package.
+    # --python 3.12: a uv tool environment ignores requires-python.
+    # --torch-backend auto: without it an NVIDIA computer gets a CPU-only torch.
+    "$uv" tool install --upgrade --managed-python --python 3.12 --torch-backend auto "$package" \
+        || die "The Mimora installation failed. Read the messages above. If uv reports an unknown option, update uv ('uv self update') and run this command again."
+
+    bin_dir=$("$uv" tool dir --bin)
+
+    if [ "$os" = linux ]; then
+        if [ -n "${MIMORA_NO_SHORTCUT:-}" ]; then
+            step "MIMORA_NO_SHORTCUT is set: no menu entry was created"
+        else
+            create_desktop_entry "$uv" "$bin_dir"
+        fi
+    fi
+
+    printf '\nMimora is installed.\n'
+    case ":$PATH:" in
+        *":$bin_dir:"*)
+            printf '  Start it with: mimora\n'
+            ;;
+        *)
+            # Shell startup files are not changed without the user's consent.
+            printf '  Start it with: %s/mimora\n' "$bin_dir"
+            printf '  To start it as "mimora", add %s to PATH:\n' "$bin_dir"
+            printf '    %s tool update-shell   (changes your shell startup file)\n' "$uv"
+            printf '  or add this line to it yourself:\n'
+            printf '    export PATH="%s:$PATH"\n' "$bin_dir"
+            ;;
+    esac
+    if [ "$os" = linux ] && [ -f "$desktop_file" ]; then
+        printf '  Mimora is also in the application menu.\n'
+    fi
+    printf '  At the first start, Mimora asks to download its models (several GB).\n'
+    printf '  Upgrade:   uv tool upgrade mimora   (or run this command again)\n'
+    printf '  Uninstall: run this command again with "sh -s -- --uninstall"\n'
+    if [ -n "$portaudio_command" ]; then
+        printf '\nBEFORE THE FIRST START, install PortAudio (Mimora cannot record or play audio without it):\n'
+        printf '  %s\n' "$portaudio_command"
+    fi
+}
+
+uninstall_mimora() {
+    uv=$(find_uv)
+    if [ -n "$uv" ]; then
+        step "Removing the Mimora uv tool"
+        "$uv" tool uninstall mimora || warn "uv could not remove Mimora. Possibly it was not installed with uv."
+    else
+        warn "uv was not found, so the Mimora uv tool was not removed."
+    fi
+
+    if [ "$os" = linux ]; then
+        if [ -f "$desktop_file" ]; then
+            step "Deleting $desktop_file"
+            rm -f "$desktop_file"
+        fi
+        rm -f "$icon_dir/mimora.png"
+    fi
+
+    # The data directory is not deleted: it can hold several GB of models
+    # that a later installation uses again, and MIMORA_HOME can point to a
+    # directory that also holds other files of the user.
+    printf '\nMimora is uninstalled.\n'
+    data=$(data_dir)
+    if [ -d "$data" ]; then
+        printf '  The models, settings and logs stay in: %s\n' "$data"
+        printf '  Delete this directory yourself if you do not need them.\n'
+    fi
+    printf '  uv itself stays installed. To remove it, see https://docs.astral.sh/uv/\n'
+}
+
+main() {
+    action=install
+    for arg in "$@"; do
+        case "$arg" in
+            --uninstall) action=uninstall ;;
+            *) die "Unknown option: $arg (the only option is --uninstall)" ;;
+        esac
+    done
+
+    case "$(uname -s)" in
+        Linux) os=linux ;;
+        Darwin) os=macos ;;
+        *) die "This script supports macOS and Linux. On Windows, use install.ps1." ;;
+    esac
+
+    share_dir="${XDG_DATA_HOME:-$HOME/.local/share}"
+    desktop_file="$share_dir/applications/mimora.desktop"
+    icon_dir="$share_dir/icons/hicolor/256x256/apps"
+
+    if [ "$action" = uninstall ]; then
+        uninstall_mimora
+    else
+        install_mimora
+    fi
+}
+
+# All the work is in functions, and this is the only line that starts it.
+# When "curl | sh" receives only part of the file, this line is missing and
+# nothing runs.
+main "$@"

@@ -2,6 +2,10 @@
 # stops showing up in diffs (checkout still uses the platform default).
 * text=auto
 
+# Shell scripts always LF: a Windows checkout (also the Windows runner of the
+# release workflow) otherwise gives them CRLF, and sh fails on the "\r".
+*.sh text eol=lf
+
 # Binary assets — never normalize.
 *.gguf binary
 *.wav binary
