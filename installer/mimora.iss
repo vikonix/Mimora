@@ -130,14 +130,43 @@ begin
     + ComponentIfSelected('acoustic');
 end;
 
-const
-  // The exit code of install.cmd when PyPI does not have AppVersion.
-  InstallExitNotPublished = 2;
-
 var
-  // The exit code of install.cmd, and whether it was not 0.
-  InstallExitCode: Integer;
+  // True when install.cmd did not end with exit code 0.
   InstallFailed: Boolean;
+
+// The HTTP status of the PyPI page of this version, or 0 when PyPI could not
+// be asked (no network, a proxy that WinHTTP does not know, no WinHTTP).
+function PyPIStatus: Integer;
+var
+  Request: Variant;
+begin
+  try
+    Request := CreateOleObject('WinHttp.WinHttpRequest.5.1');
+    Request.Open('GET', 'https://pypi.org/pypi/mimora/{#AppVersion}/json', False);
+    // Resolve, connect, send and receive, in milliseconds.
+    Request.SetTimeouts(10000, 10000, 10000, 30000);
+    Request.Send('');
+    Result := Request.Status;
+  except
+    Result := 0;
+  end;
+end;
+
+// Runs before Setup changes anything. install.cmd installs
+// mimora=={#AppVersion} from PyPI, so without that version on PyPI the
+// installation cannot succeed: Setup stops here, and no files, uninstaller,
+// shortcuts or Visual C++ runtime are installed. Only a 404 stops it. When
+// PyPI cannot be asked, the installation continues, and uv reports the cause
+// (it can also use a package index mirror that this check does not know).
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if PyPIStatus = 404 then
+    Result := 'This installer is for Mimora {#AppVersion}, and this version '
+      + 'is not available for download. Nothing was installed.' + #13#10
+      + #13#10 + 'Download the current installer from '
+      + 'https://github.com/vikonix/Mimora/releases';
+end;
 
 // Starts a program with a visible window and waits for it. Returns its exit
 // code, or -1 when the program did not start.
@@ -169,12 +198,11 @@ begin
   // the progress output is the only sign that the installation continues.
   // The outer pair of quotation marks is for cmd.exe, which removes it.
   // The first argument is the version that install.cmd installs from PyPI.
-  InstallExitCode := RunAndWait(ExpandConstant('{cmd}'),
+  InstallFailed := RunAndWait(ExpandConstant('{cmd}'),
     '/C ""' + ExpandConstant('{app}\install.cmd') + '" {#AppVersion} '
     + SelectedComponents('') + '"',
     'Downloading Mimora, Python, the dependencies and the selected models. '
-    + 'This can take a long time...');
-  InstallFailed := InstallExitCode <> 0;
+    + 'This can take a long time...') <> 0;
 
   // [Icons] has already created the shortcuts. Without the program they
   // point at nothing. After a failed upgrade the previous program can still
@@ -193,16 +221,15 @@ begin
   if (CurPageID = wpFinished) and InstallFailed then
   begin
     WizardForm.FinishedHeadingLabel.Caption := 'Mimora was not installed';
-    if InstallExitCode = InstallExitNotPublished then
-      WizardForm.FinishedLabel.Caption :=
-        'This installer is for Mimora {#AppVersion}, and this version is not '
-        + 'available for download. Download the current installer from '
-        + 'https://github.com/vikonix/Mimora/releases'
-    else
-      WizardForm.FinishedLabel.Caption :=
-        'The download of Mimora, Python or the dependencies failed. Make sure '
-        + 'that the computer is connected to the internet and that Mimora is '
-        + 'not running, then start this installer again.';
+    // Setup has already copied its own files and the uninstaller; after a
+    // failed upgrade the previous version also stays. The uninstaller
+    // removes both.
+    WizardForm.FinishedLabel.Caption :=
+      'The download of Mimora, Python or the dependencies failed. Make sure '
+      + 'that the computer is connected to the internet, then start this '
+      + 'installer again.' + #13#10 + #13#10
+      + 'To remove the files that were copied, use "Uninstall Mimora" in the '
+      + 'Start menu.';
   end;
 end;
 

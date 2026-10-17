@@ -4,8 +4,8 @@ rem It installs Mimora as a uv tool from PyPI: the same wheel that every other
 rem way of installation gets, so the installer cannot behave differently.
 rem Arguments: the Mimora version, then the model components to download now
 rem (see fetch_models.py).
-rem Exit codes: 0 success, 2 this version is not on PyPI, 1 any other failure.
-rem CurPageChanged in mimora.iss shows a different message for each.
+rem Whether PyPI has this version is checked before, by PrepareToInstall in
+rem mimora.iss, so that Setup can refuse before it installs anything.
 setlocal
 set "APP_DIR=%~dp0"
 
@@ -38,22 +38,6 @@ set "COMPONENTS=%COMPONENTS% %~1"
 shift
 goto collect_components
 :components_collected
-
-rem A clear message when PyPI answers that this version does not exist. Only
-rem a 404 stops the installation: without network access (curl prints 000),
-rem without curl.exe, or with a package index mirror configured for uv, uv
-rem itself reports what is wrong. No quotation marks in the command: for /f
-rem removes some of them, and none of these parts contains a space.
-set "PYPI_STATUS="
-for /f %%c in ('%SystemRoot%\System32\curl.exe -s -o NUL -w %%{http_code} --max-time 30 https://pypi.org/pypi/mimora/%VERSION%/json 2^>NUL') do set "PYPI_STATUS=%%c"
-if "%PYPI_STATUS%"=="404" (
-    echo.
-    echo Mimora %VERSION% is not available for download from PyPI.
-    echo This installer cannot install it. Download the current installer from
-    echo https://github.com/vikonix/Mimora/releases
-    pause
-    exit /b 2
-)
 
 rem --managed-python: always the Python build of uv, never a Python that is
 rem   already on the computer.
