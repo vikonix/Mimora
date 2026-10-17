@@ -18,6 +18,10 @@ form still works, `--version` still prints, it just takes ten seconds first. So
 the test below reads cli.py's module-level imports and says so out loud, and two
 behavioural tests pin the order around them.
 
+A third property: on Windows the running process holds a named mutex, so
+that the installers refuse to replace its files. The name is written in three
+files, and a test below checks that they agree.
+
 A second property lives here because it belongs to the same entry point: the
 two native pieces no wheel can supply - tkinter and PortAudio - must fail with
 the command that installs them rather than with a traceback, and everything
@@ -31,7 +35,9 @@ Run from the project root with:
 
 import ast
 import contextlib
+import ctypes
 import io
+import re
 import sys
 import types
 import unittest
@@ -315,6 +321,77 @@ class NativeDependencyHintTests(unittest.TestCase):
         # SystemExit carries the message as its code, which is what the
         # interpreter prints to stderr before exiting with 1.
         self.assertIn("python3-tk", str(caught.exception.code))
+
+
+# The installer files that repeat RUNNING_MUTEX_NAME. They are not in the
+# wheel, so this test reads them from the source tree.
+_INSTALLER_DIR = Path(__file__).resolve().parents[1] / "installer"
+
+
+class RunningMutexTests(unittest.TestCase):
+    """The mutex that tells the installers that Mimora is running."""
+
+    def setUp(self):
+        # The handle is module state: every test starts without one, and the
+        # real value comes back afterwards.
+        patcher = mock.patch.object(cli, "_running_mutex", None)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_does_nothing_off_windows(self):
+        with mock.patch.object(cli.sys, "platform", "linux"), \
+                mock.patch.object(ctypes, "WinDLL", create=True) as win_dll:
+            cli._hold_running_mutex()
+        win_dll.assert_not_called()
+        self.assertIsNone(cli._running_mutex)
+
+    def test_windows_creates_the_named_mutex_and_keeps_the_handle(self):
+        with mock.patch.object(cli.sys, "platform", "win32"), \
+                mock.patch.object(ctypes, "WinDLL", create=True) as win_dll:
+            create_mutex = win_dll.return_value.CreateMutexW
+            create_mutex.return_value = 1234
+            cli._hold_running_mutex()
+        # Not owned (0): only the existence of the name matters.
+        create_mutex.assert_called_once_with(None, 0, cli.RUNNING_MUTEX_NAME)
+        # Kept, so that the mutex lives as long as the process.
+        self.assertEqual(cli._running_mutex, 1234)
+
+    def test_a_failure_does_not_stop_the_start(self):
+        with mock.patch.object(cli.sys, "platform", "win32"), \
+                mock.patch.object(ctypes, "WinDLL", create=True,
+                                  side_effect=OSError("no kernel32")):
+            cli._hold_running_mutex()
+        self.assertIsNone(cli._running_mutex)
+
+    def test_a_normal_launch_holds_the_mutex_before_the_application(self):
+        order = []
+        app = _fake_app(lambda **kwargs: order.append("run"))
+        with mock.patch.object(cli, "_hold_running_mutex",
+                               side_effect=lambda: order.append("mutex")), \
+                _launched_as(["mimora"], app):
+            cli.main()
+        self.assertEqual(order, ["mutex", "run"])
+
+    def test_version_does_not_hold_the_mutex(self):
+        # --version changes nothing, so it must not block an installer.
+        with mock.patch.object(cli, "_hold_running_mutex") as hold, \
+                _launched_as(["mimora", "--version"], _fake_app(None)):
+            with self.assertRaises(SystemExit):
+                cli.main()
+        hold.assert_not_called()
+
+    def test_the_installers_use_the_same_name(self):
+        # With a different name in one file, the installer does not see the
+        # running application, and nothing else shows it.
+        iss = (_INSTALLER_DIR / "mimora.iss").read_text(encoding="utf-8")
+        ps1 = (_INSTALLER_DIR / "install.ps1").read_text(encoding="utf-8")
+        self.assertEqual(
+            re.findall(r"^AppMutex=(.+?)\s*$", iss, re.MULTILINE),
+            [cli.RUNNING_MUTEX_NAME])
+        self.assertEqual(
+            re.findall(r"^\$MimoraRunningMutexName = '([^']+)'", ps1,
+                       re.MULTILINE),
+            [cli.RUNNING_MUTEX_NAME])
 
 
 if __name__ == "__main__":

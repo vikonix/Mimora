@@ -49,6 +49,16 @@ _INSTALL_COMMAND = {
 _TKINTER_PACKAGE = {"apt-get": "python3-tk", "dnf": "python3-tkinter", "pacman": "tk"}
 _PORTAUDIO_PACKAGE = {"apt-get": "libportaudio2", "dnf": "portaudio", "pacman": "portaudio"}
 
+# The name of the mutex that tells installers that Mimora is running. Repeated
+# in installer/mimora.iss (AppMutex) and installer/install.ps1: change all
+# three or none. tests/test_cli.py checks that they agree.
+RUNNING_MUTEX_NAME = "vikonix.Mimora.Running"
+
+# The open handle of that mutex, kept for the life of the process. Windows
+# closes it when the process ends, also after a crash, so no exit path can
+# leave the mutex behind.
+_running_mutex = None
+
 
 def _package_hint(packages: dict[str, str]) -> str:
     """Return the install command for the first package manager found.
@@ -107,6 +117,34 @@ def _native_hint_for(exc: BaseException) -> str | None:
     return None
 
 
+def _hold_running_mutex() -> None:
+    """On Windows, let the installers see that Mimora is running.
+
+    Windows does not let uv replace or delete the files of a running program,
+    and an update that fails half-way can leave a broken environment. The
+    Windows installer and install.ps1 refuse to start while this mutex exists.
+    Linux and macOS replace the files of a running program without error, so
+    nothing is done there. A failure only loses this protection, and the app
+    starts as usual.
+    """
+    global _running_mutex
+    if sys.platform != "win32":
+        return
+    # Imported here: only Windows needs it. Plain ctypes types rather than
+    # ctypes.wintypes, which does not import everywhere the tests run.
+    import ctypes
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_mutex = kernel32.CreateMutexW
+        create_mutex.restype = ctypes.c_void_p
+        create_mutex.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p)
+        # Not owned: only the existence of the name matters. A second Mimora,
+        # or the replacement process of a restart, opens the same mutex.
+        _running_mutex = create_mutex(None, 0, RUNNING_MUTEX_NAME)
+    except (OSError, AttributeError):
+        pass
+
+
 def main() -> None:
     """Parse the arguments, then hand over to the application."""
     # Before the heavy imports, not after: see the module docstring.
@@ -134,6 +172,10 @@ def main() -> None:
              "automatically when the app restarts itself, so one session's "
              "log survives the restart)")
     args = parser.parse_args()  # --version exits inside this call
+
+    # After --version, which changes nothing, and before --detect-hardware,
+    # which also runs from the environment that an update replaces.
+    _hold_running_mutex()
 
     if args.detect_hardware:
         # Here rather than only as `python -m mimora.detect_hardware`, because

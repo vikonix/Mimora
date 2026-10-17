@@ -28,12 +28,35 @@ $MimoraAppUserModelId = 'vikonix.Mimora'
 
 $MimoraShortcutPath = Join-Path ([Environment]::GetFolderPath('Programs')) 'Mimora.lnk'
 
+# Must be the same value as RUNNING_MUTEX_NAME in mimora\cli.py, which the
+# running application holds, and AppMutex in installer\mimora.iss.
+$MimoraRunningMutexName = 'vikonix.Mimora.Running'
+
 function Write-MimoraStep([string]$Message) {
     Write-Host "==> $Message" -ForegroundColor Cyan
 }
 
 function Write-MimoraWarning([string]$Message) {
     Write-Host "WARNING: $Message" -ForegroundColor Yellow
+}
+
+# Windows does not let uv replace or delete the files of a running program,
+# and an update that fails half-way can leave a broken environment. So the
+# script stops before it changes anything.
+function Assert-MimoraNotRunning {
+    $mutex = $null
+    try {
+        $running = [Threading.Mutex]::TryOpenExisting($MimoraRunningMutexName, [ref]$mutex)
+    } catch [UnauthorizedAccessException] {
+        # The mutex exists, but this user may not open it.
+        $running = $true
+    }
+    if ($mutex) {
+        $mutex.Dispose()
+    }
+    if ($running) {
+        throw 'Mimora is running. Close it, then run this command again.'
+    }
 }
 
 # Returns the full path of uv.exe, or $null. The full path is necessary
@@ -258,6 +281,7 @@ function Get-MimoraDataDir {
 }
 
 function Install-Mimora {
+    Assert-MimoraNotRunning
     $uv = Find-MimoraUv
     if ($uv) {
         Write-MimoraStep "Using uv: $uv"
@@ -304,6 +328,7 @@ function Install-Mimora {
 }
 
 function Uninstall-Mimora {
+    Assert-MimoraNotRunning
     $uv = Find-MimoraUv
     if ($uv) {
         Write-MimoraStep 'Removing the Mimora uv tool'

@@ -85,6 +85,11 @@ installs or imports llama-cpp-python.
   torch, so neither can live in `app.py`. The function-local `from mimora import
   app` is load-bearing, not a style choice. **Stdlib-only at module level.**
   [`mimora/__main__.py`](mimora/__main__.py) is a shim over the same `main()`.
+  On Windows `main()` also holds the named mutex `RUNNING_MUTEX_NAME` for the
+  life of the process, so that the installers refuse to replace the files of
+  a running Mimora. The name is repeated in `installer/mimora.iss`
+  (`AppMutex`) and `installer/install.ps1`; change all three or none
+  (`tests/test_cli.py` checks that they agree).
 - [`mimora/splash.py`](mimora/splash.py) - the startup splash, shown by
   `cli.main()` before the heavy import and closed by `app.run()` once the
   main window exists (and by the first-run window, which it would cover).
@@ -96,8 +101,9 @@ installs or imports llama-cpp-python.
   `set_app_user_model_id()` must run **before the first `tk.Tk()`** of the
   process (the main window and the first-run window both call it), or Windows
   groups the window with python.exe and shows the Python icon.
-  `APP_USER_MODEL_ID` is repeated in `installer/mimora.iss`; change both or
-  neither. A failure to load the icon is logged and never stops a window.
+  `APP_USER_MODEL_ID` is repeated in `installer/mimora.iss` and
+  `installer/install.ps1`; change all three or none
+  (`tests/test_window_icon.py` checks that they agree). A failure to load the icon is logged and never stops a window.
   On Windows each new `Toplevel` calls `sharpen_window_icon()`: the icon
   that it gets from the root is the small one and is blurred on a scaled
   display (the process is not DPI-aware).

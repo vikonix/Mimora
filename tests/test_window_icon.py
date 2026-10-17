@@ -13,11 +13,17 @@ Run from the project root with:
 """
 
 import ctypes
+import re
 import tkinter as tk
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from mimora import paths, window_icon
+
+# The installer files that repeat APP_USER_MODEL_ID. They are not in the
+# wheel, so the test reads them from the source tree.
+_INSTALLER_DIR = Path(__file__).resolve().parents[1] / "installer"
 
 
 def _platform(name):
@@ -134,6 +140,19 @@ class SetAppUserModelIdTests(unittest.TestCase):
             windll.shell32.SetCurrentProcessExplicitAppUserModelID \
                 .side_effect = OSError("no shell32")
             window_icon.set_app_user_model_id()
+
+    def test_the_installers_use_the_same_identity(self):
+        # With a different value in one file, a pinned shortcut and the
+        # running window become two taskbar buttons, and no test fails.
+        iss = (_INSTALLER_DIR / "mimora.iss").read_text(encoding="utf-8")
+        ps1 = (_INSTALLER_DIR / "install.ps1").read_text(encoding="utf-8")
+        self.assertEqual(
+            set(re.findall(r'AppUserModelID: "([^"]+)"', iss)),
+            {window_icon.APP_USER_MODEL_ID})
+        self.assertEqual(
+            re.findall(r"^\$MimoraAppUserModelId = '([^']+)'", ps1,
+                       re.MULTILINE),
+            [window_icon.APP_USER_MODEL_ID])
 
 
 if __name__ == "__main__":

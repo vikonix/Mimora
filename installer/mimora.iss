@@ -1,10 +1,12 @@
 ; Inno Setup script for the Mimora Windows installer.
 ; Compiled by .github/workflows/windows-installer.yml, which puts uv.exe and
-; the wheel into installer\build\ and passes /DAppVersion.
+; vc_redist into installer\build\ and passes /DAppVersion.
 ;
-; The installer is small on purpose: it does not contain Python, torch or the
-; models. install.cmd downloads them with uv, so the computer keeps the GPU
-; build of torch that a frozen executable cannot carry.
+; The installer is small on purpose: it does not contain Mimora, Python, torch
+; or the models. install.cmd installs mimora==AppVersion from PyPI with uv, so
+; the installer gets the same wheel as every other way of installation, and
+; the computer gets the GPU build of torch that a frozen executable cannot
+; carry.
 
 #ifndef AppVersion
   #error AppVersion is not defined. Pass /DAppVersion=x.y.z to ISCC.
@@ -31,6 +33,10 @@ VersionInfoProductTextVersion={#AppVersion}
 #if Pos("a", AppVersion) + Pos("b", AppVersion) + Pos("c", AppVersion) + Pos("d", AppVersion) + Pos("p", AppVersion) == 0
 VersionInfoVersion={#AppVersion}
 #endif
+; The same name as RUNNING_MUTEX_NAME in mimora\cli.py, which the running
+; application holds. Setup and the uninstaller ask to close Mimora first:
+; Windows does not let uv replace or delete the files of a running program.
+AppMutex=vikonix.Mimora.Running
 ; Per-user installation: no administrator rights, and uv can write into {app}.
 PrivilegesRequired=lowest
 DefaultDirName={localappdata}\Programs\Mimora
@@ -56,20 +62,15 @@ SolidCompression=yes
 RedirectionGuard=no
 #endif
 
-[InstallDelete]
-; An upgrade must not leave the old wheel: install.cmd takes the wheel by mask.
-Type: files; Name: "{app}\*.whl"
-
 [Files]
 ; torch and llama-server do not load without the Visual C++ runtime, and a
 ; clean Windows does not have it.
 Source: "build\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; Check: VCRuntimeMissing
 Source: "build\uv.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "build\*.whl"; DestDir: "{app}"; Flags: ignoreversion
 Source: "install.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "fetch_models.py"; DestDir: "{app}"; Flags: ignoreversion
-; For the shortcuts and the uninstall entry. The copy inside the wheel is deep
-; in the uv tool environment, and its path is not stable.
+; For the shortcuts and the uninstall entry. The copy inside the package is
+; deep in the uv tool environment, and its path is not stable.
 Source: "..\mimora\icons\mimora.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Tasks]
@@ -129,8 +130,13 @@ begin
     + ComponentIfSelected('acoustic');
 end;
 
+const
+  // The exit code of install.cmd when PyPI does not have AppVersion.
+  InstallExitNotPublished = 2;
+
 var
-  // True when install.cmd did not end with exit code 0.
+  // The exit code of install.cmd, and whether it was not 0.
+  InstallExitCode: Integer;
   InstallFailed: Boolean;
 
 // Starts a program with a visible window and waits for it. Returns its exit
@@ -162,11 +168,13 @@ begin
   // The console window stays visible: the download is several gigabytes, and
   // the progress output is the only sign that the installation continues.
   // The outer pair of quotation marks is for cmd.exe, which removes it.
-  InstallFailed := RunAndWait(ExpandConstant('{cmd}'),
-    '/C ""' + ExpandConstant('{app}\install.cmd') + '" '
+  // The first argument is the version that install.cmd installs from PyPI.
+  InstallExitCode := RunAndWait(ExpandConstant('{cmd}'),
+    '/C ""' + ExpandConstant('{app}\install.cmd') + '" {#AppVersion} '
     + SelectedComponents('') + '"',
-    'Downloading Python, the dependencies and the selected models. '
-    + 'This can take a long time...') <> 0;
+    'Downloading Mimora, Python, the dependencies and the selected models. '
+    + 'This can take a long time...');
+  InstallFailed := InstallExitCode <> 0;
 
   // [Icons] has already created the shortcuts. Without the program they
   // point at nothing. After a failed upgrade the previous program can still
@@ -185,10 +193,16 @@ begin
   if (CurPageID = wpFinished) and InstallFailed then
   begin
     WizardForm.FinishedHeadingLabel.Caption := 'Mimora was not installed';
-    WizardForm.FinishedLabel.Caption :=
-      'The download of Python or of the dependencies failed. Make sure that '
-      + 'the computer is connected to the internet and that Mimora is not '
-      + 'running, then start this installer again.';
+    if InstallExitCode = InstallExitNotPublished then
+      WizardForm.FinishedLabel.Caption :=
+        'This installer is for Mimora {#AppVersion}, and this version is not '
+        + 'available for download. Download the current installer from '
+        + 'https://github.com/vikonix/Mimora/releases'
+    else
+      WizardForm.FinishedLabel.Caption :=
+        'The download of Mimora, Python or the dependencies failed. Make sure '
+        + 'that the computer is connected to the internet and that Mimora is '
+        + 'not running, then start this installer again.';
   end;
 end;
 

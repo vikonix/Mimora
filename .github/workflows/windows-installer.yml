@@ -2,10 +2,19 @@ name: "Windows installer"
 
 # A version tag publishes the installer to the release of that tag.
 # A manual run only builds it and keeps it as a workflow artifact.
+#
+# The installer carries no wheel: install.cmd installs mimora==<version> from
+# PyPI. So the version must be on PyPI before the installer is built, and the
+# order of a release is: upload to PyPI, then the tag.
 on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      allow_unpublished:
+        description: "Build even if this version is not on PyPI. The installer then cannot install Mimora; it is only for checking the installer itself."
+        type: boolean
+        default: false
 
 # contents: write is necessary to attach the installer to the release.
 permissions:
@@ -20,28 +29,66 @@ jobs:
       - name: "Install uv"
         uses: astral-sh/setup-uv@v6
 
-      - name: "Build the wheel"
-        run: uv build --wheel --out-dir dist
-
       - name: "Read the version and check it against the tag"
         id: meta
         shell: pwsh
         run: |
-          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
-          # Wheel name format: mimora-<version>-py3-none-any.whl
-          $version = $wheel.Name.Split('-')[1]
+          # mimora/__init__.py is the single source of the version;
+          # pyproject.toml reads it from there too.
+          $match = Select-String -Path mimora\__init__.py -Pattern '^__version__ = "([^"]+)"'
+          if (-not $match) {
+            throw "No __version__ line in mimora/__init__.py"
+          }
+          $version = $match.Matches[0].Groups[1].Value
           # A tag that does not match the package version would publish an
-          # installer whose file name and contents disagree.
+          # installer that installs a different version than its name says.
           if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") {
             throw "Tag $env:GITHUB_REF_NAME does not match package version $version"
           }
           "version=$version" >> $env:GITHUB_OUTPUT
 
+      - name: "Check that the version is published on PyPI"
+        id: pypi
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          ALLOW_UNPUBLISHED: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_unpublished }}
+        run: |
+          $url = "https://pypi.org/pypi/mimora/$env:VERSION/json"
+          # PyPI can answer 404 for a short time after an upload. A run that
+          # allows an unpublished version does not wait for it.
+          $attempts = if ($env:ALLOW_UNPUBLISHED -eq 'true') { 1 } else { 5 }
+          $published = $false
+          for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            try {
+              $release = Invoke-RestMethod -Uri $url
+              # uv must get a wheel: building from an sdist needs a compiler.
+              if ($release.urls | Where-Object { $_.packagetype -eq 'bdist_wheel' }) {
+                $published = $true
+                break
+              }
+              Write-Host "Attempt ${attempt}: Mimora $env:VERSION is on PyPI, but without a wheel."
+            } catch {
+              Write-Host "Attempt ${attempt}: Mimora $env:VERSION is not on PyPI ($($_.Exception.Message))."
+            }
+            if ($attempt -lt $attempts) {
+              Start-Sleep -Seconds 30
+            }
+          }
+          if ($published) {
+            Write-Host "Mimora $env:VERSION is on PyPI with a wheel."
+            "unpublished=false" >> $env:GITHUB_OUTPUT
+          } elseif ($env:ALLOW_UNPUBLISHED -eq 'true') {
+            Write-Host "::warning::Mimora $env:VERSION is not published on PyPI. This installer cannot install Mimora; use it only to check the installer itself."
+            "unpublished=true" >> $env:GITHUB_OUTPUT
+          } else {
+            throw "Mimora $env:VERSION is not published on PyPI with a wheel. Upload it first, or start the workflow by hand with allow_unpublished to check the installer only."
+          }
+
       - name: "Collect the installer payload"
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force installer\build | Out-Null
-          Copy-Item dist\*.whl installer\build\
           # The installer carries its own uv.exe, so the user's computer does
           # not need uv or Python before the installation.
           Copy-Item (Get-Command uv).Source installer\build\uv.exe
@@ -60,7 +107,9 @@ jobs:
       - name: "Keep the installer as a workflow artifact"
         uses: actions/upload-artifact@v4
         with:
-          name: mimora-windows-installer
+          # A different name, so that an installer that cannot install
+          # Mimora is not taken for a normal one.
+          name: mimora-windows-installer${{ steps.pypi.outputs.unpublished == 'true' && '-unpublished' || '' }}
           path: installer/Output/*.exe
           if-no-files-found: error
 
