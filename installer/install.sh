@@ -34,6 +34,15 @@ die() {
     exit 1
 }
 
+# The first output of an installation: what is installed, and that it can
+# take long. Without it, the first line names uv, which the user did not ask for.
+banner() {
+    printf '\nInstalling %s, a local pronunciation trainer.\n' "$1"
+    printf '  This downloads uv, Python, PyTorch and the other dependencies (up to several GB).\n'
+    printf '  Depending on the speed of your internet connection, this can take from a few\n'
+    printf '  minutes to half an hour or more. Do not close this window.\n\n'
+}
+
 # Downloads a URL to standard output with curl or wget.
 download() {
     if command -v curl >/dev/null 2>&1; then
@@ -156,6 +165,12 @@ data_dir() {
 }
 
 install_mimora() {
+    package=mimora
+    if [ -n "${MIMORA_VERSION:-}" ]; then
+        package="mimora==$MIMORA_VERSION"
+    fi
+    banner "$package"
+
     uv=$(find_uv)
     if [ -n "$uv" ]; then
         step "Using uv: $uv"
@@ -170,10 +185,6 @@ install_mimora() {
         portaudio_command=$(portaudio_hint)
     fi
 
-    package=mimora
-    if [ -n "${MIMORA_VERSION:-}" ]; then
-        package="mimora==$MIMORA_VERSION"
-    fi
     step "Installing $package (Python, PyTorch and the dependencies, this can take several minutes)"
     # --upgrade: a second run of this script is an upgrade.
     # --managed-python: always the Python build of uv. It carries tkinter; a

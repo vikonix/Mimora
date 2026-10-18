@@ -40,6 +40,17 @@ function Write-MimoraWarning([string]$Message) {
     Write-Host "WARNING: $Message" -ForegroundColor Yellow
 }
 
+# The first output of an installation: what is installed, and that it can
+# take long. Without it, the first line names uv, which the user did not ask for.
+function Write-MimoraBanner([string]$Package) {
+    Write-Host ''
+    Write-Host "Installing $Package, a local pronunciation trainer." -ForegroundColor Green
+    Write-Host '  This downloads uv, Python, PyTorch and the other dependencies (up to several GB).'
+    Write-Host '  Depending on the speed of your internet connection, this can take from a few'
+    Write-Host '  minutes to half an hour or more. Do not close this window.'
+    Write-Host ''
+}
+
 # Windows does not let uv replace or delete the files of a running program,
 # and an update that fails half-way can leave a broken environment. So the
 # script stops before it changes anything.
@@ -86,7 +97,10 @@ function Install-MimoraUv {
     Write-MimoraStep 'Installing uv (the official installer from Astral)'
     # A child process, so that the variables and functions of the uv
     # installer do not mix with the ones of this script.
-    & powershell -NoProfile -ExecutionPolicy ByPass -Command "irm https://astral.sh/uv/install.ps1 | iex"
+    # Out-Host: the messages of the uv installer go to the screen. Without it
+    # they become output of this function, and the caller gets them and the
+    # path of uv.exe together as one value.
+    & powershell -NoProfile -ExecutionPolicy ByPass -Command "irm https://astral.sh/uv/install.ps1 | iex" | Out-Host
     if ($LASTEXITCODE -ne 0) {
         throw "The uv installation failed (exit code $LASTEXITCODE). Read the messages above."
     }
@@ -281,6 +295,11 @@ function Get-MimoraDataDir {
 }
 
 function Install-Mimora {
+    $package = 'mimora'
+    if ($env:MIMORA_VERSION) {
+        $package = "mimora==$($env:MIMORA_VERSION)"
+    }
+    Write-MimoraBanner $package
     Assert-MimoraNotRunning
     $uv = Find-MimoraUv
     if ($uv) {
@@ -295,10 +314,6 @@ function Install-Mimora {
         Install-MimoraVcRuntime
     }
 
-    $package = 'mimora'
-    if ($env:MIMORA_VERSION) {
-        $package = "mimora==$($env:MIMORA_VERSION)"
-    }
     Write-MimoraStep "Installing $package (Python, PyTorch and the dependencies, this can take several minutes)"
     # --upgrade: a second run of this script is an upgrade.
     # --managed-python: always the Python build of uv, never a Python that is
@@ -321,7 +336,13 @@ function Install-Mimora {
 
     Write-Host ''
     Write-Host 'Mimora is installed.' -ForegroundColor Green
-    Write-Host '  Start it from the Start menu, or run "mimora" in a new terminal.'
+    # Without mimora-gui (1.1.0 and older) or with MIMORA_NO_SHORTCUT there
+    # is no shortcut, so the Start menu is named only when it has one.
+    if (Test-Path -LiteralPath $MimoraShortcutPath) {
+        Write-Host '  Start it from the Start menu, or run "mimora" in a new terminal.'
+    } else {
+        Write-Host '  Start it: run "mimora" in a new terminal.'
+    }
     Write-Host '  At the first start, Mimora asks to download its models (several GB).'
     Write-Host '  Upgrade:   uv tool upgrade mimora   (or run this command again)'
     Write-Host '  Uninstall: see the top of this script, or run "uv tool uninstall mimora" and delete the shortcut.'
