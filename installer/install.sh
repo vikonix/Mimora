@@ -236,12 +236,16 @@ install_mimora() {
     banner "$package"
 
     uv=$(find_uv)
+    # Set when this run installed uv: the uv installer adds its own directory
+    # to PATH in the shell startup files, so a new terminal window finds it.
+    uv_installed_now=""
     if [ -n "$uv" ]; then
         step "Using uv: $uv"
     else
         install_uv
         uv=$(find_uv)
         [ -n "$uv" ] || die "uv was installed, but it was not found. Open a new terminal and run this command again."
+        uv_installed_now=1
     fi
 
     step "Installing $package (Python, PyTorch and the dependencies, this can take several minutes)"
@@ -269,12 +273,22 @@ install_mimora() {
             printf '  Start it with: mimora\n'
             ;;
         *)
-            # Shell startup files are not changed without the user's consent.
             printf '  Start it with: %s/mimora\n' "$bin_dir"
-            printf '  To start it as "mimora", add %s to PATH:\n' "$bin_dir"
-            printf '    %s tool update-shell   (changes your shell startup file)\n' "$uv"
-            printf '  or add this line to it yourself:\n'
-            printf '    export PATH="%s:$PATH"\n' "$bin_dir"
+            # The uv installer that this run started has already added its
+            # directory to the shell startup files. When mimora is in that
+            # directory, a new window finds it, and the commands below would
+            # only repeat that change. Otherwise (uv was already installed,
+            # or UV_TOOL_BIN_DIR moved the commands) a new window does not
+            # find mimora, and the user needs those commands.
+            if [ -n "$uv_installed_now" ] && [ "$(dirname "$uv")" = "$bin_dir" ]; then
+                printf '  Or open a new terminal window and start it with: mimora\n'
+            else
+                # Shell startup files are not changed without the user's consent.
+                printf '  To start it as "mimora", add %s to PATH:\n' "$bin_dir"
+                printf '    %s tool update-shell   (changes your shell startup file)\n' "$uv"
+                printf '  or add this line to it yourself:\n'
+                printf '    export PATH="%s:$PATH"\n' "$bin_dir"
+            fi
             ;;
     esac
     if [ "$os" = linux ] && [ -f "$desktop_file" ]; then
