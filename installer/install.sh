@@ -78,10 +78,12 @@ install_uv() {
         || die "The uv installation failed. Read the messages above."
 }
 
-# The sounddevice wheel for Linux does not carry PortAudio, and Mimora does
-# not start without it. Prints the install command for this distribution, or
-# nothing when the library is present or the check is not possible.
-portaudio_hint() {
+# Succeeds when the PortAudio library is missing. The sounddevice wheel for
+# Linux does not carry it, and Mimora cannot record or play audio without it.
+# Fails when the library is present or the check is not possible: without
+# ldconfig (NixOS, for example) the library cannot be found this way, and the
+# application itself names the missing library at start.
+portaudio_missing() {
     ldconfig_cmd=""
     for candidate in ldconfig /sbin/ldconfig /usr/sbin/ldconfig; do
         if command -v "$candidate" >/dev/null 2>&1; then
@@ -89,11 +91,52 @@ portaudio_hint() {
             break
         fi
     done
-    # Without ldconfig (NixOS, for example) the library cannot be found this
-    # way. The application itself names the missing library at start.
-    [ -n "$ldconfig_cmd" ] || return 0
+    if [ -z "$ldconfig_cmd" ]; then
+        return 1
+    fi
     if "$ldconfig_cmd" -p 2>/dev/null | grep -q 'libportaudio\.so\.2'; then
+        return 1
+    fi
+    return 0
+}
+
+# Succeeds when no Symbola font file is found. Tk cannot draw a colour emoji
+# font (fonts-noto-color-emoji, the default one), so without a monochrome one
+# the record button is an empty circle. Mimora still works, which is why this
+# is only a hint. The font files are searched directly rather than with
+# fc-list: a minimal system (a WSL or container image) can lack the fontconfig
+# tools, and that is exactly where the font is missing.
+symbola_missing() {
+    for dir in /usr/share/fonts /usr/local/share/fonts \
+            "${XDG_DATA_HOME:-$HOME/.local/share}/fonts" "$HOME/.fonts"; do
+        if [ -d "$dir" ] && find "$dir" -iname 'symbola*' 2>/dev/null | grep -q .; then
+            return 1
+        fi
+    done
+    return 0
+}
+
+# Prints what to install before the first start, with the command for this
+# distribution, or nothing when nothing is missing.
+print_native_hints() {
+    need_portaudio=""
+    need_font=""
+    if portaudio_missing; then
+        need_portaudio=1
+    fi
+    if symbola_missing; then
+        need_font=1
+    fi
+    if [ -z "$need_portaudio$need_font" ]; then
         return 0
+    fi
+
+    printf '\nBEFORE THE FIRST START, install the missing system packages:\n'
+    if [ -n "$need_portaudio" ]; then
+        printf '  - PortAudio: Mimora cannot record or play audio without it.\n'
+    fi
+    if [ -n "$need_font" ]; then
+        printf '  - the Symbola font: without it the record button shows no icon.\n'
     fi
 
     distro=""
@@ -102,13 +145,34 @@ portaudio_hint() {
         # os-release changes this script.
         distro=$(. /etc/os-release && printf '%s %s' "${ID:-}" "${ID_LIKE:-}")
     fi
+    # One apt command for both packages. fonts-symbola is in Ubuntu's
+    # universe repository, which a desktop installation has enabled.
     case " $distro " in
-        *" debian "* | *" ubuntu "*) printf 'sudo apt install libportaudio2\n' ;;
-        *" fedora "* | *" rhel "*) printf 'sudo dnf install portaudio\n' ;;
-        *" arch "*) printf 'sudo pacman -S portaudio\n' ;;
-        *" opensuse"*) printf 'sudo zypper install libportaudio2\n' ;;
-        *) printf 'install the PortAudio library (libportaudio.so.2) with the package manager\n' ;;
+        *" debian "* | *" ubuntu "*)
+            packages=""
+            if [ -n "$need_portaudio" ]; then
+                packages="libportaudio2"
+            fi
+            if [ -n "$need_font" ]; then
+                packages="${packages:+$packages }fonts-symbola"
+            fi
+            printf '  sudo apt install %s\n' "$packages"
+            return 0
+            ;;
     esac
+    if [ -n "$need_portaudio" ]; then
+        case " $distro " in
+            *" fedora "* | *" rhel "*) printf '  sudo dnf install portaudio\n' ;;
+            *" arch "*) printf '  sudo pacman -S portaudio\n' ;;
+            *" opensuse"*) printf '  sudo zypper install libportaudio2\n' ;;
+            *) printf '  Install the PortAudio library (libportaudio.so.2) with the package manager.\n' ;;
+        esac
+    fi
+    # The package name of the font differs between distributions and was
+    # checked only for Debian and Ubuntu, so no command is guessed here.
+    if [ -n "$need_font" ]; then
+        printf '  Install the Symbola font with the package manager.\n'
+    fi
 }
 
 # The icon ships inside the package. Its path contains the Python version, so
@@ -180,11 +244,6 @@ install_mimora() {
         [ -n "$uv" ] || die "uv was installed, but it was not found. Open a new terminal and run this command again."
     fi
 
-    portaudio_command=""
-    if [ "$os" = linux ]; then
-        portaudio_command=$(portaudio_hint)
-    fi
-
     step "Installing $package (Python, PyTorch and the dependencies, this can take several minutes)"
     # --upgrade: a second run of this script is an upgrade.
     # --managed-python: always the Python build of uv. It carries tkinter; a
@@ -224,9 +283,8 @@ install_mimora() {
     printf '  At the first start, Mimora asks to download its models (several GB).\n'
     printf '  Upgrade:   uv tool upgrade mimora   (or run this command again)\n'
     printf '  Uninstall: run this command again with "sh -s -- --uninstall"\n'
-    if [ -n "$portaudio_command" ]; then
-        printf '\nBEFORE THE FIRST START, install PortAudio (Mimora cannot record or play audio without it):\n'
-        printf '  %s\n' "$portaudio_command"
+    if [ "$os" = linux ]; then
+        print_native_hints
     fi
 }
 
