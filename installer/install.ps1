@@ -140,6 +140,11 @@ function Install-MimoraVcRuntime {
             # Start-Process throws when the user refuses the UAC prompt.
             throw 'The Visual C++ runtime was not installed. Mimora cannot start without it. Run this command again and allow the installation.'
         }
+        # 1602: the user cancelled the vc_redist window. Not a failure of
+        # the runtime installer, so the same message as a refused UAC prompt.
+        if ($process.ExitCode -eq 1602) {
+            throw 'The Visual C++ runtime was not installed. Mimora cannot start without it. Run this command again and allow the installation.'
+        }
         # 3010: installed, a restart is required later.
         # 1638: a newer version is already installed.
         if ($process.ExitCode -notin @(0, 3010, 1638)) {
@@ -392,9 +397,25 @@ function Uninstall-Mimora {
     # Windows PowerShell 5.1 does not always enable TLS 1.2, and GitHub and
     # aka.ms refuse older protocols.
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-    if ($Uninstall) {
-        Uninstall-Mimora
-    } else {
-        Install-Mimora
+    try {
+        if ($Uninstall) {
+            Uninstall-Mimora
+        } else {
+            Install-Mimora
+        }
+    } catch {
+        # Only the message: the full PowerShell error record ("At line ...",
+        # CategoryInfo, FullyQualifiedErrorId) hides it from the user. The
+        # line number stays, on its own line, for a report of an unexpected
+        # error.
+        # No "exit": a user who pastes "irm | iex" into an open window
+        # would lose that window. The cost is that "powershell -c" ends with
+        # exit code 0 after a failure; nothing reads that code.
+        Write-Host ''
+        Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
+        $line = $_.InvocationInfo.ScriptLineNumber
+        if ($line) {
+            Write-Host "  (install.ps1, line $line)" -ForegroundColor DarkGray
+        }
     }
 }
