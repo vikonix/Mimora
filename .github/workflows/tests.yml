@@ -1,0 +1,65 @@
+name: "Tests"
+
+# The fast unit test suite (tests/). It downloads no models and needs no GPU.
+#
+# The release does not depend on this workflow: the wheel goes to PyPI from a
+# local build before the tag, so a red run at tag time comes too late. The job
+# of this workflow is to show a failure on Linux and macOS (where the code has
+# separate branches) before make_wheel.bat runs.
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+  pull_request:
+    branches: [main]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push to the same branch cancels the run that is still in progress.
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unittest:
+    name: "${{ matrix.os }} / Python ${{ matrix.python }}"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      # Show the result of every platform, not only of the first failure.
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, python: "3.12" }
+          - { os: ubuntu-latest, python: "3.12" }
+          - { os: macos-latest, python: "3.12" }
+          # 3.11 is the lower limit of requires-python. One platform is
+          # sufficient: the difference is in dependency resolution, not in
+          # platform branches.
+          - { os: ubuntu-latest, python: "3.11" }
+    steps:
+      - uses: actions/checkout@v4
+
+      # No wheel gives PortAudio on Linux; importing sounddevice fails
+      # without it (tests/test_tts.py).
+      - name: "Install PortAudio (Linux)"
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libportaudio2
+
+      - name: "Install uv"
+        uses: astral-sh/setup-uv@v6
+
+      # Editable, as AGENTS.md says: paths.py stays in source-tree mode.
+      # The CPU build of torch: on Linux the default torch from PyPI pulls
+      # CUDA libraries of several GB, and the tests do not use a GPU.
+      - name: "Install Mimora and its dependencies"
+        run: |
+          uv venv --python ${{ matrix.python }}
+          uv pip install --torch-backend cpu -e .
+
+      # --no-sync: use the environment from the step above as it is.
+      - name: "Run the fast test suite"
+        run: uv run --no-sync python -m unittest discover -s tests -v
