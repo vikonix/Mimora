@@ -52,12 +52,16 @@ jobs:
       - name: "Install uv"
         uses: astral-sh/setup-uv@v6
 
+      # --managed-python: the Python build from uv, the same that
+      # install.ps1 and install.sh install. Without it uv takes the Python of
+      # the runner image when one is there, and the system Python on Ubuntu
+      # has no tkinter.
       # Editable, as AGENTS.md says: paths.py stays in source-tree mode.
       # The CPU build of torch: on Linux the default torch from PyPI pulls
       # CUDA libraries of several GB, and the tests do not use a GPU.
       - name: "Install Mimora and its dependencies"
         run: |
-          uv venv --python ${{ matrix.python }}
+          uv venv --managed-python --python ${{ matrix.python }}
           uv pip install --torch-backend cpu -e .
 
       # --no-sync: use the environment from the step above as it is.
