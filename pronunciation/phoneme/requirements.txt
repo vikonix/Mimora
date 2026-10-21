@@ -20,7 +20,7 @@
 # note there. tools/check_markers.py checks both lists together.
 transformers>=5.3; platform_system != 'Darwin' or platform_machine != 'x86_64'
 transformers>=4.44,<5; platform_system == 'Darwin' and platform_machine == 'x86_64'
-torch>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'
+torch>=2.7; platform_system != 'Darwin' or platform_machine != 'x86_64'
 torch==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'
 librosa>=0.10.0
 # Use phonemizer-fork, NOT plain "phonemizer" (shares the import namespace; the fork

@@ -112,7 +112,11 @@ dependencies = [
     # less". Drop it once numba supports 2.5.
     "numpy>=1.24.0,<2.5; platform_system != 'Darwin' or platform_machine != 'x86_64'",
     "numpy>=1.24.0,<2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
-    "torch>=2.0.0; platform_system != 'Darwin' or platform_machine != 'x86_64'",
+    # torch>=2.7 because transformers 5.x (below) needs it and
+    # does not say so itself: torch is only an extra of transformers. With
+    # >=2.0 an older torch already in the environment (or one from a CUDA
+    # index that stops at 2.6, such as cu124) stayed and broke the engine.
+    "torch>=2.7; platform_system != 'Darwin' or platform_machine != 'x86_64'",
     "torch==2.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
     # torchaudio is deliberately NOT here - see the note above.
     # transformers>=5.3 closes CVE-2026-4372 (config-injection RCE; no 4.x fix
@@ -176,6 +180,9 @@ dependencies = [
     # transcription diff against a reference espeak-ng before you do. 0.2.4 is
     # what the calibration was taken with; 0.2.x has shown no transcription
     # difference against a system espeak-ng 1.51.0 on ordinary prose.
+    # espeakng-loader 0.2.4 carries espeak-ng 1.52.0 (espeak_Info(), Windows,
+    # 2026-10-21). Read it again after any bump: the wheel version does not
+    # tell which espeak-ng is inside.
     "espeakng-loader>=0.2.4,<0.3",
     # Articulatory feature distance for the phoneme substitution cost - the one
     # dependency the acoustic engine does not share.

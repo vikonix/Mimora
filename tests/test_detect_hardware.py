@@ -277,7 +277,7 @@ class UnwritableDataRootTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 1)
         self.assertIn("no such drive", stderr.getvalue())
-        self.assertIn(str(detect_hardware.OUTPUT_FILE), stderr.getvalue())
+        self.assertIn(str(detect_hardware.output_file()), stderr.getvalue())
 
 
 class LogFileHistoryTests(unittest.TestCase):
@@ -305,8 +305,8 @@ class LogFileHistoryTests(unittest.TestCase):
 
     def _probe_once(self, message):
         """One run's worth of logging, with the handler closed afterwards."""
-        with patch.object(detect_hardware, "LOG_DIR", self.log_file.parent), \
-                patch.object(detect_hardware, "LOG_FILE", self.log_file):
+        with patch.object(detect_hardware, "log_file",
+                          return_value=self.log_file):
             detect_hardware._setup_logging()
             detect_hardware.logger.info(message)
         # Closed here rather than at cleanup: on Windows the directory cannot
@@ -413,9 +413,10 @@ class WarnIfGpuUnusedTests(unittest.TestCase):
         # Not by what it says: the ambiguity comes from detect_device having
         # been allowed to short-circuit, which any existing file permits.
         missing = Path(__file__).with_name("no-such-hardware-config.json")
-        with patch.object(detect_hardware, "OUTPUT_FILE", missing):
+        with patch.object(detect_hardware, "output_file", return_value=missing):
             self.assertFalse(detect_hardware._stored_device_may_be_stale())
-        with patch.object(detect_hardware, "OUTPUT_FILE", Path(__file__)):
+        with patch.object(detect_hardware, "output_file",
+                          return_value=Path(__file__)):
             self.assertTrue(detect_hardware._stored_device_may_be_stale())
 
     def test_a_machine_without_an_nvidia_driver_is_not_warned(self):

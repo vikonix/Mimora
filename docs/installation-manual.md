@@ -182,7 +182,7 @@ just several times slower.
 
 - **PyTorch** - install a CUDA build (other CUDA versions: see [pytorch.org](https://pytorch.org/get-started/locally/)):
   ```powershell
-  python -m pip install torch --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
+  python -m pip install torch --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
   ```
 
   With **uv** this is one flag instead - it reads the installed driver and picks

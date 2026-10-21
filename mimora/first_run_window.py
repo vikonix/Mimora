@@ -621,7 +621,7 @@ def _detect_hardware_once() -> bool:
     where nobody looks until they already suspect something - on the one code
     path that actually executes on a user's machine.
     """
-    if detect_hardware.OUTPUT_FILE.exists():
+    if detect_hardware.output_file().exists():
         return False
     log.info("First run finished - probing the hardware to tune the defaults.")
     try:
@@ -632,7 +632,7 @@ def _detect_hardware_once() -> bool:
     for warning in result.get("warnings", ()):
         log.warning("Hardware detection: %s", warning)
     log.info("Hardware detection wrote %s: %s",
-             detect_hardware.OUTPUT_FILE, result.get("config"))
+             detect_hardware.output_file(), result.get("config"))
     return True
 
 

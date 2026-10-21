@@ -52,17 +52,28 @@ if __package__ in (None, ""):
 
 from mimora import bootstrap, paths
 
-# The output is a config artifact read by mimora/config.py, so it goes to the
-# config directory rather than next to this module. Both locations come from
-# paths.py, which is also what config.py binds to - the two cannot drift.
-OUTPUT_FILE = paths.config_dir() / "hardware_config.json"
+def output_file() -> Path:
+    """The hardware_config.json that mimora/config.py reads.
 
-# A timestamped record of each run is kept in the project-wide logs/ directory
-# (the same one config.py uses for main.log), alongside the human-friendly
-# console print()s. The log file is the place to look when diagnosing why a
-# given machine was detected the way it was - it captures the warnings too.
-LOG_DIR = paths.log_dir()
-LOG_FILE = LOG_DIR / "hwdetect.log"
+    A config artifact, so it goes to the config directory rather than next to
+    this module. Both locations come from paths.py, which is also what
+    config.py binds to - the two cannot drift. A function, not a constant
+    computed at import, like the roots in paths.py: a test can redirect it
+    without patching module state that other code already read.
+    """
+    return paths.config_dir() / "hardware_config.json"
+
+
+def log_file() -> Path:
+    """logs/hwdetect.log: a timestamped record of each run.
+
+    In the project-wide logs/ directory (the same one config.py uses for
+    main.log), alongside the human-friendly console print()s. The place to
+    look when diagnosing why a given machine was detected the way it was - it
+    captures the warnings too. A function for the same reason as output_file().
+    """
+    return paths.log_dir() / "hwdetect.log"
+
 
 logger = logging.getLogger("hwdetect")
 
@@ -98,11 +109,12 @@ def _setup_logging() -> None:
     logger.setLevel(logging.INFO)
     # Set before the file handler is attempted, so it holds on both paths.
     logger.propagate = False
+    path = log_file()
     try:
-        LOG_DIR.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(path, mode="a", encoding="utf-8")
     except OSError as exc:
-        print(f"Note: no log file this run - could not open {LOG_FILE} "
+        print(f"Note: no log file this run - could not open {path} "
               f"({exc}). The probe still runs and prints its result below.",
               file=sys.stderr)
         # A NullHandler, and propagate=False above is NOT enough on its own:
@@ -116,7 +128,7 @@ def _setup_logging() -> None:
     handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     # Before the handler is attached, so this run's section opens the file
     # rather than starting under the first line the probe happens to log.
-    bootstrap.open_log_section(handler, LOG_FILE)
+    bootstrap.open_log_section(handler, path)
     logger.addHandler(handler)
 
 # llama-3.2-3b-instruct has 28 transformer layers; -1 below means "offload all".
@@ -558,7 +570,7 @@ def warn_if_gpu_unused(device: str) -> None:
             "state older than the torch now installed, in which case run "
             "%s to refresh it; or torch really is a CPU-only build, in which "
             "case reinstall it: %s.",
-            OUTPUT_FILE, _refresh_command(), reinstall)
+            output_file(), _refresh_command(), reinstall)
         return
     logging.warning(
         "An NVIDIA GPU is present, but torch is a CPU-only build and will not "
@@ -593,7 +605,7 @@ def _stored_device_may_be_stale() -> bool:
     the message has to admit to.
     """
     try:
-        return OUTPUT_FILE.is_file()
+        return output_file().is_file()
     except OSError:
         return False
 
@@ -629,8 +641,9 @@ def probe_and_write() -> dict:
 
     # config.py creates this directory at import, but this module runs from its
     # own CLI too, where nothing has imported config.
-    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT_FILE.write_text(
+    path = output_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
         json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
     return result
@@ -649,8 +662,8 @@ def main() -> int:
         # typed `mimora --detect-hardware` because some other message told them
         # to. A traceback there answers a question they did not ask; the path
         # and the reason answer the one they did.
-        print(f"ERROR: could not write {OUTPUT_FILE}: {exc}", file=sys.stderr)
-        logger.error("Could not write %s: %s", OUTPUT_FILE, exc)
+        print(f"ERROR: could not write {output_file()}: {exc}", file=sys.stderr)
+        logger.error("Could not write %s: %s", output_file(), exc)
         return 1
     hardware = result["hardware"]
     warnings = result["warnings"]
@@ -689,9 +702,9 @@ def main() -> int:
         print(f"  WARNING: {w}")
         logger.warning(w)
 
-    print(f"\nWritten to {OUTPUT_FILE}")
-    logger.info("Written to %s", OUTPUT_FILE)
-    logger.info("Log written to %s", LOG_FILE)
+    print(f"\nWritten to {output_file()}")
+    logger.info("Written to %s", output_file())
+    logger.info("Log written to %s", log_file())
     return 0
 
 

@@ -227,7 +227,7 @@ metadata, so on Windows with an NVIDIA card the CUDA build is a second command.
 
 ```powershell
 pipx install --python 3.12 mimora
-pipx runpip mimora install torch --index-url https://download.pytorch.org/whl/cu124 --force-reinstall
+pipx runpip mimora install torch --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
 ```
 
 **pip** works too, into a virtual environment of Python 3.11 or 3.12:

@@ -126,9 +126,28 @@ WHEEL_TESTED_MAX = (3, 12)
 SOURCE_ONLY_PACKAGES = ("fastdtw", "docopt", "unicodecsv")
 
 # CUDA wheel series, newest first. We pick the newest series whose CUDA version
-# is not greater than the one the driver reports (CUDA 12.x is forward
-# compatible at runtime, so e.g. a cu124 build runs fine on a 12.8 driver).
-TORCH_CU_SERIES = ["cu128", "cu126", "cu124", "cu121", "cu118"]
+# is not greater than the one the driver reports (CUDA is forward compatible at
+# runtime, so e.g. a cu126 build runs fine on a 12.8 driver).
+#
+# Rule for this list: only series that have a torch>=2.7 build, because
+# transformers 5.x needs torch>=2.7 (see pyproject.toml) and the install
+# command below names no version - pip takes the newest torch the index has.
+# cu124 (last torch 2.6.0) and cu121 (2.5.x) were removed for that reason: a
+# 12.1-12.5 driver now falls through to cu118, whose last torch is 2.7.x.
+# Check the list against https://pytorch.org/get-started/previous-versions/
+# at every torch bump: series appear and disappear (cu128 is absent from torch
+# 2.13, cu126 is not published from 2.15).
+TORCH_CU_SERIES = ["cu132", "cu130", "cu128", "cu126", "cu118"]
+
+# GPUs older than Turing (Maxwell, Pascal, Volta: compute capability below
+# 7.5, e.g. GTX 9xx/10xx, Titan V) have no kernels in CUDA 13.x builds, and
+# PyTorch already dropped them from cu128 too. torch.cuda.is_available() still
+# says True on such a card with such a build; the failure comes only at the
+# first kernel launch. cu126 is the newest series that still carries them, so
+# it is the ceiling for these cards whatever the driver supports. The GTX 16xx
+# cards are Turing (7.5) despite the name and are not affected.
+MIN_COMPUTE_CAP_FOR_NEW_SERIES = (7, 5)
+LEGACY_GPU_NEWEST_SERIES = "cu126"
 
 TORCH_INDEX_URL = "https://download.pytorch.org/whl/{series}"
 
@@ -588,10 +607,14 @@ def _import_fetcher(module_name: str, log: Logger, report: StepReport,
 # GPU / CUDA detection (no third-party packages required)
 # ---------------------------------------------------------------------------
 
-def detect_gpu(log: Logger) -> tuple[str | None, tuple[int, int] | None]:
-    """Return (gpu_name, cuda_version) using nvidia-smi only.
+def detect_gpu(
+    log: Logger,
+) -> tuple[str | None, tuple[int, int] | None, tuple[int, int] | None]:
+    """Return (gpu_name, cuda_version, compute_cap) using nvidia-smi only.
 
-    Both are None when no NVIDIA GPU / nvidia-smi is found. cuda_version is the
+    All are None when no NVIDIA GPU / nvidia-smi is found. compute_cap is the
+    first GPU's compute capability, e.g. (7, 5); None when the driver does not
+    know the query field or the answer does not parse. cuda_version is the
     maximum CUDA the installed driver supports and comes from
     mimora.llama_server_fetch.detect_driver_cuda() rather than from a private
     copy of the parsing: the smi header was renamed in the 610 drivers
@@ -604,7 +627,7 @@ def detect_gpu(log: Logger) -> tuple[str | None, tuple[int, int] | None]:
     smi = shutil.which("nvidia-smi")
     if not smi:
         log.log("    nvidia-smi not found - treating this machine as CPU-only.")
-        return None, None
+        return None, None, None
 
     cuda_version: tuple[int, int] | None = None
     # install.py is normally run from the project root, which already puts it
@@ -633,9 +656,31 @@ def detect_gpu(log: Logger) -> tuple[str | None, tuple[int, int] | None]:
     except (OSError, subprocess.TimeoutExpired):
         pass
 
+    # A separate query, not a second field in the one above: a driver that does
+    # not know compute_cap fails the whole query, and the name would go too.
+    compute_cap = None
+    try:
+        cap_out = subprocess.run(
+            [smi, "--query-gpu=compute_cap", "--format=csv,noheader"],
+            capture_output=True, text=True, timeout=15,
+        ).stdout
+        compute_cap = parse_compute_cap(cap_out)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
     log.log(f"    Detected GPU: {name or 'unknown NVIDIA GPU'}")
     log.log(f"    Driver CUDA : {'.'.join(map(str, cuda_version)) if cuda_version else 'unknown'}")
-    return name, cuda_version
+    log.log(f"    Compute cap.: {'.'.join(map(str, compute_cap)) if compute_cap else 'unknown'}")
+    return name, cuda_version, compute_cap
+
+
+def parse_compute_cap(output: str) -> tuple[int, int] | None:
+    """'7.5' (first line of nvidia-smi output) -> (7, 5); None if not parsable."""
+    lines = output.strip().splitlines()
+    match = re.fullmatch(r"(\d+)\.(\d+)", lines[0].strip()) if lines else None
+    if not match:
+        return None
+    return int(match.group(1)), int(match.group(2))
 
 
 def _series_to_version(series: str) -> tuple[int, int]:
@@ -645,14 +690,23 @@ def _series_to_version(series: str) -> tuple[int, int]:
 
 
 def pick_cu_series(
-    available: list[str], driver_cuda: tuple[int, int] | None
+    available: list[str], driver_cuda: tuple[int, int] | None,
+    compute_cap: tuple[int, int] | None = None,
 ) -> str | None:
     """Newest series whose CUDA version is <= the driver's CUDA version.
 
-    `available` is ordered newest-first. When the driver CUDA is unknown we
-    optimistically pick the newest series (it usually works and the user can
-    re-run with --cpu if not).
+    `available` is ordered newest-first. A GPU older than
+    MIN_COMPUTE_CAP_FOR_NEW_SERIES limits the choice to
+    LEGACY_GPU_NEWEST_SERIES and older; an unknown compute capability does
+    not limit it. When the driver CUDA is unknown we optimistically pick the
+    newest remaining series (it usually works and the user can re-run with
+    --cpu if not).
     """
+    if compute_cap is not None and compute_cap < MIN_COMPUTE_CAP_FOR_NEW_SERIES:
+        ceiling = _series_to_version(LEGACY_GPU_NEWEST_SERIES)
+        available = [s for s in available if _series_to_version(s) <= ceiling]
+    if not available:
+        return None
     if driver_cuda is None:
         return available[0]
     for series in available:  # newest first
@@ -1082,18 +1136,64 @@ def step_install_requirements(
     run_or_fail(cmd, log, report, "pip requirements")
 
 
+def step_remove_stale_torchaudio(
+    log: Logger, confirmer: Confirmer, report: StepReport,
+) -> None:
+    """Offer to uninstall a torchaudio left over from an older install.
+
+    torchaudio stopped being a dependency in 1.1.0, but pip removes nothing,
+    so an environment made before that still has it. It works only while
+    torch stays the exact build it was made for. Steps 3 and 4 can replace
+    torch (a new CUDA series, or the torch>=2.7 floor), and then
+    libtorchaudio no longer loads. transformers imports torchaudio whenever
+    its metadata is present (is_torchaudio_available), so the result is that
+    no model loads at all - first seen when this step 3 moved a clone from
+    2.11.0+cu128 to 2.14.1+cu132. Nothing in Mimora imports torchaudio, and
+    without it transformers skips that import. Asked rather than done
+    silently: the environment can hold someone else's use of the package.
+    Does nothing, and prints nothing, when torchaudio is not installed.
+    """
+    version = dist_version("torchaudio")
+    if version is None:
+        return
+    log.banner("Leftover torchaudio")
+    log.log(f"    torchaudio {version} is installed, next to torch "
+            f"{dist_version('torch') or '(none)'}. Mimora does not use it, and "
+            f"once torch is replaced it stops loading and takes transformers "
+            f"down with it.")
+    cmd = PIP + ["uninstall", "-y", "torchaudio"]
+    if not confirmer.confirm("Uninstall torchaudio (not a Mimora dependency).",
+                             " ".join(cmd)):
+        log.log("    Kept. If Mimora then fails with 'Could not load this "
+                "library: ...libtorchaudio', uninstall it.")
+        report.add("leftover torchaudio", SKIPPED, f"{version} kept")
+        return
+    # Not fail-fast: a failed uninstall leaves the same state as a skip, and
+    # the steps after it do not depend on it.
+    ok = run_command(cmd, log)
+    report.add("leftover torchaudio", DONE if ok else FAILED, version)
+
+
 def step_gpu_torch(
     log: Logger, confirmer: Confirmer, report: StepReport,
     driver_cuda: tuple[int, int] | None,
+    compute_cap: tuple[int, int] | None,
 ) -> None:
     """Reinstall torch as a matching CUDA build.
 
     torch is replaced on its own because torchaudio is not a dependency (see
     the note in pyproject.toml), so nothing here has to be kept in step with
-    it. Should it ever return, it has to be reinstalled in this same command,
-    or it stays built against the torch being replaced.
+    it. A torchaudio left in the environment by an older install is offered
+    for removal before this step (step_remove_stale_torchaudio). Should it
+    ever return as a dependency, it has to be reinstalled in this same
+    command, or it stays built against the torch being replaced.
     """
-    series = pick_cu_series(TORCH_CU_SERIES, driver_cuda)
+    series = pick_cu_series(TORCH_CU_SERIES, driver_cuda, compute_cap)
+    if compute_cap is not None and compute_cap < MIN_COMPUTE_CAP_FOR_NEW_SERIES:
+        log.log(f"    GPU older than Turing (compute capability "
+                f"{compute_cap[0]}.{compute_cap[1]}): newer CUDA builds of "
+                f"torch have no kernels for it, so {LEGACY_GPU_NEWEST_SERIES} "
+                f"is the newest series offered.")
     if series is None:
         log.log("    No compatible torch CUDA wheel series for this driver.")
         report.add("torch (CUDA)", MANUAL, "see pytorch.org/get-started/locally")
@@ -1723,7 +1823,7 @@ def main() -> int:
 
         # Step 2: GPU detection (informs step 3; no packages needed).
         log.banner("Step 2 - GPU / CUDA detection")
-        gpu_name, driver_cuda = detect_gpu(log)
+        gpu_name, driver_cuda, compute_cap = detect_gpu(log)
         use_gpu = (gpu_name is not None or args.gpu) and not args.cpu
         if args.cpu:
             log.log("    --cpu given: GPU steps will be skipped.")
@@ -1735,6 +1835,10 @@ def main() -> int:
         report.add("GPU detection", DONE,
                    gpu_name or ("forced" if args.gpu else "none"))
 
+        # Before step 3: both step 3 and step 4 can replace torch, and a
+        # leftover torchaudio breaks as soon as they do.
+        step_remove_stale_torchaudio(log, confirmer, report)
+
         # Step 3: the CUDA torch build, installed BEFORE the dependency step so
         # its `torch` constraint is already satisfied (otherwise pip pulls the
         # CPU wheel from PyPI first and it is replaced right after). PyPI ships
@@ -1742,7 +1846,7 @@ def main() -> int:
         # the CPU path needs no step of its own here.
         if use_gpu:
             log.banner("Step 3 - GPU (CUDA) builds")
-            step_gpu_torch(log, confirmer, report, driver_cuda)
+            step_gpu_torch(log, confirmer, report, driver_cuda, compute_cap)
         else:
             log.banner("Step 3 - CPU builds")
             log.log("    Nothing to pre-install: every remaining dependency "

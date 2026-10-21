@@ -1225,6 +1225,9 @@ class PronunciationTrainerGUI:
         is always released here, whatever happens. ``stop_event`` (installed by
         the caller) governs the playback of the just-recorded take.
         """
+        # The start of the take preparation (join, read, resample, normalize),
+        # logged by analyze_recording as "Take ready in ...".
+        prep_start = time.perf_counter()
         try:
             if not self.recorder.join():
                 # The capture thread is stuck (e.g. the device hangs on close)
@@ -1234,7 +1237,7 @@ class PronunciationTrainerGUI:
                                 "Audio device did not stop in time - take discarded, please try again.")
                 self.root.after(0, self._reset_to_retry)
                 return
-            self.analyze_recording(stop_event)
+            self.analyze_recording(stop_event, prep_start)
         finally:
             with self.processing_lock:
                 self.is_processing_audio = False
@@ -1379,7 +1382,13 @@ class PronunciationTrainerGUI:
             with self.processing_lock:
                 self.is_processing_audio = False
 
-    def analyze_recording(self, stop_event: threading.Event):
+    def analyze_recording(self, stop_event: threading.Event,
+                          prep_start: float):
+        """Play the take back, then score it.
+
+        ``prep_start`` is the ``time.perf_counter()`` value from the start of
+        _finalize_recording, for the "Take ready in ..." log line.
+        """
         try:
             audio = self.recorder.get_audio()
             if audio is None or len(audio) < config.AUDIO_SAMPLE_RATE * 0.2:
@@ -1413,14 +1422,23 @@ class PronunciationTrainerGUI:
             # starts only after it, so without these two lines the log jumps
             # from "Stopping audio recording" to "analysis done in 277ms" with
             # a silent multi-second hole that reads as an unexplained stall.
+            #
+            # The preparation time is in the same line. On the first take in
+            # a fresh environment it is about 10 s (the first librosa.resample),
+            # and without its own number that time was read as playback.
+            prep_seconds = time.perf_counter() - prep_start
             if config.PLAYBACK_OWN_RECORDING:
                 playback_seconds = len(self.last_user_audio) / config.AUDIO_SAMPLE_RATE
-                logging.info("Playing the take back to the user (%.1fs) before "
-                             "analysis.", playback_seconds)
+                logging.info("Take ready in %.1fs; playing it back to the user "
+                             "(%.1fs) before analysis.", prep_seconds,
+                             playback_seconds)
                 self.root.after(0, self.view.enter_playing, "Playing your recording...")
                 self.playback.play_with_face(self.last_user_audio,
                                              config.AUDIO_SAMPLE_RATE, stop_event)
                 logging.info("Playback finished; starting analysis.")
+            else:
+                logging.info("Take ready in %.1fs; starting analysis.",
+                             prep_seconds)
             self.root.after(0, self.view.enter_analyzing)
 
             analyze_start = time.perf_counter()
