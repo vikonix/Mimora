@@ -12,6 +12,13 @@
   #error AppVersion is not defined. Pass /DAppVersion=x.y.z to ISCC.
 #endif
 
+; A test build only: "make_install.bat local" passes /DLocalWheel=<file name>
+; of a wheel in installer\build. The installer then carries that wheel and
+; installs it instead of the version on PyPI, so the installer and the wheel
+; can be checked together before the upload. The file name ends in LOCAL, and
+; such a file is never published: its wheel is not the one on PyPI. The
+; workflow never passes LocalWheel.
+
 [Setup]
 ; Do not change AppId: Windows uses it to find the previous installation.
 AppId={{8E3B6C4A-5D2F-4B7A-9C1E-6F0A2D4B8E17}
@@ -50,7 +57,11 @@ SetupIconFile=..\mimora\icons\mimora.ico
 ; The icon in the "Installed apps" list of Windows.
 UninstallDisplayIcon={app}\mimora.ico
 OutputDir=Output
+#ifdef LocalWheel
+OutputBaseFilename=Mimora-{#AppVersion}-windows-x64-setup-LOCAL
+#else
 OutputBaseFilename=Mimora-{#AppVersion}-windows-x64-setup
+#endif
 Compression=lzma2
 SolidCompression=yes
 ; Inno Setup 6.7 and later start Setup with RedirectionGuard, and the programs
@@ -69,6 +80,9 @@ Source: "build\vc_redist.x64.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall; 
 Source: "build\uv.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "install.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "fetch_models.py"; DestDir: "{app}"; Flags: ignoreversion
+#ifdef LocalWheel
+Source: "build\{#LocalWheel}"; DestDir: "{app}"; Flags: ignoreversion
+#endif
 ; For the shortcuts and the uninstall entry. The copy inside the package is
 ; deep in the uv tool environment, and its path is not stable.
 Source: "..\mimora\icons\mimora.ico"; DestDir: "{app}"; Flags: ignoreversion
@@ -161,11 +175,27 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   Result := '';
+#ifdef LocalWheel
+  // A test build installs its own wheel, so PyPI is not asked.
+  Exit;
+#endif
   if PyPIStatus = 404 then
     Result := 'This installer is for Mimora {#AppVersion}, and this version '
       + 'is not available for download. Nothing was installed.' + #13#10
       + #13#10 + 'Download the current installer from '
       + 'https://github.com/vikonix/Mimora/releases';
+end;
+
+// What install.cmd installs: mimora=={#AppVersion} from PyPI, or in a test
+// build the wheel that Setup copied into {app}. Always in quotation marks:
+// cmd splits a batch argument at "=", and {app} can contain spaces.
+function InstallSpec: String;
+begin
+#ifdef LocalWheel
+  Result := '"' + ExpandConstant('{app}\{#LocalWheel}') + '"';
+#else
+  Result := '"mimora=={#AppVersion}"';
+#endif
 end;
 
 // Starts a program with a visible window and waits for it. Returns its exit
@@ -180,6 +210,52 @@ begin
     Result := ExitCode
   else
     Result := -1;
+end;
+
+// The user data directory, found the way mimora/paths.py finds it for an
+// installed Mimora: MIMORA_HOME when it is set (one pair of surrounding
+// quotation marks removed, as paths.py does: cmd keeps them in the value),
+// otherwise %APPDATA%\Mimora. FromEnv tells which of the two it is.
+// A relative MIMORA_HOME is returned as it is: paths.py resolves it against
+// the working directory of the application, not of Setup.
+function DataDir(var FromEnv: Boolean): String;
+var
+  Value: String;
+begin
+  Value := Trim(GetEnv('MIMORA_HOME'));
+  if (Length(Value) >= 2) and (Value[1] = Value[Length(Value)])
+      and ((Value[1] = '"') or (Value[1] = '''')) then
+    Value := Trim(Copy(Value, 2, Length(Value) - 2));
+  FromEnv := Value <> '';
+  if FromEnv then
+    Result := Value
+  else
+    Result := ExpandConstant('{userappdata}\Mimora');
+end;
+
+// The Ready page also names the directory that receives the models, before
+// several gigabytes go there. When MIMORA_HOME is set, the user sees that
+// Setup uses it. The default text of the page stays: the Memo* parameters
+// are its parts, and an empty part is left out.
+function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo,
+  MemoTypeInfo, MemoComponentsInfo, MemoGroupInfo,
+  MemoTasksInfo: String): String;
+var
+  FromEnv: Boolean;
+  Dir: String;
+begin
+  Dir := DataDir(FromEnv);
+  Result := '';
+  if MemoDirInfo <> '' then
+    Result := Result + MemoDirInfo + NewLine + NewLine;
+  if MemoGroupInfo <> '' then
+    Result := Result + MemoGroupInfo + NewLine + NewLine;
+  Result := Result + 'Models, settings and logs:' + NewLine + Space + Dir;
+  if FromEnv then
+    Result := Result + NewLine + Space
+      + '(from the MIMORA_HOME environment variable)';
+  if MemoTasksInfo <> '' then
+    Result := Result + NewLine + NewLine + MemoTasksInfo;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -197,9 +273,9 @@ begin
   // The console window stays visible: the download is several gigabytes, and
   // the progress output is the only sign that the installation continues.
   // The outer pair of quotation marks is for cmd.exe, which removes it.
-  // The first argument is the version that install.cmd installs from PyPI.
+  // The first argument is what install.cmd installs (InstallSpec).
   InstallFailed := RunAndWait(ExpandConstant('{cmd}'),
-    '/C ""' + ExpandConstant('{app}\install.cmd') + '" {#AppVersion} '
+    '/C ""' + ExpandConstant('{app}\install.cmd') + '" ' + InstallSpec + ' '
     + SelectedComponents('') + '"',
     'Downloading Mimora, Python, the dependencies and the selected models. '
     + 'This can take a long time...') <> 0;
@@ -233,25 +309,84 @@ begin
   end;
 end;
 
+// True for "C:\...", "C:/..." and a UNC path. Anything else is relative.
+function IsAbsolutePath(Path: String): Boolean;
+begin
+  Result := ((Length(Path) >= 3) and (Path[2] = ':')
+      and ((Path[3] = '\') or (Path[3] = '/')))
+    or (Copy(Path, 1, 2) = '\\') or (Copy(Path, 1, 2) = '//');
+end;
+
+// Deletes Dir when it exists. False only when a part of it stays.
+function DelTreeIfExists(Dir: String): Boolean;
+begin
+  Result := (not DirExists(Dir)) or DelTree(Dir, True, True, True);
+end;
+
 // The models, settings and logs are in the user data directory, not in {app}.
-// The uninstaller asks before it deletes them: the directory holds several
+// The uninstaller asks about the same directory that the Ready page of Setup
+// named (DataDir), read again now: MIMORA_HOME when it is set, otherwise
+// %APPDATA%\Mimora. It asks before it deletes: the directory holds several
 // gigabytes of downloads that a later installation would use again, and a
 // Mimora installed from PyPI on the same computer uses the same directory.
 // A silent uninstallation keeps the data (the default answer is No).
+//
+// %APPDATA%\Mimora belongs to Mimora and is deleted as a whole. A MIMORA_HOME
+// directory was chosen by the user and can hold other files (it can even be
+// a drive root), so only the subdirectories that Mimora creates
+// (mimora/paths.py) are deleted, and the directory itself only when it is
+// empty after that. The variable stays: Setup did not set it.
+// A relative MIMORA_HOME is not asked about: the shortcuts start Mimora in
+// {app}, so its data is inside {app}, which [UninstallDelete] removes.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  DataDir: String;
+  FromEnv, Complete: Boolean;
+  Dir, Root: String;
 begin
   if CurUninstallStep <> usPostUninstall then
     Exit;
-  DataDir := ExpandConstant('{userappdata}\Mimora');
-  if not DirExists(DataDir) then
+  Dir := DataDir(FromEnv);
+  if FromEnv and not IsAbsolutePath(Dir) then
     Exit;
+  if not DirExists(Dir) then
+    Exit;
+
+  if not FromEnv then
+  begin
+    if SuppressibleMsgBox(
+        'Also delete the downloaded models, the settings and the logs?'
+        + #13#10 + #13#10 + Dir, mbConfirmation, MB_YESNO, IDNO) <> IDYES then
+      Exit;
+    if not DelTree(Dir, True, True, True) then
+      MsgBox('Some files could not be deleted:' + #13#10 + Dir,
+        mbInformation, MB_OK);
+    Exit;
+  end;
+
+  Root := AddBackslash(Dir);
   if SuppressibleMsgBox(
-      'Also delete the downloaded models, the settings and the logs?' + #13#10
-      + #13#10 + DataDir, mbConfirmation, MB_YESNO, IDNO) <> IDYES then
+      'Also delete the downloaded models, the settings and the logs?'
+      + #13#10 + #13#10 + Dir + #13#10
+      + '(from the MIMORA_HOME environment variable)' + #13#10 + #13#10
+      + 'Only these folders of Mimora are deleted, other files stay:'
+      + #13#10 + 'config, models, model_cache, bin\llama, logs',
+      mbConfirmation, MB_YESNO, IDNO) <> IDYES then
     Exit;
-  if not DelTree(DataDir, True, True, True) then
-    MsgBox('Some files could not be deleted:' + #13#10 + DataDir,
+  // Each call runs: one failure does not stop the others.
+  Complete := DelTreeIfExists(Root + 'config');
+  Complete := DelTreeIfExists(Root + 'models') and Complete;
+  Complete := DelTreeIfExists(Root + 'model_cache') and Complete;
+  Complete := DelTreeIfExists(Root + 'bin\llama') and Complete;
+  Complete := DelTreeIfExists(Root + 'logs') and Complete;
+  // RemoveDir removes only an empty directory: bin can hold other programs,
+  // and the data directory other files.
+  RemoveDir(Root + 'bin');
+  RemoveDir(Dir);
+  if Complete then
+    MsgBox('The data of Mimora was deleted. The MIMORA_HOME environment '
+      + 'variable still exists; remove it if no other program uses it.',
+      mbInformation, MB_OK)
+  else
+    MsgBox('Some files could not be deleted:' + #13#10 + Dir,
       mbInformation, MB_OK);
 end;

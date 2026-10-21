@@ -2,8 +2,11 @@
 rem Runs at the end of the Windows installer, in the installation directory.
 rem It installs Mimora as a uv tool from PyPI: the same wheel that every other
 rem way of installation gets, so the installer cannot behave differently.
-rem Arguments: the Mimora version, then the model components to download now
-rem (see fetch_models.py).
+rem Arguments: what to install, then the model components to download now
+rem (see fetch_models.py). What to install is "mimora==<version>" from PyPI,
+rem or the path of the wheel that a test build of the installer carries
+rem ("make_install.bat local", LocalWheel in mimora.iss). It comes in
+rem quotation marks, because cmd splits an argument at "=".
 rem Whether PyPI has this version is checked before, by PrepareToInstall in
 rem mimora.iss, so that Setup can refuse before it installs anything.
 setlocal
@@ -19,12 +22,12 @@ rem The cache too: the default one is in the user profile and would stay
 rem there, with several gigabytes of wheels, after Mimora is uninstalled.
 set "UV_CACHE_DIR=%APP_DIR%cache"
 
-set "VERSION=%~1"
-rem Without this check uv gets "mimora==", and its error message does not
-rem name the cause.
-if not defined VERSION (
+set "SPEC=%~1"
+rem Without this check uv gets an empty argument, and its error message does
+rem not name the cause.
+if not defined SPEC (
     echo.
-    echo No Mimora version was given. The installer is damaged.
+    echo No Mimora package was given. The installer is damaged.
     pause
     exit /b 1
 )
@@ -44,7 +47,7 @@ rem   already on the computer.
 rem --python 3.12: a uv tool environment ignores requires-python (see README).
 rem --torch-backend auto: without it an NVIDIA computer gets a CPU-only torch.
 rem --force: an upgrade replaces the previous installation.
-"%APP_DIR%uv.exe" tool install --force --managed-python --python 3.12 --torch-backend auto "mimora==%VERSION%"
+"%APP_DIR%uv.exe" tool install --force --managed-python --python 3.12 --torch-backend auto "%SPEC%"
 if errorlevel 1 (
     echo.
     echo Mimora installation failed. Read the messages above.
