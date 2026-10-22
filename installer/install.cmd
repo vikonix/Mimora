@@ -5,8 +5,8 @@ rem way of installation gets, so the installer cannot behave differently.
 rem Arguments: what to install, then the model components to download now
 rem (see fetch_models.py). What to install is "mimora==<version>" from PyPI,
 rem or the path of the wheel that a test build of the installer carries
-rem ("make_install.bat local", LocalWheel in mimora.iss). It comes in
-rem quotation marks, because cmd splits an argument at "=".
+rem (LocalWheel in mimora.iss). It comes in quotation marks, because cmd
+rem splits an argument at "=".
 rem Whether PyPI has this version is checked before, by PrepareToInstall in
 rem mimora.iss, so that Setup can refuse before it installs anything.
 setlocal

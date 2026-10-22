@@ -12,8 +12,8 @@
   #error AppVersion is not defined. Pass /DAppVersion=x.y.z to ISCC.
 #endif
 
-; A test build only: "make_install.bat local" passes /DLocalWheel=<file name>
-; of a wheel in installer\build. The installer then carries that wheel and
+; A test build only: put a wheel into installer\build and pass
+; /DLocalWheel=<its file name>. The installer then carries that wheel and
 ; installs it instead of the version on PyPI, so the installer and the wheel
 ; can be checked together before the upload. The file name ends in LOCAL, and
 ; such a file is never published: its wheel is not the one on PyPI. The

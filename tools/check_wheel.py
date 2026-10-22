@@ -6,16 +6,17 @@
     python tools/check_wheel.py                 # the wheel in dist/
     python tools/check_wheel.py <path.whl>      # a specific file
 
-Called by wheel.bat right after the build. Nothing here installs anything or
-touches the network: every answer comes from the archive, the working tree and
-pyproject.toml. A file name in the index is spent once and for all, so the
-artifact is checked before the upload, never after it.
+Run it right after the build, before the upload. Nothing here installs
+anything or touches the network: every answer comes from the archive, the
+working tree and pyproject.toml. A file name in the index is spent once and
+for all, so the artifact is checked before the upload, never after it.
 
 What is checked, and why each check earns its place
 ---------------------------------------------------
 * **One wheel only.** Every other check reads `dist/*.whl`. Two files there
   (a leftover from the previous number) would make the whole run describe the
-  wrong artifact. wheel.bat deletes dist/ first; this is the backstop.
+  wrong artifact. The build should start from an empty dist/; this is the
+  backstop.
 * **One version in four places** - the working tree, the copy inside the
   wheel, the METADATA field and the file name. They come apart when the build
   runs before the version bump, and the result is a number in the index that
@@ -43,8 +44,8 @@ The METADATA is parsed with email.parser rather than by splitting the text: the
 header ends with a CRLF pair, so a split on two plain newlines does not find it
 and prints the whole README instead. That cost two hundred lines of output once.
 
-Exit code is 0 when every check passes and 1 otherwise, so wheel.bat can stop
-before the upload step.
+Exit code is 0 when every check passes and 1 otherwise, so a calling script
+can stop before the upload step.
 """
 
 from __future__ import annotations

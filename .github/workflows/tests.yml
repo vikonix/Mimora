@@ -5,7 +5,7 @@ name: "Tests"
 # The release does not depend on this workflow: the wheel goes to PyPI from a
 # local build before the tag, so a red run at tag time comes too late. The job
 # of this workflow is to show a failure on Linux and macOS (where the code has
-# separate branches) before make_wheel.bat runs.
+# separate branches) before the wheel is built for the upload.
 on:
   push:
     branches: [main]

@@ -337,7 +337,7 @@ answered in `first_run.py` instead.
   is absent here. Run it after raising the huggingface_hub pin, and once on
   every platform the pin's marker excludes.
 - [`tools/check_wheel.py`](tools/check_wheel.py) - checks a built wheel before
-  it is uploaded; `wheel.bat` calls it after the build and `twine check`. One
+  it is uploaded; run it after the build and `twine check`. One
   version in the tree, the archive, METADATA and the file name; METADATA and
   the console script against `pyproject.toml`; no top-level module; and the
   archive against the working tree, file by file and in both directions. That
