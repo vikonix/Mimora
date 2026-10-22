@@ -55,6 +55,13 @@ if errorlevel 1 (
     exit /b 1
 )
 
+rem uv warns in yellow that the bin directory is not on PATH and suggests
+rem "uv tool update-shell". The Start menu shortcuts use the full path, so
+rem PATH is not needed. Without this line the warning looks like a failed
+rem installation.
+echo.
+echo The PATH warning above does not apply: the Start menu shortcuts start Mimora.
+
 rem No component selected: the first-run window of Mimora downloads later.
 if not defined COMPONENTS exit /b 0
 
