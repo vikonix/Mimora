@@ -37,8 +37,8 @@ What is checked, and why each check earns its place
   `mimora/languages/` still imports until the first read of LANGUAGE_PROFILES.
 * **Layout and metadata that PyPI or the installer would honour** - no
   top-level module (the root `main.py` must not take the name `main` in
-  site-packages), the console script as declared, the dependency count against
-  pyproject, and `Requires-Python`.
+  site-packages), the console and GUI scripts as declared, the dependency
+  count against pyproject, and `Requires-Python`.
 
 The METADATA is parsed with email.parser rather than by splitting the text: the
 header ends with a CRLF pair, so a split on two plain newlines does not find it
@@ -173,7 +173,7 @@ def check_metadata(metadata: Message, config: dict) -> None:
 
 
 def check_layout(archive: zipfile.ZipFile, config: dict) -> None:
-    """No top-level module, and the console script pyproject declares."""
+    """No top-level module, and the scripts that pyproject declares."""
     names = archive.namelist()
 
     top_level = [n for n in names if n.endswith(".py") and "/" not in n]
@@ -186,11 +186,16 @@ def check_layout(archive: zipfile.ZipFile, config: dict) -> None:
         return
     parser = configparser.ConfigParser()
     parser.read_string(archive.read(entry_points[0]).decode("utf-8"))
-    packed = dict(parser["console_scripts"]) if parser.has_section(
-        "console_scripts") else {}
-    declared = config["project"].get("scripts", {})
-    report(packed == declared, f"console scripts: {packed}",
-           "" if packed == declared else f"pyproject declares {declared}")
+    # The GUI scripts too, not only the console ones: the shortcuts of the
+    # Windows installer start mimora-gui.exe. A wheel without it installs
+    # without an error and leaves shortcuts that point at nothing.
+    script_sections = (("console_scripts", "scripts", "console scripts"),
+                       ("gui_scripts", "gui-scripts", "gui scripts"))
+    for section, key, label in script_sections:
+        packed = dict(parser[section]) if parser.has_section(section) else {}
+        declared = config["project"].get(key, {})
+        report(packed == declared, f"{label}: {packed}",
+               "" if packed == declared else f"pyproject declares {declared}")
 
 
 def wheel_sources(archive: zipfile.ZipFile) -> list[str]:

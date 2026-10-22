@@ -339,7 +339,7 @@ answered in `first_run.py` instead.
 - [`tools/check_wheel.py`](tools/check_wheel.py) - checks a built wheel before
   it is uploaded; run it after the build and `twine check`. One
   version in the tree, the archive, METADATA and the file name; METADATA and
-  the console script against `pyproject.toml`; no top-level module; and the
+  the console and GUI scripts against `pyproject.toml`; no top-level module; and the
   archive against the working tree, file by file and in both directions. That
   last pair replaced a list of string searches ("is this fix in the wheel")
   that grew by one line per release and answered the same question - was this
