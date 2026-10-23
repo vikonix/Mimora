@@ -10,7 +10,9 @@
 # Environment variables:
 #   MIMORA_VERSION      install this exact version, for example 1.2.0rc1.
 #                       After an exact version, "uv tool upgrade mimora" does
-#                       not upgrade; run this script again without the variable.
+#                       not upgrade. Run this script again: with the new version
+#                       in the variable, or without the variable for the newest
+#                       normal version (a pre-release comes only with the variable).
 #   MIMORA_NO_SHORTCUT  any value: do not create the Linux application menu entry.
 #
 # The models are not downloaded here: the first start of Mimora asks for them.
@@ -253,8 +255,11 @@ install_mimora() {
     # --managed-python: always the Python build of uv. It carries tkinter; a
     #   system Python on Linux does not, without the python3-tk package.
     # --python 3.12: a uv tool environment ignores requires-python.
-    # --torch-backend auto: without it an NVIDIA computer gets a CPU-only torch.
-    "$uv" tool install --upgrade --managed-python --python 3.12 --torch-backend auto "$package" \
+    # No --torch-backend: PyPI's torch is already a CUDA build on Linux, and
+    #   macOS has no CUDA. The flag only moves the resolution to another
+    #   index, and its result can change between runs. It is necessary on
+    #   Windows only (install.ps1).
+    "$uv" tool install --upgrade --managed-python --python 3.12 "$package" \
         || die "The Mimora installation failed. Read the messages above. If uv reports an unknown option, update uv ('uv self update') and run this command again."
 
     bin_dir=$("$uv" tool dir --bin)
@@ -295,7 +300,13 @@ install_mimora() {
         printf '  Mimora is also in the application menu.\n'
     fi
     printf '  At the first start, Mimora asks to download its models (several GB).\n'
-    printf '  Upgrade:   uv tool upgrade mimora   (or run this command again)\n'
+    # uv keeps an exact "==" requirement, so after MIMORA_VERSION
+    # "uv tool upgrade mimora" does nothing.
+    if [ -n "${MIMORA_VERSION:-}" ]; then
+        printf '  Upgrade:   run this command again with MIMORA_VERSION=<new version> before "sh"\n'
+    else
+        printf '  Upgrade:   uv tool upgrade mimora   (or run this command again)\n'
+    fi
     printf '  Uninstall: run this command again with "sh -s -- --uninstall"\n'
     if [ "$os" = linux ]; then
         print_native_hints

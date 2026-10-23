@@ -9,7 +9,9 @@
 # Environment variables:
 #   MIMORA_VERSION      install this exact version, for example 1.2.0rc1.
 #                       After an exact version, "uv tool upgrade mimora" does
-#                       not upgrade; run this script again without the variable.
+#                       not upgrade. Run this script again: with the new version
+#                       in the variable, or without the variable for the newest
+#                       normal version (a pre-release comes only with the variable).
 #   MIMORA_NO_SHORTCUT  any value: do not create the Start menu shortcut.
 #
 # The models are not downloaded here: the first start of Mimora asks for them.
@@ -171,6 +173,13 @@ function Add-MimoraBinToPath([string]$Uv, [string]$BinDir) {
         }
     }
     # The current window too, so that "mimora" works at once.
+    Add-MimoraBinToProcessPath $BinDir
+}
+
+# Adds the uv tool bin directory to the PATH of this process only. The user
+# PATH and the user's window do not change.
+function Add-MimoraBinToProcessPath([string]$BinDir) {
+    $normalized = $BinDir.TrimEnd('\')
     if (($env:Path -split ';' | ForEach-Object { $_.TrimEnd('\') }) -notcontains $normalized) {
         $env:Path = "$BinDir;$env:Path"
     }
@@ -319,6 +328,16 @@ function Install-Mimora {
         Install-MimoraVcRuntime
     }
 
+    # uv warns after the installation when its bin directory is not on the
+    # PATH of this process. The uv installer adds the directory to the user
+    # PATH, but only new windows get it. Without this line, the warning
+    # comes in every window that was open before uv was installed, and it
+    # looks like a failed installation.
+    # Add-MimoraBinToPath below still uses the user PATH to decide whether
+    # "uv tool update-shell" is necessary.
+    $binDir = (& $uv tool dir --bin).Trim()
+    Add-MimoraBinToProcessPath $binDir
+
     Write-MimoraStep "Installing $package (Python, PyTorch and the dependencies, this can take several minutes)"
     # --upgrade: a second run of this script is an upgrade.
     # --managed-python: always the Python build of uv, never a Python that is
@@ -330,7 +349,6 @@ function Install-Mimora {
         throw "The Mimora installation failed (exit code $LASTEXITCODE). Read the messages above. If uv reports an unknown option, update uv ('uv self update') and run this command again."
     }
 
-    $binDir = (& $uv tool dir --bin).Trim()
     Add-MimoraBinToPath $uv $binDir
 
     if ($env:MIMORA_NO_SHORTCUT) {
@@ -349,7 +367,13 @@ function Install-Mimora {
         Write-Host '  Start it: run "mimora" in a new terminal.'
     }
     Write-Host '  At the first start, Mimora asks to download its models (several GB).'
-    Write-Host '  Upgrade:   uv tool upgrade mimora   (or run this command again)'
+    # uv keeps an exact "==" requirement, so after MIMORA_VERSION
+    # "uv tool upgrade mimora" does nothing.
+    if ($env:MIMORA_VERSION) {
+        Write-Host '  Upgrade:   $env:MIMORA_VERSION = ''<new version>'', then run this command again'
+    } else {
+        Write-Host '  Upgrade:   uv tool upgrade mimora   (or run this command again)'
+    }
     Write-Host '  Uninstall: see the top of this script, or run "uv tool uninstall mimora" and delete the shortcut.'
 }
 
