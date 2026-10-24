@@ -91,48 +91,36 @@ class ModuleImportTests(unittest.TestCase):
             self.assertIn(module.split(".")[0], sys.stdlib_module_names)
 
 
-def _fake_root(windowing_system, mac_style_error=None):
-    """A stand-in for a Tk root: answers the two Tcl calls the helper makes."""
+def _fake_root(windowing_system):
+    """A stand-in for a Tk root that reports *windowing_system*."""
     root = mock.Mock()
-
-    def call(*args):
-        if args[:2] == ("tk", "windowingsystem"):
-            return windowing_system
-        if args[0] == "::tk::unsupported::MacWindowStyle" and mac_style_error:
-            raise mac_style_error
-        return ""
-
-    root.tk.call.side_effect = call
+    root.tk.call.return_value = windowing_system
     return root
 
 
-def _mac_style_calls(root):
-    return [c for c in root.tk.call.call_args_list
-            if c.args[0] == "::tk::unsupported::MacWindowStyle"]
+def _window_calls(root):
+    """The window methods called on *root*, in order."""
+    names = ("withdraw", "overrideredirect", "deiconify")
+    return [name for name, _args, _kwargs in root.mock_calls if name in names]
 
 
 class RemoveTitleBarTests(unittest.TestCase):
-    def test_windows_and_x11_use_overrideredirect(self):
+    def test_windows_and_x11_set_overrideredirect_on_the_new_root(self):
         for system in ("win32", "x11"):
             with self.subTest(system=system):
                 root = _fake_root(system)
                 splash._remove_title_bar(root)
                 root.overrideredirect.assert_called_once_with(True)
-                self.assertEqual(_mac_style_calls(root), [])
+                self.assertEqual(_window_calls(root), ["overrideredirect"])
 
-    def test_macos_uses_the_plain_window_style(self):
-        # overrideredirect on Aqua leaves the title bar and its buttons.
+    def test_macos_sets_it_while_the_root_is_withdrawn(self):
+        # Set on the shown root, Tk 9 on Aqua keeps the title bar and its
+        # buttons; the order is what removes them.
         root = _fake_root("aqua")
         splash._remove_title_bar(root)
-        self.assertEqual(len(_mac_style_calls(root)), 1)
-        self.assertEqual(_mac_style_calls(root)[0].args[-2:], ("plain", "none"))
-        root.overrideredirect.assert_not_called()
-
-    def test_macos_without_the_command_falls_back(self):
-        import tkinter as tk
-        root = _fake_root("aqua", mac_style_error=tk.TclError("no such command"))
-        splash._remove_title_bar(root)
         root.overrideredirect.assert_called_once_with(True)
+        self.assertEqual(_window_calls(root),
+                         ["withdraw", "overrideredirect", "deiconify"])
 
 
 class SetIconTests(unittest.TestCase):
@@ -146,10 +134,23 @@ class SetIconTests(unittest.TestCase):
         for platform in ("darwin", "linux"):
             with self.subTest(platform=platform), \
                     mock.patch.object(splash.sys, "platform", platform), \
+                    mock.patch.object(splash.sys, "path", list(sys.path)), \
                     mock.patch("mimora.window_icon.apply_window_icon") as apply:
                 root = mock.Mock()
                 splash._set_icon(root)
                 apply.assert_called_once_with(root)
+
+    def test_the_project_root_is_added_at_the_end_of_sys_path(self):
+        # At the front, a file in the project root could take the place of a
+        # standard library module in the child.
+        project_root = str(Path(splash.__file__).resolve().parent.parent)
+        others = [entry for entry in sys.path if entry != project_root]
+        with mock.patch.object(splash.sys, "platform", "darwin"), \
+                mock.patch.object(splash.sys, "path", list(others)), \
+                mock.patch("mimora.window_icon.apply_window_icon"):
+            splash._set_icon(mock.Mock())
+            self.assertEqual(splash.sys.path[:-1], others)
+            self.assertEqual(splash.sys.path[-1], project_root)
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ from __future__ import annotations
 import atexit
 import subprocess
 import sys
+from pathlib import Path
 from typing import Optional
 
 _POLL_INTERVAL_MS = 100
@@ -80,21 +81,18 @@ def close() -> None:
 def _remove_title_bar(root) -> None:
     """Show *root* without a title bar, window buttons or frame.
 
-    ``overrideredirect`` does this on Windows and X11. On macOS (Tk 9) it
-    leaves the title bar with its buttons, and the Aqua command for a window
-    without one is the window style "plain". Both must be set before the window
-    is shown for the first time. A Tk without the Aqua command keeps the title
-    bar: the splash still works, it only looks as if it could be closed.
+    ``overrideredirect`` does this on Windows and X11 when it is set on the new
+    root. On macOS (Tk 9) set that way it leaves the title bar with its
+    buttons: there it takes effect only on a window that is withdrawn at that
+    moment, so the root is withdrawn first and shown again after. The window
+    style "plain" of ``::tk::unsupported::MacWindowStyle`` did not remove the
+    title bar on that Tk either.
     """
-    import tkinter as tk
-
     if root.tk.call("tk", "windowingsystem") == "aqua":
-        try:
-            root.tk.call("::tk::unsupported::MacWindowStyle", "style",
-                         str(root), "plain", "none")
-            return
-        except tk.TclError:
-            pass
+        root.withdraw()
+        root.overrideredirect(True)
+        root.deiconify()
+        return
     root.overrideredirect(True)
 
 
@@ -109,9 +107,19 @@ def _set_icon(root) -> None:
     The import is here and not at the top: this file must stay stdlib-only at
     module level (see the module docstring), and a run of this file from a
     tree where ``mimora`` cannot be imported must still show the window.
+
+    The child runs with ``-P``, so in a clone whose environment holds only the
+    requirements (what install.py sets up) ``mimora`` is not importable: the
+    project root is on ``sys.path`` of the application only because main.py
+    sits there. It is added here, at the END of ``sys.path``: an installed
+    package still wins, and nothing in the project root can take the place of
+    a standard library module.
     """
     if sys.platform == "win32":
         return
+    project_root = str(Path(__file__).resolve().parent.parent)
+    if project_root not in sys.path:
+        sys.path.append(project_root)
     try:
         from mimora import window_icon
     except ImportError:
