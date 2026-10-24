@@ -77,6 +77,48 @@ def close() -> None:
         pass  # The child has already gone.
 
 
+def _remove_title_bar(root) -> None:
+    """Show *root* without a title bar, window buttons or frame.
+
+    ``overrideredirect`` does this on Windows and X11. On macOS (Tk 9) it
+    leaves the title bar with its buttons, and the Aqua command for a window
+    without one is the window style "plain". Both must be set before the window
+    is shown for the first time. A Tk without the Aqua command keeps the title
+    bar: the splash still works, it only looks as if it could be closed.
+    """
+    import tkinter as tk
+
+    if root.tk.call("tk", "windowingsystem") == "aqua":
+        try:
+            root.tk.call("::tk::unsupported::MacWindowStyle", "style",
+                         str(root), "plain", "none")
+            return
+        except tk.TclError:
+            pass
+    root.overrideredirect(True)
+
+
+def _set_icon(root) -> None:
+    """Give the splash process the Mimora icon, except on Windows.
+
+    The splash is a process of its own, so macOS shows it in the Dock and a
+    Linux desktop on its taskbar; without an icon it is an empty square there.
+    On Windows a window without a title bar has no taskbar button, so an icon
+    would change nothing there.
+
+    The import is here and not at the top: this file must stay stdlib-only at
+    module level (see the module docstring), and a run of this file from a
+    tree where ``mimora`` cannot be imported must still show the window.
+    """
+    if sys.platform == "win32":
+        return
+    try:
+        from mimora import window_icon
+    except ImportError:
+        return
+    window_icon.apply_window_icon(root)
+
+
 def _run_window() -> None:
     """The child process: show the window until the parent goes or says so."""
     import threading
@@ -100,10 +142,13 @@ def _run_window() -> None:
         threading.Thread(target=wait_for_parent, daemon=True).start()
 
     root = tk.Tk()
+    # Named, so that a title bar shown anyway does not read "tk".
+    root.title("Mimora")
     # No title bar: the window cannot be moved or closed, so it must not look
     # as if it could.
-    root.overrideredirect(True)
+    _remove_title_bar(root)
     root.attributes("-topmost", True)
+    _set_icon(root)
 
     frame = tk.Frame(root, padx=40, pady=28, highlightthickness=1,
                      highlightbackground="#888888")

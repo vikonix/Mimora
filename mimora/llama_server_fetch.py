@@ -250,10 +250,11 @@ VARIANTS: dict[str, Variant] = {
     # and select_variant() says so before the download. Re-read it out of the
     # binary when bumping the pinned tag.
     #
-    # device_pattern is UNVERIFIED: no Apple Silicon machine has run this build,
-    # and the name comes from the ggml sources (ggml-metal-device.m formats each
-    # device as "MTL%d"), so --list-devices is only *expected* to print
-    # "MTL0: Apple M...". This is the field to change if a real Mac disagrees.
+    # device_pattern matches what this build really prints on Apple Silicon
+    # ("MTL0: Apple M1 (12124 MiB, 12123 MiB free)"); ggml-metal-device.m
+    # formats each device as "MTL%d". Check it again when the pinned tag
+    # changes: a pattern that stops matching makes the device check refuse a
+    # working install, because this variant has no fallback.
     "macos-metal-arm64": Variant(
         assets=(
             Asset("llama-{tag}-bin-macos-arm64.tar.gz",

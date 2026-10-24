@@ -3,9 +3,11 @@
 
 """Tests for mimora/splash.py.
 
-Only the parent side is tested: how the child process is started and stopped.
-No test starts the child, because it opens a real window. What the window looks
-like is checked by eye with ``python mimora/splash.py`` (a click closes it).
+The parent side is tested: how the child process is started and stopped. Of
+the child, only the two helpers that decide the window style and the icon are
+tested, with a stand-in for the Tk root. No test starts the child, because it
+opens a real window. What the window looks like is checked by eye with
+``python mimora/splash.py`` (a click closes it).
 """
 
 import ast
@@ -87,6 +89,67 @@ class ModuleImportTests(unittest.TestCase):
         self.assertNotIn("tkinter", imported)
         for module in imported:
             self.assertIn(module.split(".")[0], sys.stdlib_module_names)
+
+
+def _fake_root(windowing_system, mac_style_error=None):
+    """A stand-in for a Tk root: answers the two Tcl calls the helper makes."""
+    root = mock.Mock()
+
+    def call(*args):
+        if args[:2] == ("tk", "windowingsystem"):
+            return windowing_system
+        if args[0] == "::tk::unsupported::MacWindowStyle" and mac_style_error:
+            raise mac_style_error
+        return ""
+
+    root.tk.call.side_effect = call
+    return root
+
+
+def _mac_style_calls(root):
+    return [c for c in root.tk.call.call_args_list
+            if c.args[0] == "::tk::unsupported::MacWindowStyle"]
+
+
+class RemoveTitleBarTests(unittest.TestCase):
+    def test_windows_and_x11_use_overrideredirect(self):
+        for system in ("win32", "x11"):
+            with self.subTest(system=system):
+                root = _fake_root(system)
+                splash._remove_title_bar(root)
+                root.overrideredirect.assert_called_once_with(True)
+                self.assertEqual(_mac_style_calls(root), [])
+
+    def test_macos_uses_the_plain_window_style(self):
+        # overrideredirect on Aqua leaves the title bar and its buttons.
+        root = _fake_root("aqua")
+        splash._remove_title_bar(root)
+        self.assertEqual(len(_mac_style_calls(root)), 1)
+        self.assertEqual(_mac_style_calls(root)[0].args[-2:], ("plain", "none"))
+        root.overrideredirect.assert_not_called()
+
+    def test_macos_without_the_command_falls_back(self):
+        import tkinter as tk
+        root = _fake_root("aqua", mac_style_error=tk.TclError("no such command"))
+        splash._remove_title_bar(root)
+        root.overrideredirect.assert_called_once_with(True)
+
+
+class SetIconTests(unittest.TestCase):
+    def test_windows_gets_no_icon(self):
+        with mock.patch.object(splash.sys, "platform", "win32"), \
+                mock.patch("mimora.window_icon.apply_window_icon") as apply:
+            splash._set_icon(mock.Mock())
+        apply.assert_not_called()
+
+    def test_macos_and_linux_get_the_mimora_icon(self):
+        for platform in ("darwin", "linux"):
+            with self.subTest(platform=platform), \
+                    mock.patch.object(splash.sys, "platform", platform), \
+                    mock.patch("mimora.window_icon.apply_window_icon") as apply:
+                root = mock.Mock()
+                splash._set_icon(root)
+                apply.assert_called_once_with(root)
 
 
 if __name__ == "__main__":

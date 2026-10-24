@@ -319,6 +319,14 @@ def early_init():
     # Ignore specific deprecation and model warnings from underlying libraries.
     warnings.filterwarnings("ignore", message="dropout option adds dropout.*")
     warnings.filterwarnings("ignore", message=".*weight_norm.*deprecated.*")
+    # torch 2.14 warns on every torch.jit.script call, and curated_transformers
+    # makes one at import (a decorated class), which spaCy loads through its
+    # registry while misaki starts. Mimora never uses that code. Only the
+    # deprecation text is matched: on Python 3.14 and later torch prints
+    # "is not supported in Python 3.14+ and may break" instead, and that one
+    # must stay visible.
+    warnings.filterwarnings("ignore", message=r"`torch\.jit\.script` is deprecated",
+                            category=FutureWarning)
 
 
 def setup_logging(log_file, append=False):

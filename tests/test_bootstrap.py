@@ -19,11 +19,46 @@ runs next in the same process. Run from the project root with:
 import contextlib
 import io
 import logging
+import os
 import unittest
+import warnings
 from pathlib import Path
 from unittest import mock
 
 from mimora import bootstrap
+
+
+class WarningFilterTests(unittest.TestCase):
+    """The warning filters that early_init installs."""
+
+    def _warnings_after_early_init(self, message, category):
+        """Warnings that reach the user after early_init, for one warning.
+
+        The environment and both console streams are replaced, so that
+        early_init changes nothing outside this test; catch_warnings restores
+        the filters it adds.
+        """
+        with mock.patch.dict(os.environ, {}), \
+                mock.patch.object(bootstrap.sys, "stdout", io.StringIO()), \
+                mock.patch.object(bootstrap.sys, "stderr", io.StringIO()), \
+                warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            bootstrap.early_init()
+            warnings.warn(message, category)
+        return caught
+
+    def test_the_torch_jit_script_deprecation_is_hidden(self):
+        caught = self._warnings_after_early_init(
+            "`torch.jit.script` is deprecated. Please switch to "
+            "`torch.compile` or `torch.export`.", FutureWarning)
+        self.assertEqual(caught, [])
+
+    def test_the_python_3_14_breakage_warning_stays_visible(self):
+        caught = self._warnings_after_early_init(
+            "`torch.jit.script` is not supported in Python 3.14+ and may "
+            "break. Please switch to `torch.compile` or `torch.export`.",
+            FutureWarning)
+        self.assertEqual(len(caught), 1)
 
 
 class LogFileFailureTests(unittest.TestCase):
