@@ -28,13 +28,20 @@ EXE = Path("/opt/mimora/bin/llama/llama-server")
 # llama_server_fetch.VARIANTS fails here loudly instead of silently skipping.
 GPU_VARIANT = "win-cuda-12.4-x64"
 CPU_VARIANT = "win-cpu-x64"
+METAL_VARIANT = "macos-metal-arm64"
 
 CUDA_LISTING = ("Available devices:\n"
                 "  CUDA0: NVIDIA GeForce RTX 3090 (24576 MiB, 23000 MiB free)")
 EMPTY_LISTING = "Available devices:\n  (none)"
+# Real output of the macos-metal-arm64 build on an M1 with 16 GB. The BLAS line
+# matches no device pattern and reports 0 MiB, so it must never be the size.
+METAL_LISTING = ("Available devices:\n"
+                 "  MTL0: Apple M1 (12124 MiB, 12123 MiB free)\n"
+                 "  BLAS: Accelerate (0 MiB, 0 MiB free)")
 
 
-def hardware(vram_gb=None, present=None, offload=None, torch_cuda=False):
+def hardware(vram_gb=None, present=None, offload=None, torch_cuda=False,
+             llama_vram=None):
     """Minimal hardware dict in the shape build_config expects."""
     return {
         "gpu": {
@@ -42,6 +49,7 @@ def hardware(vram_gb=None, present=None, offload=None, torch_cuda=False):
             "vram_gb": vram_gb,
             "torch_cuda": torch_cuda,
             "llama_gpu_offload": offload,
+            "llama_vram_gb": llama_vram,
         }
     }
 
@@ -52,6 +60,7 @@ class VariantTableTests(unittest.TestCase):
     def test_named_variants_still_exist(self):
         self.assertIn(GPU_VARIANT, llama_server_fetch.VARIANTS)
         self.assertIn(CPU_VARIANT, llama_server_fetch.VARIANTS)
+        self.assertIn(METAL_VARIANT, llama_server_fetch.VARIANTS)
 
     def test_gpu_variant_promises_a_device_and_cpu_variant_does_not(self):
         self.assertIsNotNone(
@@ -73,7 +82,8 @@ class ProbeLlamaOffloadTests(unittest.TestCase):
         """Run the probe with the fetch module's three lookups stubbed out.
 
         Each stub stands in for a file on disk or a subprocess, neither of
-        which a unit test should need.
+        which a unit test should need. The listed size goes to self.vram, so
+        that the tests about the verdict alone keep their two-value form.
         """
         warnings = []
         list_devices = (Mock(side_effect=error) if error
@@ -82,7 +92,8 @@ class ProbeLlamaOffloadTests(unittest.TestCase):
                             installed_exe=Mock(return_value=exe),
                             installed_variant=Mock(return_value=variant),
                             list_devices=list_devices):
-            verdict = detect_hardware._probe_llama_offload(warnings, gpu_present)
+            verdict, self.vram = detect_hardware._probe_llama_offload(
+                warnings, gpu_present)
         return verdict, warnings
 
     def test_promised_device_is_present(self):
@@ -138,6 +149,62 @@ class ProbeLlamaOffloadTests(unittest.TestCase):
         self.assertIsNone(verdict)
         self.assertIn("binary would not run", warnings[0])
 
+    def test_a_present_device_reports_its_size(self):
+        self._probe()
+        self.assertEqual(self.vram, 24.0)
+
+    def test_metal_device_is_found_and_sized(self):
+        # Apple Silicon: no nvidia-smi and no CUDA torch, so the listing is
+        # the only source of a size for the GPU the LLM runs on.
+        verdict, warnings = self._probe(gpu_present=False,
+                                        variant=METAL_VARIANT,
+                                        listing=METAL_LISTING)
+        self.assertIs(verdict, True)
+        self.assertEqual(warnings, [])
+        self.assertEqual(self.vram, 11.8)
+
+    def test_no_size_without_a_positive_verdict(self):
+        # A size next to False or None would give build_config a budget for
+        # a GPU the binary cannot use.
+        for kwargs in ({"listing": EMPTY_LISTING}, {"variant": CPU_VARIANT},
+                       {"exe": None}, {"variant": None},
+                       {"error": llama_server_fetch.LlamaServerFetchError("x")}):
+            with self.subTest(**{key: str(value) for key, value in kwargs.items()}):
+                self._probe(**kwargs)
+                self.assertIsNone(self.vram)
+
+
+class ListedVramTests(unittest.TestCase):
+    """_listed_vram_gb: the size of the matched device, or None."""
+
+    def test_the_matched_device_is_sized(self):
+        self.assertEqual(
+            detect_hardware._listed_vram_gb(CUDA_LISTING, r"\bCUDA\d+\b"), 24.0)
+
+    def test_other_devices_are_ignored(self):
+        # BLAS comes first here and reports 0 MiB: taking the first line
+        # with a size, rather than the first matching line, would give 0.
+        listing = ("Available devices:\n"
+                   "  BLAS: Accelerate (0 MiB, 0 MiB free)\n"
+                   "  MTL0: Apple M1 (12124 MiB, 12123 MiB free)")
+        self.assertEqual(
+            detect_hardware._listed_vram_gb(listing, r"\bMTL\d+\b"), 11.8)
+
+    def test_the_total_is_used_not_the_free_amount(self):
+        listing = "  Vulkan0: AMD Radeon RX 6600 (8176 MiB, 2048 MiB free)"
+        self.assertEqual(
+            detect_hardware._listed_vram_gb(listing, r"\bVulkan\d+\b"), 8.0)
+
+    def test_a_line_without_a_size_gives_none(self):
+        # A format change in a newer llama.cpp must give no budget rather
+        # than a wrong one.
+        self.assertIsNone(
+            detect_hardware._listed_vram_gb("  MTL0: Apple M1", r"\bMTL\d+\b"))
+
+    def test_no_matching_device_gives_none(self):
+        self.assertIsNone(
+            detect_hardware._listed_vram_gb(EMPTY_LISTING, r"\bMTL\d+\b"))
+
 
 class BuildConfigLlmTests(unittest.TestCase):
     """How the probe's verdict and the card's VRAM become LLM parameters."""
@@ -175,6 +242,37 @@ class BuildConfigLlmTests(unittest.TestCase):
                 config = detect_hardware.build_config(
                     hardware(vram_gb=vram, offload=True))
                 self.assertEqual(config["EXTERNAL_N_GPU_LAYERS"], expected)
+
+    def test_gpu_seen_only_by_llama_server_is_sized_by_its_listing(self):
+        # Apple Silicon M1 with 16 GB: the Metal device lists 11.8 GB.
+        config = detect_hardware.build_config(
+            hardware(present=False, offload=True, llama_vram=11.8))
+        self.assertEqual(config["EXTERNAL_N_GPU_LAYERS"], -1)
+        self.assertEqual(config["EXTERNAL_N_CTX"], 4096)
+
+    def test_listed_size_follows_the_same_ladder(self):
+        config = detect_hardware.build_config(
+            hardware(present=False, offload=True, llama_vram=5.3))
+        self.assertEqual(config["EXTERNAL_N_GPU_LAYERS"], 20)
+        self.assertEqual(config["EXTERNAL_N_CTX"], 2048)
+
+    def test_offload_without_a_listed_size_gives_no_budget(self):
+        config = detect_hardware.build_config(
+            hardware(present=False, offload=True, llama_vram=None))
+        self.assertEqual(config["EXTERNAL_N_GPU_LAYERS"], 0)
+
+    def test_listed_size_needs_a_positive_verdict(self):
+        for offload in (None, False):
+            with self.subTest(offload=offload):
+                config = detect_hardware.build_config(
+                    hardware(present=False, offload=offload, llama_vram=11.8))
+                self.assertEqual(config["EXTERNAL_N_GPU_LAYERS"], 0)
+
+    def test_nvidia_smi_size_wins_over_the_listing(self):
+        # Machines with NVIDIA keep exactly the numbers they had before.
+        config = detect_hardware.build_config(
+            hardware(vram_gb=24.0, offload=True, llama_vram=2.0))
+        self.assertEqual(config["EXTERNAL_N_GPU_LAYERS"], -1)
 
     def test_context_size_needs_eight_gigabytes(self):
         self.assertEqual(

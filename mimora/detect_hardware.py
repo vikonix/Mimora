@@ -212,7 +212,10 @@ def detect_gpu(warnings: list) -> dict:
     - llama-server runs as its own process with its own CUDA runtime, fully
       independent of torch. ``llama_gpu_offload`` reflects the installed
       build's own device probe (None when there is no install to ask -
-      physical GPU presence is the fallback signal).
+      physical GPU presence is the fallback signal). ``llama_vram_gb`` is
+      the memory that probe lists for the matched device: on a machine
+      without nvidia-smi (Apple Silicon, AMD or Intel under Vulkan) it is
+      the only size known for the GPU the LLM runs on.
     - torch (used only by Wav2Vec2 in pronunciation/acoustic/) reports CUDA via
       ``torch_cuda``. A CPU-only torch build is normal here and only means
       pronunciation analysis runs on CPU; it says nothing about the LLM.
@@ -227,6 +230,7 @@ def detect_gpu(warnings: list) -> dict:
         "vram_gb": None,
         "torch_cuda": False,
         "llama_gpu_offload": None,
+        "llama_vram_gb": None,
         "device_count": 0,
         "all_adapters": _list_video_adapters(),
     }
@@ -261,12 +265,14 @@ def detect_gpu(warnings: list) -> dict:
 
     # Probed last, once presence is settled: the probe stays quiet on machines
     # that have no GPU at all, where "the LLM cannot use the GPU" is not news.
-    gpu["llama_gpu_offload"] = _probe_llama_offload(warnings, gpu["present"])
+    gpu["llama_gpu_offload"], gpu["llama_vram_gb"] = _probe_llama_offload(
+        warnings, gpu["present"])
 
     return gpu
 
 
-def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
+def _probe_llama_offload(warnings: list,
+                         gpu_present: bool) -> tuple[bool | None, float | None]:
     """Whether the installed llama-server binary can offload to the GPU.
 
     Asks the binary itself with `--list-devices` (loads no model, sub-second)
@@ -282,8 +288,11 @@ def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
     for, so there is nothing to compare its device list against; it yields None
     like an absent install does.
 
-    Returns True/False, or None when the question cannot be answered - callers
-    then fall back to physical GPU presence, which is what build_config does.
+    Returns ``(verdict, vram_gb)``. The verdict is True/False, or None when the
+    question cannot be answered - callers then fall back to physical GPU
+    presence, which is what build_config does. ``vram_gb`` is the memory that
+    --list-devices reports for the matched device, and None on every other
+    path, including a matching line that carries no size.
     *gpu_present* only decides whether a negative answer is worth a warning: on
     a machine without a GPU "the LLM cannot use the GPU" is not news, and
     build_config zeroes the LLM's VRAM budget on absence anyway.
@@ -297,7 +306,7 @@ def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
     except ImportError as exc:
         warnings.append(f"mimora.llama_server_fetch is not importable ({exc}); "
                         "GPU offload capability unknown")
-        return None
+        return None, None
 
     exe = llama_server_fetch.installed_exe()
     if exe is None:
@@ -306,7 +315,7 @@ def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
                 "llama-server is not installed in bin/llama (run "
                 "'python -m mimora.llama_server_fetch'); GPU offload "
                 "capability unknown")
-        return None
+        return None, None
 
     variant_name = llama_server_fetch.installed_variant(exe)
     if variant_name is None:
@@ -314,7 +323,7 @@ def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
         # here is a stamp naming a variant this version of the module dropped.
         warnings.append(f"{exe} was installed as a variant this build does not "
                         "know; GPU offload capability unknown")
-        return None
+        return None, None
 
     pattern = llama_server_fetch.VARIANTS[variant_name].device_pattern
     if pattern is None:
@@ -333,16 +342,16 @@ def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
                 f"the LLM cannot use the GPU; reinstall it with "
                 f"'python -m mimora.llama_server_fetch --force' to re-run the "
                 f"build selection for this machine")
-        return False
+        return False, None
 
     try:
         devices = llama_server_fetch.list_devices(exe)
     except llama_server_fetch.LlamaServerFetchError as exc:
         warnings.append(f"llama-server --list-devices failed: {exc}")
-        return None
+        return None, None
 
     if re.search(pattern, devices):
-        return True
+        return True, _listed_vram_gb(devices, pattern)
     warnings.append(
         f"the '{variant_name}' llama-server build lists no matching device, so "
         f"it would silently run on the CPU (about three times slower); check "
@@ -350,7 +359,30 @@ def _probe_llama_offload(warnings: list, gpu_present: bool) -> bool | None:
         f"{exe.name} with a major version matching the build on Windows, a "
         f"Vulkan loader and ICD on Linux. --list-devices said:"
         f"\n{devices.strip()}")
-    return False
+    return False, None
+
+
+def _listed_vram_gb(listing: str, pattern: str) -> float | None:
+    """Total memory in GB of the first device in *listing* matching *pattern*.
+
+    ggml prints one line per device in the same shape for CUDA, Vulkan and
+    Metal: "  MTL0: Apple M1 (12124 MiB, 12123 MiB free)". The total is used
+    and not the free amount: the free amount depends on what else runs at
+    probe time, so the written config would depend on the moment of the probe.
+    On Apple Silicon the total is the size the Metal backend reports for the
+    device, which is below the whole RAM.
+
+    None when no matching line carries a size. A newer llama.cpp that changes
+    this format then gives no GPU budget (the CPU, as before) instead of a
+    wrong number.
+    """
+    for line in listing.splitlines():
+        if not re.search(pattern, line):
+            continue
+        size = re.search(r"\((\d+)\s*MiB", line)
+        if size:
+            return round(int(size.group(1)) / 1024, 1)
+    return None
 
 
 def _query_nvidia_smi(warnings: list) -> dict | None:
@@ -455,9 +487,18 @@ def build_config(hardware: dict) -> dict:
     gpu = hardware["gpu"]
 
     # LLM side: usable unless llama-server explicitly reported no usable device
-    # (None = nothing to ask, assume a present GPU is usable).
-    llm_vram = gpu["vram_gb"] or 0
-    if not gpu["present"] or gpu["llama_gpu_offload"] is False:
+    # (None = nothing to ask, assume a present GPU is usable). A GPU that
+    # nvidia-smi and torch cannot see (Apple Silicon, AMD or Intel under
+    # Vulkan) gets a budget only from llama-server's own listing, and only
+    # after that binary has shown it can offload. Without that, such a machine
+    # stays at no GPU budget, because there is no size to plan with.
+    if gpu["llama_gpu_offload"] is False:
+        llm_vram = 0
+    elif gpu["present"]:
+        llm_vram = gpu["vram_gb"] or 0
+    elif gpu["llama_gpu_offload"]:
+        llm_vram = gpu["llama_vram_gb"] or 0
+    else:
         llm_vram = 0
 
     if llm_vram >= 6:
@@ -685,6 +726,12 @@ def main() -> int:
         gpu_line = (f"GPU: {gpu['name']} ({gpu['vram_gb']} GB VRAM, "
                     f"llama-server offload: {llama_state}, torch CUDA: "
                     f"{'yes' if gpu['torch_cuda'] else 'no'})")
+    elif gpu["llama_gpu_offload"]:
+        # No card that nvidia-smi or torch can see, but llama-server offloads
+        # (Apple Silicon, AMD or Intel under Vulkan). "none detected" here
+        # would contradict the GPU layers in the config line below.
+        gpu_line = (f"GPU: seen by llama-server only ({gpu['llama_vram_gb']} GB, "
+                    f"llama-server offload: yes, torch CUDA: no)")
     else:
         gpu_line = "GPU: none detected"
     print(f"  {gpu_line}")
