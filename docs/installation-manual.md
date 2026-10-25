@@ -138,8 +138,9 @@ sudo dnf install portaudio             # Fedora
 
 If the library is installed but the app finds **no audio devices** (the
 installer prints `0 input / 0 output`), the usual cause is the backend rather
-than the library: Debian and Ubuntu build PortAudio with the ALSA backend only,
-while WSL and most desktop setups route audio through PulseAudio. Check it with
+than the library: Debian and Ubuntu up to 24.04 build PortAudio with the ALSA
+backend only, while WSL and most desktop setups route audio through PulseAudio.
+Check it with
 
 ```bash
 ldd "$(ldconfig -p | grep -m1 portaudio | awk '{print $NF}')" | grep pulse
@@ -149,6 +150,12 @@ An empty answer means no PulseAudio backend. Two known ways out: install
 `libasound2-plugins` and point ALSA's default device at pulse
 (`pcm.!default pulse` in `~/.asoundrc`), or rebuild PortAudio from source with
 `./configure --with-pulseaudio`.
+
+Ubuntu 26.04 builds PortAudio with the PulseAudio backend. There the opposite
+can happen: with no sound server running (a server, a container, a WSL without
+WSLg), PortAudio does not start at all, and the import of `sounddevice` fails
+with `PulseAudio_Initialize: Can't connect to server`. A desktop always runs a
+server (PipeWire or PulseAudio), so this concerns machines without one.
 
 ## Emoji icons on Linux (mic button shows a blank box)
 
