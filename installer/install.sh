@@ -80,12 +80,17 @@ install_uv() {
         || die "The uv installation failed. Read the messages above."
 }
 
-# Succeeds when the PortAudio library is missing. The sounddevice wheel for
-# Linux does not carry it, and Mimora cannot record or play audio without it.
-# Fails when the library is present or the check is not possible: without
-# ldconfig (NixOS, for example) the library cannot be found this way, and the
-# application itself names the missing library at start.
-portaudio_missing() {
+# Succeeds when no shared library matching the pattern $1 is known to the
+# dynamic linker. Fails when the library is present or the check is not
+# possible: without ldconfig (NixOS, for example) a library cannot be found
+# this way, and the application itself names a missing library later.
+# The libraries checked:
+# - libportaudio.so.2: the sounddevice wheel for Linux does not carry it, and
+#   Mimora cannot record or play audio without it;
+# - libgomp.so.1: the llama-server release links against it, and without it
+#   the first start cannot install the phrase generator. A desktop system
+#   usually has it; a minimal one (WSL, a container, a server) does not.
+library_missing() {
     ldconfig_cmd=""
     for candidate in ldconfig /sbin/ldconfig /usr/sbin/ldconfig; do
         if command -v "$candidate" >/dev/null 2>&1; then
@@ -96,7 +101,7 @@ portaudio_missing() {
     if [ -z "$ldconfig_cmd" ]; then
         return 1
     fi
-    if "$ldconfig_cmd" -p 2>/dev/null | grep -q 'libportaudio\.so\.2'; then
+    if "$ldconfig_cmd" -p 2>/dev/null | grep -q "$1"; then
         return 1
     fi
     return 0
@@ -122,20 +127,27 @@ symbola_missing() {
 # distribution, or nothing when nothing is missing.
 print_native_hints() {
     need_portaudio=""
+    need_gomp=""
     need_font=""
-    if portaudio_missing; then
+    if library_missing 'libportaudio\.so\.2'; then
         need_portaudio=1
+    fi
+    if library_missing 'libgomp\.so\.1'; then
+        need_gomp=1
     fi
     if symbola_missing; then
         need_font=1
     fi
-    if [ -z "$need_portaudio$need_font" ]; then
+    if [ -z "$need_portaudio$need_gomp$need_font" ]; then
         return 0
     fi
 
     printf '\nBEFORE THE FIRST START, install the missing system packages:\n'
     if [ -n "$need_portaudio" ]; then
         printf '  - PortAudio: Mimora cannot record or play audio without it.\n'
+    fi
+    if [ -n "$need_gomp" ]; then
+        printf '  - the GNU OpenMP library: the phrase generator (llama-server) cannot start without it.\n'
     fi
     if [ -n "$need_font" ]; then
         printf '  - the Symbola font: without it the record button shows no icon.\n'
@@ -147,13 +159,16 @@ print_native_hints() {
         # os-release changes this script.
         distro=$(. /etc/os-release && printf '%s %s' "${ID:-}" "${ID_LIKE:-}")
     fi
-    # One apt command for both packages. fonts-symbola is in Ubuntu's
+    # One apt command for all packages. fonts-symbola is in Ubuntu's
     # universe repository, which a desktop installation has enabled.
     case " $distro " in
         *" debian "* | *" ubuntu "*)
             packages=""
             if [ -n "$need_portaudio" ]; then
                 packages="libportaudio2"
+            fi
+            if [ -n "$need_gomp" ]; then
+                packages="${packages:+$packages }libgomp1"
             fi
             if [ -n "$need_font" ]; then
                 packages="${packages:+$packages }fonts-symbola"
@@ -168,6 +183,15 @@ print_native_hints() {
             *" arch "*) printf '  sudo pacman -S portaudio\n' ;;
             *" opensuse"*) printf '  sudo zypper install libportaudio2\n' ;;
             *) printf '  Install the PortAudio library (libportaudio.so.2) with the package manager.\n' ;;
+        esac
+    fi
+    # Arch is not named: libgomp is part of gcc-libs there, which every
+    # installation has, so the check does not find it missing.
+    if [ -n "$need_gomp" ]; then
+        case " $distro " in
+            *" fedora "* | *" rhel "*) printf '  sudo dnf install libgomp\n' ;;
+            *" opensuse"*) printf '  sudo zypper install libgomp1\n' ;;
+            *) printf '  Install the GNU OpenMP library (libgomp.so.1) with the package manager.\n' ;;
         esac
     fi
     # The package name of the font differs between distributions and was

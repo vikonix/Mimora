@@ -200,6 +200,10 @@ Linux](docs/installation-manual.md#tk-on-linux-tkinter) and [Audio on
 Linux](docs/installation-manual.md#audio-on-linux-portaudio). Add a monochrome
 emoji font as well, or the mic button draws blank boxes (see [Emoji icons on
 Linux](docs/installation-manual.md#emoji-icons-on-linux-mic-button-shows-a-blank-box)).
+On a minimal system (WSL, a container, a server) also install `libgomp1`: the
+phrase generator links against it, and a desktop system usually has it already
+(see [Get the llama-server
+binary](docs/installation-manual.md#get-the-llama-server-binary)).
 
 Then install Mimora and start it:
 

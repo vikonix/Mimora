@@ -226,6 +226,37 @@ class ProbeFailureTests(unittest.TestCase):
         self.assertEqual(output, "whatever")
 
 
+class VerifyBuildTests(unittest.TestCase):
+    """verify_build reads the build number from --version."""
+
+    def _verify(self, output, platform_name="linux"):
+        with patch.object(fetch.sys, "platform", platform_name), \
+             patch.object(fetch, "_probe", Mock(return_value=output)):
+            return fetch.verify_build(EXE, "b10099")
+
+    def test_the_pinned_build_passes(self):
+        self.assertEqual(self._verify("version: 10099 (1a064ab09)\n"), 10099)
+
+    def test_a_missing_library_gets_the_platform_hint(self):
+        # A minimal Linux without libgomp1: the loader message, exit code 127.
+        # The hint is what names the package to install.
+        loader = ("llama-server: error while loading shared libraries: "
+                  "libgomp.so.1: cannot open shared object file: "
+                  "No such file or directory\n")
+        with self.assertRaises(fetch.LlamaServerFetchError) as caught:
+            self._verify(loader)
+        message = str(caught.exception)
+        self.assertIn("libgomp.so.1: cannot open", message)
+        self.assertIn("package libgomp1", message)
+
+    def test_another_build_is_reported_without_the_hint(self):
+        # The binary runs, so the start-failure hint would point the wrong way.
+        with self.assertRaises(fetch.LlamaServerFetchError) as caught:
+            self._verify("version: 9000 (abc)\n")
+        self.assertIn("reports build 9000", str(caught.exception))
+        self.assertNotIn("package libgomp1", str(caught.exception))
+
+
 class StartFailureHintTests(unittest.TestCase):
     """Each platform is told about its own reason, not a generic one."""
 

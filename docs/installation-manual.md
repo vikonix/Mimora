@@ -264,6 +264,17 @@ back empty. The fetcher therefore tries Vulkan, verifies it with
 saying so in the log. If you fix the Vulkan side later, `--force` re-runs the
 whole selection.
 
+Both Linux builds also need the GNU OpenMP library, `libgomp.so.1`. A desktop
+system usually has it; a minimal one (WSL, a container, a server) does not, and
+the binary then stops before it prints anything but the loader's
+`error while loading shared libraries: libgomp.so.1`. The fetcher reports that
+message together with the package to install:
+
+```bash
+sudo apt install libgomp1     # Debian / Ubuntu
+sudo dnf install libgomp      # Fedora
+```
+
 ## Get a GGUF model
 
 `install.py` already downloads `llama-3.2-3b-instruct-q4_k_m.gguf` into `models/`,

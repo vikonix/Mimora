@@ -865,8 +865,13 @@ def verify_build(exe: Path, tag: str) -> int:
     output = _probe(exe, ["--version"])
     match = re.search(r"version:\s*(\d+)", output)
     if not match:
+        # The hint is added here too: a binary that cannot load a shared
+        # library (libgomp.so.1 on a minimal Linux) exits with code 127 and
+        # the loader's message, which _probe returns as ordinary output.
+        # Without the hint the user sees only that message.
         raise LlamaServerFetchError(
-            f"{exe.name} --version printed no recognisable version:\n{output.strip()}")
+            f"{exe.name} --version printed no recognisable version:\n"
+            f"{output.strip()}\n{_start_failure_hint()}")
     build = int(match.group(1))
     expected = int(tag.lstrip("b"))
     if build != expected:
