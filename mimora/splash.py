@@ -33,6 +33,11 @@ from typing import Optional
 
 _POLL_INTERVAL_MS = 100
 
+# The same value as window_icon.WM_CLASS, which this module cannot import at
+# module level. On Linux the splash is a window of its own on the taskbar;
+# with the default class "Tk" it is not matched to the Mimora menu entry.
+_WM_CLASS = "Mimora"
+
 _process: Optional[subprocess.Popen] = None
 
 
@@ -149,7 +154,7 @@ def _run_window() -> None:
     if sys.stdin is not None:
         threading.Thread(target=wait_for_parent, daemon=True).start()
 
-    root = tk.Tk()
+    root = tk.Tk(className=_WM_CLASS)
     # Named, so that a title bar shown anyway does not read "tk".
     root.title("Mimora")
     # No title bar: the window cannot be moved or closed, so it must not look

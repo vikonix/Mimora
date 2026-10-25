@@ -203,6 +203,8 @@ create_desktop_entry() {
     install_icon "$uv"
     mkdir -p "$(dirname "$desktop_file")"
     # Exec is quoted, because the home directory can contain spaces.
+    # StartupWMClass is WM_CLASS in mimora/window_icon.py: with another value
+    # the running window is not matched to this entry and has no Mimora icon.
     cat >"$desktop_file" <<DESKTOP
 [Desktop Entry]
 Type=Application
@@ -210,6 +212,7 @@ Name=Mimora
 Comment=Pronunciation trainer
 Exec="$bin_dir/mimora-gui"
 Icon=mimora
+StartupWMClass=Mimora
 Terminal=false
 Categories=Education;
 DESKTOP

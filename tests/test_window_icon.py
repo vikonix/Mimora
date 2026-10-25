@@ -19,7 +19,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from mimora import paths, window_icon
+from mimora import paths, splash, window_icon
 
 # The installer files that repeat APP_USER_MODEL_ID. They are not in the
 # wheel, so the test reads them from the source tree.
@@ -153,6 +153,22 @@ class SetAppUserModelIdTests(unittest.TestCase):
             re.findall(r"^\$MimoraAppUserModelId = '([^']+)'", ps1,
                        re.MULTILINE),
             [window_icon.APP_USER_MODEL_ID])
+
+
+class WindowClassTests(unittest.TestCase):
+    def test_the_splash_and_the_menu_entry_use_the_same_class(self):
+        # With a different value in one place, the Linux desktop does not
+        # match that window to the menu entry, and no other test fails.
+        sh = (_INSTALLER_DIR / "install.sh").read_text(encoding="utf-8")
+        self.assertEqual(splash._WM_CLASS, window_icon.WM_CLASS)
+        self.assertEqual(
+            re.findall(r"^StartupWMClass=(.+)$", sh, re.MULTILINE),
+            [window_icon.WM_CLASS])
+
+    def test_the_class_is_not_the_tk_default(self):
+        # "Tk" is the class of every Tk program, so the menu entry would
+        # take their windows too.
+        self.assertNotEqual(window_icon.WM_CLASS, "Tk")
 
 
 if __name__ == "__main__":

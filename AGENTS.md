@@ -104,6 +104,10 @@ installs or imports llama-cpp-python.
   `APP_USER_MODEL_ID` is repeated in `installer/mimora.iss` and
   `installer/install.ps1`; change all three or none
   (`tests/test_window_icon.py` checks that they agree). A failure to load the icon is logged and never stops a window.
+  `WM_CLASS` is the `className` of every `tk.Tk()` (main window, first-run
+  window, splash) and the `StartupWMClass` of the Linux menu entry in
+  `installer/install.sh`; `mimora/splash.py` repeats it as `_WM_CLASS`.
+  Change all three or none (the same test file checks them).
   On Windows each new `Toplevel` calls `sharpen_window_icon()`: the icon
   that it gets from the root is the small one and is blurred on a scaled
   display (the process is not DPI-aware).

@@ -103,7 +103,7 @@ class PronunciationTrainerGUI:
         # The taskbar identity first: Windows reads it when the taskbar
         # button of the window appears.
         window_icon.set_app_user_model_id()
-        self.root = tk.Tk()
+        self.root = tk.Tk(className=window_icon.WM_CLASS)
         window_icon.apply_window_icon(self.root)
         self.root.title(f"Mimora · {config.TARGET_LANGUAGE} - Pronunciation Trainer v{__version__}")
 

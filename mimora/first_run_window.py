@@ -202,7 +202,7 @@ class FirstRunWindow:
         # This window can be the first one of the process, so it sets the
         # taskbar identity too.
         window_icon.set_app_user_model_id()
-        self.root = tk.Tk()
+        self.root = tk.Tk(className=window_icon.WM_CLASS)
         window_icon.apply_window_icon(self.root)
         # "First run" is a lie on the one path that reaches this window from an
         # installed machine: turning translation on restarts into it with

@@ -39,6 +39,15 @@ from mimora import paths
 # window become two separate taskbar buttons.
 APP_USER_MODEL_ID = "vikonix.Mimora"
 
+# The X11 window class, passed as className to every tk.Tk() of the
+# application. The menu entry written by installer/install.sh names it in
+# StartupWMClass: with a different value the desktop does not match the
+# running window to the entry and shows it as a separate application without
+# the Mimora icon. Tk keeps the default "Tk" for any program, so the entry
+# cannot name that one. mimora/splash.py repeats the value, because it must
+# stay stdlib-only at module level.
+WM_CLASS = "Mimora"
+
 ICON_ICO_NAME = "mimora.ico"
 ICON_PNG_NAME = "mimora-256.png"
 
