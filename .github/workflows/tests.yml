@@ -45,9 +45,17 @@ jobs:
 
       # No wheel gives PortAudio on Linux; importing sounddevice fails
       # without it (tests/test_tts.py).
-      - name: "Install PortAudio (Linux)"
+      # The sound server: PortAudio in Ubuntu 26.04 has a PulseAudio backend,
+      # and with no server to connect to, Pa_Initialize fails, so the import
+      # of sounddevice fails too. A desktop always runs a server (PipeWire or
+      # PulseAudio); the runner does not. --exit-idle-time=-1: no client
+      # connects before the tests, and an idle server would exit.
+      - name: "Install PortAudio and a sound server (Linux)"
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libportaudio2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libportaudio2 pulseaudio
+          pulseaudio --start --exit-idle-time=-1
 
       - name: "Install uv"
         uses: astral-sh/setup-uv@v6
