@@ -262,7 +262,12 @@ install_mimora() {
     #   macOS has no CUDA. The flag only moves the resolution to another
     #   index, and its result can change between runs. It is necessary on
     #   Windows only (install.ps1).
-    "$uv" tool install --upgrade --managed-python --python 3.12 "$package" \
+    # --with "preshed<3.0.14": preshed 3.0.14 breaks the spaCy pipeline load,
+    #   and Mimora stops at "Initialization Failed" (explosion/spaCy#14058).
+    #   The wheels up to 1.2.0rc1 do not exclude it, and the script installs
+    #   them too. uv keeps the requirement, so "uv tool upgrade" keeps it.
+    #   Remove it together with the bound in pyproject.toml.
+    "$uv" tool install --upgrade --managed-python --python 3.12 --with "preshed<3.0.14" "$package" \
         || die "The Mimora installation failed. Read the messages above. If uv reports an unknown option, update uv ('uv self update') and run this command again."
 
     bin_dir=$("$uv" tool dir --bin)

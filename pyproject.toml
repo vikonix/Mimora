@@ -153,6 +153,15 @@ dependencies = [
     # rather than an error - a quiet degradation of every score, which is the
     # worst shape a version mismatch can take here. Bump both together.
     "spacy>=3.8,<3.9",
+    # preshed arrives transitively (spacy -> preshed). 3.0.14 breaks every
+    # spaCy pipeline load with "OverflowError: Python int too large to convert
+    # to C ssize_t" in Tokenizer._flush_specials, so Kokoro cannot start and
+    # the application stops at "Initialization Failed" (explosion/spaCy#14058).
+    # An upper bound and not "!=3.0.14": the cause is not known, and the next
+    # release can break the same way. Raise it only after the issue is closed
+    # and a load of en_core_web_sm passes with the new version. install.sh and
+    # install.ps1 pass the same bound to uv for releases built without it.
+    "preshed<3.0.14",
     # Supertonic 3 (mimora/tts.py SupertonicBackend, Spanish). Pulls
     # onnxruntime and huggingface-hub. The weights (~400 MB, OpenRAIL-M) are
     # NOT bundled: install.py pre-downloads them, or the first run fetches them.

@@ -344,7 +344,12 @@ function Install-Mimora {
     #   already on the computer and can be a version that Mimora does not support.
     # --python 3.12: a uv tool environment ignores requires-python.
     # --torch-backend auto: without it an NVIDIA computer gets a CPU-only torch.
-    & $uv tool install --upgrade --managed-python --python 3.12 --torch-backend auto $package
+    # --with 'preshed<3.0.14': preshed 3.0.14 breaks the spaCy pipeline load,
+    #   and Mimora stops at "Initialization Failed" (explosion/spaCy#14058).
+    #   The wheels up to 1.2.0rc1 do not exclude it, and the script installs
+    #   them too. uv keeps the requirement, so "uv tool upgrade" keeps it.
+    #   Remove it together with the bound in pyproject.toml.
+    & $uv tool install --upgrade --managed-python --python 3.12 --torch-backend auto --with 'preshed<3.0.14' $package
     if ($LASTEXITCODE -ne 0) {
         throw "The Mimora installation failed (exit code $LASTEXITCODE). Read the messages above. If uv reports an unknown option, update uv ('uv self update') and run this command again."
     }
