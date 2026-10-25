@@ -16,4 +16,4 @@ Pronunciation analysis lives in the separate top-level ``pronunciation`` package
 # all. A pre-release can be yanked if it turns out wrong. While a stable
 # release exists, a plain `pip install mimora` ignores pre-releases: testers
 # need an exact pin or `--pre` (`--prerelease allow` for uv).
-__version__ = "1.2.0rc1"
+__version__ = "1.2.0rc2"
