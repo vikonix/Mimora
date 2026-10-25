@@ -115,6 +115,31 @@ class ViewCallbacks:
 LENGTH_FULL = "Full phrase"
 LENGTH_FEW_WORDS = "Few words"
 
+# Tk 9 draws the clam arrow of a scrollbar as a triangle 2 * arrowsize + 1
+# wide plus arrowpadding, where Tk 8.6 draws it arrowsize wide. ttkbootstrap
+# sizes arrowsize for Tk 8.6, so under Tk 9 the arrow sets the width of the
+# whole bar: about three times the thumb (37 px against 12 on macOS). Without
+# the arrows the bar is as wide as its thumb. Tk 8.6 keeps them.
+SCROLLBAR_ARROWS_TOO_WIDE = tk.TkVersion >= 9.0
+
+
+def without_arrows(layout: list[tuple[str, dict]]) -> list[tuple[str, dict]]:
+    """Return a copy of a ttk layout without its arrow elements.
+
+    An element is an arrow when its name ends in "arrow" (``uparrow``,
+    ``downarrow``, ``leftarrow``, ``rightarrow``); the rest of the tree,
+    the thumb included, is kept with its options.
+    """
+    result = []
+    for name, options in layout:
+        if name.endswith("arrow"):
+            continue
+        options = dict(options)
+        if "children" in options:
+            options["children"] = without_arrows(options["children"])
+        result.append((name, options))
+    return result
+
 
 class TrainerView:
     """Passive view facade: builds the Tk widgets and renders UI state.
@@ -172,6 +197,12 @@ class TrainerView:
                              troughcolor=THEME["bg_main"],
                              bordercolor=THEME["bg_main"],
                              arrowcolor=THEME["accent"])
+        # The configure() above makes ttkbootstrap build its scrollbar style,
+        # layout included, so the layout read here is the final one.
+        if SCROLLBAR_ARROWS_TOO_WIDE:
+            self.style.layout(
+                "Vertical.TScrollbar",
+                without_arrows(self.style.layout("Vertical.TScrollbar")))
 
         # Theme styling for the reference-speed combobox (settings window).
         self.style.configure("TCombobox",
