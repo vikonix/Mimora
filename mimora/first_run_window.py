@@ -101,6 +101,9 @@ _POLL_MS = 100
 _BAR_WIDTH = 420
 _BAR_HEIGHT = 10
 
+# Longest error text shown under the bar; see _show_error.
+_MAX_ERROR_CHARS = 1024
+
 _INTERRUPT_TEXT = (
     "The download is not finished. What has been downloaded is kept, but part "
     "of it will have to be fetched again on the next start.\n\nQuit anyway?")
@@ -579,7 +582,12 @@ class FirstRunWindow:
         persisted.
         """
         self._status.config(text="Download failed", fg=THEME["bad"])
-        self._amount.config(text=message[:300])
+        # The limit keeps a runaway message (an HTML error page inside an
+        # exception) from pushing the window off the screen. It must stay
+        # well above the longest message we write ourselves: 300 cut the
+        # libgomp1 hint off the end of verify_build()'s error on Linux, and
+        # that hint is the only thing that tells the user what to install.
+        self._amount.config(text=message[:_MAX_ERROR_CHARS])
         self._primary.config(state=tk.NORMAL, text="Retry")
         # Recomputed rather than restored: components run in order, so a
         # failure on the optional level can leave the required one complete,
