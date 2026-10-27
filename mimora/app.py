@@ -507,7 +507,10 @@ class PronunciationTrainerGUI:
         answers, so the same three-way predicate the first-run plan uses
         decides which one is given. Collapsing the last two into "point
         llama_server_path at one" told somebody who had already pointed it
-        somewhere to do what they had just done.
+        somewhere to do what they had just done. An absent binary is split once
+        more by whether a build for this machine exists at all: without one,
+        "install it" repeats the refusal, and the only answer that works with
+        no extra software is the "off" backend.
 
         This matters more than the first-run window's own version of it: the
         window only appears when something is missing, so on a machine where
@@ -534,6 +537,12 @@ class PronunciationTrainerGUI:
             return ('Error: "llama_server_path" in config/settings.json '
                     'points at a file that is not there. Fix the path, or '
                     'clear it to use the build Mimora installs itself.')
+        if not first_run.has_llama_server_build():
+            return ('Error: there is no llama-server build for this machine, '
+                    'so the local chat model cannot run here. In Settings, '
+                    'set "LLM backend" to "off" to take phrases from the '
+                    'practice text, or to "lm-studio" to generate them with '
+                    'LM Studio.')
         return ('Error: no llama-server binary was found. Install one with '
                 "'python -m mimora.llama_server_fetch', or point "
                 '"llama_server_path" in config/settings.json at a build you '

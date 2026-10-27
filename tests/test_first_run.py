@@ -339,6 +339,23 @@ class OptionalLevelTests(unittest.TestCase):
         present.assert_called_once_with(config.EXTERNAL_MODEL_PATH)
 
 
+class BuildAvailabilityTests(unittest.TestCase):
+    """has_llama_server_build(): what app.py asks after a failed start."""
+
+    def test_a_platform_without_a_build_has_none(self):
+        # The same refusal that empties the optional level: the message must
+        # not tell this user to install a server that cannot be installed.
+        unsupported = llama_server_fetch.UnsupportedPlatformError("no build")
+        with mock.patch.object(llama_server_fetch, "select_variant",
+                               side_effect=unsupported):
+            self.assertFalse(first_run.has_llama_server_build())
+
+    def test_a_platform_with_a_build_has_one(self):
+        with mock.patch.object(llama_server_fetch, "select_variant",
+                               return_value="macos-cpu-x64"):
+            self.assertTrue(first_run.has_llama_server_build())
+
+
 class PlanTests(unittest.TestCase):
     """The sums the dialog quotes and the progress bar divides by."""
 

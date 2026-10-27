@@ -379,6 +379,21 @@ def llama_server_status() -> str:
     return SERVER_PRESENT if exists else SERVER_MISCONFIGURED
 
 
+def has_llama_server_build() -> bool:
+    """Whether llama_server_fetch has a build this machine can load.
+
+    False on a platform with no pinned asset and on a Mac older than the
+    build's minimum macOS. app.py asks it when the server did not start: on
+    such a machine "install a llama-server" is advice the user cannot follow,
+    so the message has to name the settings that do work instead.
+    """
+    try:
+        llama_server_fetch.select_variant()
+    except llama_server_fetch.UnsupportedPlatformError:
+        return False
+    return True
+
+
 def _optional_components() -> tuple[tuple[Component, ...], Optional[str]]:
     """The llama-server level, plus why it is empty when it is."""
     if config.LLM_BACKEND != "llama-server":
