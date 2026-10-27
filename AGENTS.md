@@ -145,6 +145,9 @@ installs or imports llama-cpp-python.
   purpose so a redesign swaps the class without moving the import.
 - [`mimora/session.py`](mimora/session.py) - `SessionState`: score tally and
   bounded attempt history. Pure data, no Tk.
+- [`mimora/tk_dispatch.py`](mimora/tk_dispatch.py) - `MainThreadDispatcher`:
+  background threads queue calls, the Tk main thread runs them on its own
+  timer. The only way a worker reaches the widgets (see *Threading* below).
 - [`mimora/playback.py`](mimora/playback.py) - `PlaybackController`: per-playback
   stop-event lifecycle plus the talking-mouth coupling. `play_with_face()` is
   the blocking chokepoint around every `play_array` call.
@@ -382,9 +385,13 @@ answered in `first_run.py` instead.
 ## Key Patterns & Gotchas
 
 - **Threading**: recording, analysis, model loading, phrase generation and
-  playback run in daemon threads. **Always update the GUI via `root.after()`**;
-  never touch Tk widgets from a background thread. Source text is read on the
-  main thread and passed into the worker.
+  playback run in daemon threads. **A background thread updates the GUI only
+  through `self.main_thread.call()`** ([`mimora/tk_dispatch.py`](mimora/tk_dispatch.py));
+  it never touches Tk, and that includes `root.after()`: under Tcl 9 (the
+  Python that uv installs) Python 3.12 runs such a call on the worker thread
+  and the callback is lost. `tests/test_tk_dispatch.py` checks the worker
+  methods of `app.py` and all of `playback.py` for `after` calls. Source text
+  is read on the main thread and passed into the worker.
 
 - **Reference audio is synthesized once**: the same waveform is played to the
   user and passed to `analyze()` as the reference. Only ONE synthesis backend

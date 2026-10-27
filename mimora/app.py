@@ -65,6 +65,7 @@ from mimora import engine
 from mimora.playback import PlaybackController
 from mimora.session import SessionState
 from mimora.settings_ctl import SettingsGlue
+from mimora.tk_dispatch import MainThreadDispatcher
 from mimora.ui import TrainerView, ViewCallbacks, LENGTH_FEW_WORDS
 from mimora.settings_window import (
     PREVIEW_PHRASE,
@@ -87,7 +88,7 @@ class PronunciationTrainerGUI:
         Prompt   -> the TTS voice speaks an LLM-generated reference phrase.
         Record   -> user repeats it (shared recording path).
         Analyze  -> engine.analyze() runs in a daemon thread.
-        Feedback -> score + problem words shown via root.after().
+        Feedback -> score + problem words shown on the Tk main thread.
         Loop     -> the user decides: record the same phrase again or generate
                     the next one (result.passed is not enforced - see the
                     Pass-threshold note in AGENTS.md).
@@ -105,6 +106,10 @@ class PronunciationTrainerGUI:
         window_icon.set_app_user_model_id()
         self.root = tk.Tk(className=window_icon.WM_CLASS)
         window_icon.apply_window_icon(self.root)
+        # The only way a background thread may reach the widgets: it queues
+        # a call here, and the main thread runs it (mimora/tk_dispatch.py).
+        # root.after from a background thread loses the call under Tcl 9.
+        self.main_thread = MainThreadDispatcher(self.root)
         self.root.title(f"Mimora · {config.TARGET_LANGUAGE} - Pronunciation Trainer v{__version__}")
 
         # Fixed width; the window spans the full usable screen height. We query the
@@ -155,7 +160,7 @@ class PronunciationTrainerGUI:
         # repeated toggles - it is NOT a "hold to record" flag. The actual
         # capture lives in AudioRecorder; all four callbacks fire on the capture
         # thread, so they marshal every UI touch onto the Tk main thread via
-        # root.after.
+        # self.main_thread.
         self._record_key_held = False
         self.recorder = AudioRecorder(
             on_max_duration=self._on_record_max_duration,
@@ -260,8 +265,8 @@ class PronunciationTrainerGUI:
         # Playback machinery: per-playback stop events + the talking-mouth
         # track (mimora/playback.py). Composed after the view because it
         # drives the face and status line through the view facade.
-        self.playback = PlaybackController(self.root, self.view, self.tts_mgr,
-                                           self.shutdown_event)
+        self.playback = PlaybackController(self.main_thread, self.view,
+                                           self.tts_mgr, self.shutdown_event)
         # Settings persistence glue (mimora/settings_ctl.py): persisting,
         # settings-window mirroring and the "Default" reset. The dispatch
         # (on_setting_changed and the on_*_changed handlers) stays here.
@@ -372,8 +377,8 @@ class PronunciationTrainerGUI:
     # ------------------------------------------------------------------
     def load_components(self):
         logging.info("Starting model loading thread...")
-        self.root.after(0, self.view.enter_loading)
-        self.root.after(0, self.view.append_system_msg, "Loading TTS and pronunciation models...")
+        self.main_thread.call(self.view.enter_loading)
+        self.main_thread.call(self.view.append_system_msg, "Loading TTS and pronunciation models...")
 
         try:
             self.tts_mgr.load_model()
@@ -382,8 +387,8 @@ class PronunciationTrainerGUI:
             # The "none" engine loads no model, so the ~1.2 GB message would
             # only confuse; every other engine loads a Wav2Vec2 recognizer.
             if engine.name() != "none":
-                self.root.after(0, self.view.append_system_msg,
-                                "Loading Wav2Vec2 (pronunciation, ~1.2 GB on first run)...")
+                self.main_thread.call(self.view.append_system_msg,
+                                      "Loading Wav2Vec2 (pronunciation, ~1.2 GB on first run)...")
             # Inject app settings into the active engine before it loads any model.
             # The dispatcher builds the engine-specific config from app settings;
             # this is the analyzer's composition root.
@@ -406,27 +411,27 @@ class PronunciationTrainerGUI:
             # - from disk, because enabling it is what triggered the restart
             # that downloaded the model (_offer_translator_download).
             if config.TRANSLATION_LANGUAGE:
-                self.root.after(0, self.view.append_system_msg,
-                                "Loading translator (NLLB) from disk...")
+                self.main_thread.call(self.view.append_system_msg,
+                                      "Loading translator (NLLB) from disk...")
                 # load_model() logs the success itself - do not repeat it here.
                 self.translator_mgr.load_model()
 
             if self.llm_backend == "off":
                 # Nothing to start or connect to; generation is served by
                 # SourceTextPhraseProvider (see __init__).
-                self.root.after(0, self.view.append_system_msg,
-                                "LLM is off - phrases are taken from the practice text.")
+                self.main_thread.call(self.view.append_system_msg,
+                                      "LLM is off - phrases are taken from the practice text.")
             elif self.llm_backend == "llama-server":
                 model_name = os.path.basename(config.EXTERNAL_MODEL_PATH)
-                self.root.after(0, self.view.append_system_msg,
-                                f"Starting llama-server with {model_name}...")
-                self.root.after(0, self.view.enter_server_starting)
+                self.main_thread.call(self.view.append_system_msg,
+                                      f"Starting llama-server with {model_name}...")
+                self.main_thread.call(self.view.enter_server_starting)
                 if not self.llm_server.start(self.llm_mgr):
-                    self.root.after(0, self.view.append_error_msg,
-                                    self._server_failure_message())
-                    self.root.after(0, self.view.server_failed)
+                    self.main_thread.call(self.view.append_error_msg,
+                                          self._server_failure_message())
+                    self.main_thread.call(self.view.server_failed)
                     return
-                self.root.after(0, self.view.append_system_msg, "LLM server is ready.")
+                self.main_thread.call(self.view.append_system_msg, "LLM server is ready.")
                 # Before the window becomes ready, so the first phrase already
                 # uses the sampling values for the server that answers.
                 self.llm_mgr.adopted_server = self.llm_server.adopted
@@ -442,8 +447,8 @@ class PronunciationTrainerGUI:
                     # Said in the window and not only in the log: phrases now
                     # come from a server this run did not configure, which
                     # explains a model or a speed the settings do not.
-                    self.root.after(
-                        0, self.view.append_system_msg,
+                    self.main_thread.call(
+                        self.view.append_system_msg,
                         f"Using the llama-server already running on "
                         f"{config.LLM_SERVER_HOST}:{config.LLM_SERVER_PORT}. "
                         f"It keeps the model it was started with.")
@@ -453,8 +458,8 @@ class PronunciationTrainerGUI:
                     # A warning and not a refusal: short prompts still fit.
                     # In the message list, because the status line is
                     # overwritten by the next state change at once.
-                    self.root.after(
-                        0, self.view.append_error_msg,
+                    self.main_thread.call(
+                        self.view.append_error_msg,
                         f"Warning: the LLM server has a context of "
                         f"{served_n_ctx} tokens instead of "
                         f"{config.EXTERNAL_N_CTX}. Long prompts may not fit. "
@@ -462,10 +467,10 @@ class PronunciationTrainerGUI:
             else:
                 self.llm_mgr.init_client()
                 if not self.llm_mgr.check_connection():
-                    self.root.after(0, self.view.append_error_msg, "Warning: LM Studio is offline. Start it to generate phrases!")
+                    self.main_thread.call(self.view.append_error_msg, "Warning: LM Studio is offline. Start it to generate phrases!")
 
             if config.WARM_UP:
-                self.root.after(0, self.view.enter_warming_up)
+                self.main_thread.call(self.view.enter_warming_up)
                 self.tts_mgr.warm_up()
                 engine.warm_up()
                 if config.TRANSLATION_LANGUAGE:
@@ -477,8 +482,8 @@ class PronunciationTrainerGUI:
                 # first-call latency instead (see config.WARM_UP).
                 logging.info("Model warm-up skipped (warm_up=false).")
 
-            self.root.after(0, self.load_practice_text)
-            self.root.after(0, self.make_app_ready)
+            self.main_thread.call(self.load_practice_text)
+            self.main_thread.call(self.make_app_ready)
             logging.info("Mimora initialization complete.")
 
         except BaseException as e:
@@ -496,9 +501,9 @@ class PronunciationTrainerGUI:
             # The type name is part of the message because str(SystemExit(1))
             # is "1": without it the window would say "Initialization Error: 1".
             logging.exception("Error during initialization thread:")
-            self.root.after(0, self.view.append_error_msg,
-                            f"Initialization Error: {type(e).__name__}: {e}")
-            self.root.after(0, self.view.init_failed)
+            self.main_thread.call(self.view.append_error_msg,
+                                  f"Initialization Error: {type(e).__name__}: {e}")
+            self.main_thread.call(self.view.init_failed)
 
     def _server_failure_message(self) -> str:
         """What to tell the user when the llama-server did not come up.
@@ -643,7 +648,7 @@ class PronunciationTrainerGUI:
             # spoken in the practiced language (config.LANGUAGE_PROFILES).
             greeting = (config.GREETING_NAMED.format(name=name) if name
                         else config.GREETING_ANONYMOUS)
-            self.root.after(0, self.view.append_system_msg, greeting)
+            self.main_thread.call(self.view.append_system_msg, greeting)
             audio = self.tts_mgr.synthesize(greeting, voice=voice)
             if audio.size > 0:
                 self.playback.play_with_face(audio, self.tts_mgr.sample_rate,
@@ -653,9 +658,9 @@ class PronunciationTrainerGUI:
         finally:
             # Auto-generate the first phrase so the user isn't met with an
             # empty phrase card; afterwards generation is driven by the New
-            # phrase button. Scheduled via after() - on_generate_phrase
+            # phrase button. Queued for the main thread - on_generate_phrase
             # touches widgets, so it must run on the Tk main thread.
-            self.root.after(0, self.on_generate_phrase)
+            self.main_thread.call(self.on_generate_phrase)
 
     # ------------------------------------------------------------------
     # Phrase generation + Prompt phase
@@ -942,10 +947,10 @@ class PronunciationTrainerGUI:
                 self.playback.play_with_face(audio, effective_sr, stop_event)
         except Exception:
             logging.exception("Voice preview error:")
-            self.root.after(0, self.view.append_error_msg,
-                            f"Could not preview voice {voice}.")
+            self.main_thread.call(self.view.append_error_msg,
+                                  f"Could not preview voice {voice}.")
         finally:
-            self.root.after(0, self.playback.finished, stop_event)
+            self.main_thread.call(self.playback.finished, stop_event)
 
     def on_generate_phrase(self):
         if not self.app_ready or self.is_generating:
@@ -996,13 +1001,13 @@ class PronunciationTrainerGUI:
         try:
             phrase = self.llm_mgr.generate_phrase(source_text, length=length)
             if not phrase:
-                self.root.after(0, self._phrase_generation_failed, "The model returned no phrase. Try again.")
+                self.main_thread.call(self._phrase_generation_failed, "The model returned no phrase. Try again.")
                 return
 
             # Synthesize the reference once; reused for playback and analysis.
             reference_audio = self.tts_mgr.synthesize(phrase, voice=voice)
             if reference_audio.size == 0:
-                self.root.after(0, self._phrase_generation_failed, "Could not synthesize the reference audio.")
+                self.main_thread.call(self._phrase_generation_failed, "Could not synthesize the reference audio.")
                 return
 
             # These are plain-data fields (not Tk widgets), so - unlike widget
@@ -1024,7 +1029,7 @@ class PronunciationTrainerGUI:
                 dump_record_text(phrase, RECORD_PHRASE_FILE)
             # Show the phrase and play the reference for the user to hear
             # (stop_event was installed by the caller; see PlaybackController.new_event).
-            self.root.after(0, self._show_new_phrase, phrase)
+            self.main_thread.call(self._show_new_phrase, phrase)
             # Honor the selected reference speed (see play_reference for the
             # lowered-sample-rate slowing approach) instead of always 1.0×.
             effective_sr = int(self.tts_mgr.sample_rate * speed)
@@ -1035,12 +1040,12 @@ class PronunciationTrainerGUI:
             # latency-tolerant and (on its first call) pays a one-time model load,
             # so it must not gate the app's readiness. The panel stays at its "-"
             # placeholder until the translation arrives.
-            self.root.after(0, self._phrase_ready)
+            self.main_thread.call(self._phrase_ready)
             self._translate_into_panel(phrase, language)
 
         except Exception as e:
             logging.exception("Phrase generation / prompt error:")
-            self.root.after(0, self._phrase_generation_failed, f"Error: {e}")
+            self.main_thread.call(self._phrase_generation_failed, f"Error: {e}")
 
     def _translate_into_panel(self, phrase: str, language: str):
         """Translate *phrase* and push it to the panel. (Background thread.)
@@ -1070,8 +1075,8 @@ class PronunciationTrainerGUI:
             # into a silent window again, which is the finding this whole
             # change came from. Announced only while a load still looks
             # possible - after a reported failure every phrase would repeat it.
-            self.root.after(0, self.view.append_system_msg,
-                            "Loading translator (NLLB) from disk...")
+            self.main_thread.call(self.view.append_system_msg,
+                                  "Loading translator (NLLB) from disk...")
         translated = self.translator_mgr.translate(phrase, language)
         if not translated and not self.translator_mgr.is_loaded():
             # Once per session: the load is retried on every phrase (the
@@ -1079,16 +1084,16 @@ class PronunciationTrainerGUI:
             # RAM would otherwise repeat this line for the rest of the run.
             if not self._translator_failure_reported:
                 self._translator_failure_reported = True
-                self.root.after(0, self.view.append_system_msg,
-                                "Translation unavailable: the translator model "
-                                "could not be loaded (see logs/main.log).")
+                self.main_thread.call(self.view.append_system_msg,
+                                      "Translation unavailable: the translator model "
+                                      "could not be loaded (see logs/main.log).")
             return
         # current_phrase is replaced by a fresh generation; if it no longer
         # matches, this translation is for a superseded phrase - drop it.
         if not translated or self.current_phrase != phrase:
             return
         self.current_translation = translated
-        self.root.after(0, self.view.set_translation, translated)
+        self.main_thread.call(self.view.set_translation, translated)
 
     def _show_new_phrase(self, phrase: str):
         self.view.enter_reference_playing(phrase, self.current_translation)
@@ -1242,9 +1247,9 @@ class PronunciationTrainerGUI:
                 # The capture thread is stuck (e.g. the device hangs on close)
                 # and its callback may still be appending chunks. Reading them
                 # now would race the writer - drop the take.
-                self.root.after(0, self.view.append_error_msg,
-                                "Audio device did not stop in time - take discarded, please try again.")
-                self.root.after(0, self._reset_to_retry)
+                self.main_thread.call(self.view.append_error_msg,
+                                      "Audio device did not stop in time - take discarded, please try again.")
+                self.main_thread.call(self._reset_to_retry)
                 return
             self.analyze_recording(stop_event, prep_start)
         finally:
@@ -1257,8 +1262,8 @@ class PronunciationTrainerGUI:
         Route through the normal stop path on the main thread so the take is
         finalized and analyzed exactly like a manual stop.
         """
-        self.root.after(0, self.view.append_error_msg, "Reached maximum record limit - take cut off.")
-        self.root.after(0, self.trigger_recording_stop)
+        self.main_thread.call(self.view.append_error_msg, "Reached maximum record limit - take cut off.")
+        self.main_thread.call(self.trigger_recording_stop)
 
     def _on_record_silence_stop(self):
         """The take auto-stopped after silence (called on the capture thread).
@@ -1268,7 +1273,7 @@ class PronunciationTrainerGUI:
         duration cutoff this is the expected, designed ending, so no error is
         shown.
         """
-        self.root.after(0, self.trigger_recording_stop)
+        self.main_thread.call(self.trigger_recording_stop)
 
     def _on_record_level(self, level: float):
         """Live mic level during a take (called on the capture thread).
@@ -1276,7 +1281,7 @@ class PronunciationTrainerGUI:
         Forwarded to the recording indicator on the Tk main thread so the user
         can see the mic is hearing them while the silence auto-stop runs.
         """
-        self.root.after(0, self._apply_record_level, level)
+        self.main_thread.call(self._apply_record_level, level)
 
     def _apply_record_level(self, level: float):
         """Repaint the mic level indicator, but only while still recording. (Tk thread.)
@@ -1297,8 +1302,8 @@ class PronunciationTrainerGUI:
         failed stream open would leave the whole UI locked), then show the
         error status on top of the reset's default "Ready".
         """
-        self.root.after(0, self._reset_to_retry)
-        self.root.after(0, self.view.recording_failed)
+        self.main_thread.call(self._reset_to_retry)
+        self.main_thread.call(self.view.recording_failed)
 
     # ------------------------------------------------------------------
     # Analyze phase
@@ -1362,12 +1367,12 @@ class PronunciationTrainerGUI:
         try:
             # Play the reference back first (stop_event was installed by the
             # caller; see PlaybackController.new_event).
-            self.root.after(0, self.view.enter_playing, "Playing reference...")
+            self.main_thread.call(self.view.enter_playing, "Playing reference...")
             self.playback.play_with_face(self.reference_audio,
                                          self.tts_mgr.sample_rate, stop_event)
 
             # Then run analysis with the reference as both inputs.
-            self.root.after(0, self.view.enter_analyzing, "Testing with reference...")
+            self.main_thread.call(self.view.enter_analyzing, "Testing with reference...")
             result = engine.analyze(
                 user_audio=self.reference_audio,
                 expected_text=self.current_phrase,
@@ -1381,12 +1386,12 @@ class PronunciationTrainerGUI:
             )
             result.prosody = self._compute_prosody_safe(self.reference_audio,
                                                          self.tts_mgr.sample_rate)
-            self.root.after(0, self.view.show_feedback, result, self.current_phrase,
-                            self._has_user_recording(), True)  # is_self_test
+            self.main_thread.call(self.view.show_feedback, result, self.current_phrase,
+                                  self._has_user_recording(), True)  # is_self_test
         except Exception:
             logging.exception("Reference self-test error:")
-            self.root.after(0, self.view.append_error_msg, "Reference test failed.")
-            self.root.after(0, self._reset_to_retry)
+            self.main_thread.call(self.view.append_error_msg, "Reference test failed.")
+            self.main_thread.call(self._reset_to_retry)
         finally:
             with self.processing_lock:
                 self.is_processing_audio = False
@@ -1402,8 +1407,8 @@ class PronunciationTrainerGUI:
             audio = self.recorder.get_audio()
             if audio is None or len(audio) < config.AUDIO_SAMPLE_RATE * 0.2:
                 logging.warning("Captured audio too short or empty.")
-                self.root.after(0, self.view.append_error_msg, "Audio is too short. Speak a little longer and try again.")
-                self.root.after(0, self._reset_to_retry)
+                self.main_thread.call(self.view.append_error_msg, "Audio is too short. Speak a little longer and try again.")
+                self.main_thread.call(self._reset_to_retry)
                 return
 
             if config.SAVE_RECORDINGS:
@@ -1416,8 +1421,8 @@ class PronunciationTrainerGUI:
                 dump_record_wav(audio, RECORD_NORMALIZED_FILE, config.AUDIO_SAMPLE_RATE)
 
             if self.current_phrase is None or self.reference_audio is None:
-                self.root.after(0, self.view.append_error_msg, "No active phrase to compare against.")
-                self.root.after(0, self._reset_to_retry)
+                self.main_thread.call(self.view.append_error_msg, "No active phrase to compare against.")
+                self.main_thread.call(self._reset_to_retry)
                 return
 
             # Play the just-recorded audio back to the user right away, before the
@@ -1441,14 +1446,14 @@ class PronunciationTrainerGUI:
                 logging.info("Take ready in %.1fs; playing it back to the user "
                              "(%.1fs) before analysis.", prep_seconds,
                              playback_seconds)
-                self.root.after(0, self.view.enter_playing, "Playing your recording...")
+                self.main_thread.call(self.view.enter_playing, "Playing your recording...")
                 self.playback.play_with_face(self.last_user_audio,
                                              config.AUDIO_SAMPLE_RATE, stop_event)
                 logging.info("Playback finished; starting analysis.")
             else:
                 logging.info("Take ready in %.1fs; starting analysis.",
                              prep_seconds)
-            self.root.after(0, self.view.enter_analyzing)
+            self.main_thread.call(self.view.enter_analyzing)
 
             analyze_start = time.perf_counter()
             result = engine.analyze(
@@ -1465,13 +1470,13 @@ class PronunciationTrainerGUI:
             result.prosody = self._compute_prosody_safe(audio,
                                                          config.AUDIO_SAMPLE_RATE)
 
-            self.root.after(0, self.view.show_feedback, result, self.current_phrase,
-                            self._has_user_recording())
+            self.main_thread.call(self.view.show_feedback, result, self.current_phrase,
+                                  self._has_user_recording())
 
         except Exception:
             logging.exception("Error in analyze_recording:")
-            self.root.after(0, self.view.append_error_msg, "Analysis error. Please try again.")
-            self.root.after(0, self._reset_to_retry)
+            self.main_thread.call(self.view.append_error_msg, "Analysis error. Please try again.")
+            self.main_thread.call(self._reset_to_retry)
 
     def _has_user_recording(self) -> bool:
         """True when a user take exists to replay or feed back against.
@@ -1543,7 +1548,7 @@ class PronunciationTrainerGUI:
             except Exception:
                 logging.exception("Word playback error:")
             finally:
-                self.root.after(0, self.playback.finished, stop_event)
+                self.main_thread.call(self.playback.finished, stop_event)
 
         threading.Thread(target=_worker, daemon=True).start()
 

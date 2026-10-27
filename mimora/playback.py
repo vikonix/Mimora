@@ -7,7 +7,7 @@ Extracted from the main controller so the whole "current playback" state
 machine lives in one place: installing a fresh stop event per playback,
 stopping or superseding a running one, and driving the FaceWidget's loudness
 track in sync with the audio. The controller composes a PlaybackController
-with the Tk root (for ``after``), the TrainerView facade, the TTSManager and
+with the main-thread dispatcher (mimora/tk_dispatch.py), the TrainerView facade, the TTSManager and
 the app-wide shutdown event; workers receive stop events as plain arguments
 and never touch the shared state directly.
 
@@ -15,9 +15,10 @@ Threading contract:
   * ``new_event()``, ``stop()`` and ``play_async()`` run on the Tk main
     thread only.
   * ``play_with_face()`` blocks for the playback duration and is safe to
-    call from a background thread: widgets are touched only via root.after.
-  * ``finished()`` must run on the Tk main thread - workers schedule it with
-    ``root.after(0, playback.finished, stop_event)``.
+    call from a background thread: widgets are touched only through the
+    main-thread dispatcher.
+  * ``finished()`` must run on the Tk main thread - workers queue it with
+    ``main_thread.call(playback.finished, stop_event)``.
 """
 
 import threading
@@ -38,8 +39,11 @@ class PlaybackController:
     onto the Tk thread where needed.
     """
 
-    def __init__(self, root, view, tts_mgr, shutdown_event: threading.Event):
-        self.root = root
+    def __init__(self, main_thread, view, tts_mgr,
+                 shutdown_event: threading.Event):
+        # MainThreadDispatcher: a worker must not call root.after itself
+        # (the call is lost under Tcl 9, see mimora/tk_dispatch.py).
+        self.main_thread = main_thread
         self.view = view
         self.tts_mgr = tts_mgr
         self.shutdown_event = shutdown_event
@@ -100,7 +104,7 @@ class PlaybackController:
 
         def _worker():
             self.play_with_face(waveform, sample_rate, stop_event)
-            self.root.after(0, self.finished, stop_event)
+            self.main_thread.call(self.finished, stop_event)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -113,14 +117,14 @@ class PlaybackController:
         pre-computed (the signal is fully known up front) and the face advances
         it on its own wall-clock timer, kept in sync by matching the playback
         lead-in. Safe to call from a background thread: the widget is touched
-        only via root.after. Blocks for the playback duration, like play_array.
+        only through the main-thread dispatcher. Blocks for the playback duration, like play_array.
         """
-        self.root.after(0, self._start_face_track, waveform, sample_rate)
+        self.main_thread.call(self._start_face_track, waveform, sample_rate)
         try:
             self.tts_mgr.play_array(waveform, sample_rate, stop_event,
                                     self.shutdown_event)
         finally:
-            self.root.after(0, self._rest_face_if_current, stop_event)
+            self.main_thread.call(self._rest_face_if_current, stop_event)
 
     # ------------------------------------------------------------------
     # Articulation face (talking mouth driven from the loudness envelope)
