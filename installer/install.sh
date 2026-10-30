@@ -1,11 +1,14 @@
 #!/bin/sh
 # Installs Mimora on macOS and Linux with uv, for a user who uses a terminal.
 #
-# Install or upgrade:
+# Install or upgrade (macOS has curl but not wget, Ubuntu Desktop has wget
+# but not curl):
 #   curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh
+#   wget -qO- https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh
 #
 # Uninstall:
 #   curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh -s -- --uninstall
+#   wget -qO- https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh -s -- --uninstall
 #
 # Environment variables:
 #   MIMORA_VERSION      install this exact version, for example 1.2.0rc1.
@@ -110,9 +113,12 @@ library_missing() {
 # Succeeds when no Symbola font file is found. Tk cannot draw a colour emoji
 # font (fonts-noto-color-emoji, the default one), so without a monochrome one
 # the record button is an empty circle. Mimora still works, which is why this
-# is only a hint. The font files are searched directly rather than with
-# fc-list: a minimal system (a WSL or container image) can lack the fontconfig
-# tools, and that is exactly where the font is missing.
+# is only a hint. The font helps only a Tk with Xft (a system Python with
+# python3-tk). The Python build of uv that this script installs has a Tk
+# without Xft, which sees only the fonts of the X server, so there the icon
+# stays empty with the font too. The font files are searched directly rather
+# than with fc-list: a minimal system (a WSL or container image) can lack the
+# fontconfig tools, and that is exactly where the font is missing.
 symbola_missing() {
     for dir in /usr/share/fonts /usr/local/share/fonts \
             "${XDG_DATA_HOME:-$HOME/.local/share}/fonts" "$HOME/.fonts"; do
@@ -281,6 +287,8 @@ install_mimora() {
     # --upgrade: a second run of this script is an upgrade.
     # --managed-python: always the Python build of uv. It carries tkinter; a
     #   system Python on Linux does not, without the python3-tk package.
+    #   Its Tk has no Xft: on Linux the text is not smoothed and the emoji
+    #   icons are empty boxes.
     # --python 3.12: a uv tool environment ignores requires-python.
     # No --torch-backend: PyPI's torch is already a CUDA build on Linux, and
     #   macOS has no CUDA. The flag only moves the resolution to another
@@ -401,6 +409,6 @@ main() {
 }
 
 # All the work is in functions, and this is the only line that starts it.
-# When "curl | sh" receives only part of the file, this line is missing and
-# nothing runs.
+# When "curl | sh" or "wget | sh" receives only part of the file, this line
+# is missing and nothing runs.
 main "$@"

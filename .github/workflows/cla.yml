@@ -33,7 +33,6 @@ jobs:
           path-to-signatures: 'signatures/version1/cla.json'
 
           # Link to the CLA text shown to the contributor.
-          # REPLACE YOUR_GITHUB_USERNAME with your login/organization.
           path-to-document: 'https://github.com/vikonix/Mimora/blob/main/CLA.md'
 
           # Branch where the bot commits the signatures file.
@@ -43,6 +42,6 @@ jobs:
           custom-pr-sign-comment: 'I have read the CLA Document and I hereby sign the CLA'
           custom-allsigned-prcomment: 'All contributors have signed the CLA. ✅'
 
-          # Accounts that don't need to sign the CLA (yourself, bots).
-          # REPLACE with your login. Use masks like dependabot[bot] for bots.
+          # Accounts that don't need to sign the CLA: the owner and bots
+          # (a mask such as *[bot] covers every bot account).
           allowlist: 'vikonix,dependabot[bot],*[bot]'

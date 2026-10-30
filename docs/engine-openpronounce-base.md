@@ -1,4 +1,4 @@
-# Base Engine - OpenPronounce (Acoustic + Transcription)
+# Acoustic engine (OpenPronounce: acoustics + transcription)
 
 *A short overview for technically literate readers. Focus: the ideas and the
 workflow, not the code.*
@@ -78,4 +78,5 @@ It is **accurate on English** and rewards genuinely good pronunciation, because
 it listens to the actual acoustics rather than just symbols. The trade-offs:
 it **requires a reference recording** for every phrase, and it is **tuned for
 English** - adding a new language means new models and recalibration, not a
-simple switch. Those limits are exactly what the new engine is designed to remove.
+simple switch. Those limits are exactly what the phoneme engine (the default) is
+designed to remove.

@@ -11,10 +11,10 @@ It stays in the project root, and stays this thin, for two separate reasons.
 Thin, because the application may not live here: a package module named
 ``main`` would claim that import name in site-packages for every package in the
 environment, which is why the code belongs in ``mimora/app.py``. In the root,
-because ``python main.py`` is what the README, AGENTS.md, ``install.py`` and
-``run_mimora.bat`` all tell people to run, and the file is not part of the
-wheel anyway - package discovery only collects ``mimora*`` and
-``pronunciation*``.
+because ``python main.py`` is what ``docs/installation-from-clone.md``,
+AGENTS.md, ``install.py`` and ``run_mimora.bat`` all tell people to run, and the
+file is not part of the wheel anyway - package discovery only collects
+``mimora*`` and ``pronunciation*``.
 
 Nothing may be imported here beyond the line below. Anything heavier would run
 before ``cli.main()`` parses the arguments, which is the ordering the split

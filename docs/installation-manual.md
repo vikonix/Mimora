@@ -1,16 +1,19 @@
 # Manual installation
 
-This file carries the from-source install and the platform-specific steps behind
-it. It is the third of three ways to install Mimora, and the one to read when
-you want to run each command yourself, or to fix one piece of a setup that the
-other two left incomplete:
+This file carries the from-source install, the pipx and pip installs of the
+published package, and the platform-specific steps behind them. It is the last
+of four ways to install Mimora, and the one to read when you want to run each
+command yourself, or to fix one piece of a setup that the others left
+incomplete:
 
-1. **From the published wheel** (recommended) - see
-   [Installation](../README.md#installation) in README.
-2. **From a clone with `install.py`** - the same steps as here, automated and
-   logged; see [Install from a clone with
-   `install.py`](../README.md#install-from-a-clone-with-installpy).
-3. **By hand** - this file.
+1. **Quick install** (recommended) - see [Quick
+   install](../README.md#quick-install-recommended) in README.
+2. **From PyPI** - with uv, see [Install from
+   PyPI](../README.md#install-from-pypi) in README; with pipx or pip, see
+   [pipx and pip](#pipx-and-pip) below.
+3. **From a clone with `install.py`** - the same steps as here, automated and
+   logged; see [Installation from a clone](installation-from-clone.md).
+4. **By hand** - this file.
 
 The sections below are independent of each other. The Python dependencies are
 the first one; everything after it is a native piece that pip cannot supply
@@ -19,8 +22,75 @@ PyTorch), or a component that is downloaded rather than installed (the
 llama-server binary, the GGUF chat model). The last two arrive on the first
 start of the app as well, which is why they are steps and not requirements.
 
-Hardware, Python version and the model list stay in README, under
-[Requirements](../README.md#requirements).
+Hardware stays in README, under [Requirements](../README.md#requirements), and
+the Python version under [Install from PyPI](../README.md#install-from-pypi). The
+model list is in [Technical details](technical-details.md#models).
+
+---
+
+## pipx and pip
+
+The published package, installed with another tool than uv (the uv way is in
+[Install from PyPI](../README.md#install-from-pypi) in README). On Linux the
+system packages listed there are needed in the same way.
+
+**[pipx](https://pipx.pypa.io/stable/installation/)** gives the same result as
+uv except for the CUDA build of PyTorch: an index cannot be named in a published
+package's metadata, so on Windows with an NVIDIA card the CUDA build is a second
+command.
+
+```powershell
+pipx install --python 3.12 mimora
+pipx runpip mimora install torch --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
+```
+
+**pip** works too, into a virtual environment of Python 3.11 or 3.12:
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate            # Windows
+# source .venv/bin/activate       # macOS / Linux
+
+pip install mimora
+mimora
+```
+
+Upgrade and uninstall with pipx:
+
+```bash
+pipx upgrade mimora
+pipx uninstall mimora
+```
+
+---
+
+## Options of the install scripts
+
+`install.ps1` and `install.sh` (the [quick
+install](../README.md#quick-install-recommended)) read two environment
+variables:
+
+- `MIMORA_VERSION` - install this exact version, for example a pre-release that
+  a plain install does not take. After an exact version, `uv tool upgrade
+  mimora` does not upgrade: run the script again, with the new version in the
+  variable, or without it for the newest normal version.
+- `MIMORA_NO_SHORTCUT` - any value: no Start menu shortcut (Windows) and no
+  application menu entry (Linux).
+
+The variable has to reach the script, not the download command:
+
+```powershell
+# Windows (PowerShell)
+$env:MIMORA_VERSION = "1.2.0"
+irm https://github.com/vikonix/Mimora/releases/latest/download/install.ps1 | iex
+```
+
+```bash
+# macOS (on Linux: wget -qO- instead of curl -LsSf)
+curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install.sh | MIMORA_VERSION=1.2.0 sh
+```
+
+The Windows Setup file takes no options: it always installs its own version.
 
 ---
 
@@ -178,6 +248,13 @@ fc-cache -f -v
 
 Then restart Mimora.
 
+This works only with a Tk that uses Xft, which is the Tk of a system Python
+with `python3-tk`. The Python build that uv downloads (python-build-standalone)
+has a Tk without Xft: it sees only the fonts of the X server, so the icons stay
+blank with the font installed, and the text is not smoothed. `install.sh`
+always installs that build (`--managed-python`), and `uv tool install` uses it
+wherever the system has no Python 3.12 (for example Ubuntu 26.04).
+
 ## GPU support
 
 Whether you need this step depends on your platform. PyPI serves **CPU-only**
@@ -248,11 +325,11 @@ with Metal switched off).
 The macOS builds come with the release's own limits, and neither can be worked
 around from here. Both carry a minimum macOS version stamped into the binary at
 build time, read out of the current pin and checked **before** anything is
-downloaded: **13.3** for the Intel build (llama.cpp sets that deployment target
-explicitly) and **26.0** for the Apple Silicon one (llama.cpp sets none, so the
-build inherits the macOS of the runner it was compiled on). A Mac below its
-build's minimum is told so and left alone - the installer records it as a manual
-step and moves on, rather than failing.
+downloaded: **13.3 (Ventura)** for the Intel build (llama.cpp sets that
+deployment target explicitly) and **26.0 (Tahoe)** for the Apple Silicon one
+(llama.cpp sets none, so the build inherits the macOS of the runner it was
+compiled on). A Mac below its build's minimum is told so and left alone - the
+installer records it as a manual step and moves on, rather than failing.
 
 The Intel build has a second limit that no header states and nothing can check
 in advance: it is compiled for the CPU of llama.cpp's CI runner, so an older
@@ -287,4 +364,7 @@ sudo dnf install libgomp      # Fedora
 `install.py` already downloads `llama-3.2-3b-instruct-q4_k_m.gguf` into `models/`,
 the first-run window offers the same download, and `python -m mimora.gguf_fetch`
 does it on its own (`--list` shows the target path and whether the file is there).
-To use a different model instead, download a small instruct model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M.gguf`) and place it at the path set by `EXTERNAL_MODEL_PATH` in `mimora/config.py` (default: `models/llama-3.2-3b-instruct-q4_k_m.gguf`).
+To use a different model instead, download a small instruct model (for example
+`Llama-3.2-3B-Instruct-Q4_K_M.gguf`) and name the file in `config/settings.json`
+as `"external_model_path"` (see `config/settings.example.json`). Without the
+key, Mimora uses the downloaded `models/llama-3.2-3b-instruct-q4_k_m.gguf`.

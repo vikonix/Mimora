@@ -1,15 +1,16 @@
 <!-- SPDX-License-Identifier: MIT -->
 <!-- Copyright (c) 2026 Valeriy Kovalev -->
 
-# New Engine - Phoneme-Based Multilingual Scoring
+# Phoneme engine (default): phoneme-based multilingual scoring
 
 *A short overview for technically literate readers. Focus: the ideas and the
 workflow, not the code.*
 
 ## The core idea
 
-The new engine answers a slightly different question: **did the learner produce
-the right sounds, in the right order, for this phrase?**
+The phoneme engine answers a slightly different question than the acoustic
+one: **did the learner produce the right sounds, in the right order, for this
+phrase?**
 
 Instead of comparing two audio clips, it compares two *sequences of phonemes*
 (the elementary speech sounds, written in the international IPA alphabet):
@@ -23,7 +24,7 @@ expected phonemes for any of 100+ languages come straight from text. The design
 goal is not a perfect grade but **actionable feedback**: showing the learner
 *where* they went wrong so they can improve.
 
-It lives as a separate module, selectable alongside the base engine.
+It lives as a separate module, selectable alongside the acoustic engine.
 
 ## The workflow
 
@@ -69,7 +70,7 @@ the *severity* of an error, not just its presence.
 The final grade blends **two axes**:
 
 - **Pronunciation quality** - how close the spoken sounds are to the expected
-  ones. As in the base engine, this is **anchored** between *good* and a
+  ones. As in the acoustic engine, this is **anchored** between *good* and a
   per-utterance *bad* baseline so that gibberish scores near 0 instead of drifting
   to a flattering middle.
 - **Recall** - the share of expected sounds the learner actually produced. This
@@ -95,7 +96,7 @@ It is **language-agnostic and reference-free** - its reason for existing - and i
 **locates errors well** (it reliably flags which sounds were off),
 which is exactly what the feedback UI needs. The trade-offs: turning speech into
 discrete phonemes **discards fine acoustic detail** (timing, stress, vowel
-length), so it is a weaker *precise grader* than the acoustic base engine, and its
+length), so it is a weaker *precise grader* than the acoustic engine, and its
 accuracy varies somewhat across speaker accents. For "help me hear my mistakes,"
-those trade-offs are acceptable; for fine-grained scoring, the base engine still
-leads.
+those trade-offs are acceptable; for fine-grained scoring, the acoustic engine
+still leads.

@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 name = "mimora"
 # Version is the single source of truth in mimora/__init__.py (read dynamically below).
 dynamic = ["version"]
-description = "Local, offline pronunciation trainer: Kokoro TTS prompts, Wav2Vec2 scoring, local LLM phrase generation."
+description = "Free, offline pronunciation trainer for English and Spanish. Speech synthesis, recognition and scoring run on your computer."
 readme = "README.md"
 # Tested on 3.11 and 3.12, and bounded rather than left open. The bound is not a
 # statement about the application: a full 3.14 run passed end to end,
@@ -30,8 +30,8 @@ readme = "README.md"
 # rather than relying on this value.
 #
 # Raising the ceiling is a deliberate act, together with WHEEL_TESTED_MAX in
-# install.py and the requirements section of README.md, once a newer minor is
-# verified to have wheels for every dependency.
+# install.py and the "Install from PyPI" section of README.md, once a newer
+# minor is verified to have wheels for every dependency.
 requires-python = ">=3.11,<3.13"
 # PEP 639 SPDX expression, not the older license = { file = ... } table: that
 # form embeds the whole licence TEXT into the License: metadata field, and
@@ -50,6 +50,13 @@ keywords = [
     "offline",
     "llm",
     "tkinter",
+    "pronunciation-trainer",
+    "accent-reduction",
+    "ipa",
+    "wav2vec2",
+    "kokoro",
+    "local-llm",
+    "privacy",
 ]
 # No "License ::" classifier: PyPI takes the licence from the field above, and
 # the two disagreeing is a known way to publish a package labelled twice.
@@ -256,6 +263,9 @@ dependencies = [
 Homepage = "https://github.com/vikonix/Mimora"
 Repository = "https://github.com/vikonix/Mimora"
 Issues = "https://github.com/vikonix/Mimora/issues"
+Changelog = "https://github.com/vikonix/Mimora/blob/main/CHANGELOG.md"
+Download = "https://github.com/vikonix/Mimora/releases/latest"
+Documentation = "https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md"
 
 # cli:main, not app:run. The application module imports torch, transformers and
 # Kokoro at module level, so an entry point naming it would load all of that
