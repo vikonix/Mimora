@@ -34,8 +34,10 @@ install](#quick-install-recommended).
 
 Needs 16 GB RAM and no graphics card. The models take about 4 GB (up to about
 8.5 GB with every model), and Mimora asks before it downloads them. The Setup
-file is not code-signed yet, so the first time Windows may show "Windows
-protected your PC": click **More info**, then **Run anyway**. Other ways to
+file is not code-signed yet. Edge may say that the file "isn't commonly
+downloaded": select **Keep**, then **Keep anyway**. The first time, Windows
+may show "Windows protected your PC": click **More info**, then **Run
+anyway**. Other ways to
 install (uv, pipx, pip, from a clone): [Installation](#installation).
 
 ---
@@ -206,9 +208,11 @@ If you prefer not to use a terminal, download
 release](https://github.com/vikonix/Mimora/releases/latest) and run it. It
 installs for the current user, without administrator rights, and it also
 installs the Visual C++ runtime if it is missing. It downloads Mimora from
-PyPI, so it needs an internet connection. The Setup file is not signed yet:
-Windows shows "Windows protected your PC" with an unknown publisher. Click
-**More info**, then **Run anyway**. To uninstall, use **Settings > Apps >
+PyPI, so it needs an internet connection. The Setup file is not signed yet.
+Edge may say that the file "isn't commonly downloaded": select **Keep**, then
+**Keep anyway**. Windows then shows "Windows protected your PC" with an
+unknown publisher. Click **More info**, then **Run anyway**. To uninstall,
+use **Settings > Apps >
 Installed apps**. The uninstaller asks whether to delete the models and
 settings too.
 
