@@ -103,8 +103,7 @@ cd Mimora
 
 # 2. All dependencies in one step
 #    The list lives in [project.dependencies] in pyproject.toml and covers both
-#    pronunciation engines (panphon included, for the default phoneme engine).
-#    No separate per-engine install is needed.
+#    pronunciation engines. No separate per-engine install is needed.
 #
 #    Editable (-e), because this is a clone: a plain `pip install .` would copy
 #    the code into site-packages, leaving a second copy that your edits do not

@@ -3,8 +3,9 @@
 #   pip install -r pronunciation/phoneme/requirements.txt
 #
 # Most deps overlap with pronunciation/acoustic/ (transformers/torch/librosa for the wav2vec2
-# recognizer, phonemizer-fork for the espeak reference). The one addition over the
-# acoustic core is panphon, used for the articulatory feature distance.
+# recognizer, phonemizer-fork for the espeak reference). The articulatory feature
+# distance needs no package: its vectors ship as data (phone_features.json,
+# generated from panphon by tools/gen_phone_features.py).
 #
 # NOTE: phonemizer needs espeak-ng, and it is NOT a separate install any more.
 # espeakng-loader (below) ships the shared library and its data as a wheel, and
@@ -33,9 +34,6 @@ phonemizer-fork>=3.3.0
 # moves every score with nothing to announce it. Kept in sync with
 # pyproject.toml, where the full reasoning lives.
 espeakng-loader>=0.2.4,<0.3
-# Articulatory feature distance for the phoneme substitution cost (the one dep the
-# acoustic core does not need).
-panphon>=0.20.0
 # transformers needs protobuf to parse the sentencepiece model when it builds the
 # wav2vec2 phoneme (fast) tokenizer. Usually pulled in transitively, but pin it so
 # a minimal standalone resolve does not fail with "requires the protobuf library".

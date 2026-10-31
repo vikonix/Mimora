@@ -271,14 +271,14 @@ def install_log(log_file, intro=()):
 def early_init():
     """UTF-8 console/env setup and warning filters (pre-import phase).
 
-    Prefer UTF-8 everywhere so non-ASCII (IPA phones, espeak-ng / panphon
-    data) never trips a cp1252 default on Windows. We deliberately do NOT
+    Prefer UTF-8 everywhere so non-ASCII (IPA phones, espeak-ng data) never
+    trips a cp1252 default on Windows. We deliberately do NOT
     re-exec the interpreter into UTF-8 mode: os.execv detaches stdout under
     some launchers (the orphaned process then fails any print with
     "[Errno 22] Invalid argument"). Instead we set the hint for child
     processes and switch our own console streams to UTF-8 where the stream
-    supports it. The in-process file reads that mattered (panphon's tables)
-    keep their own narrow UTF-8 fallback in pronunciation/phoneme/speech.py.
+    supports it. The in-process file reads give their encoding explicitly
+    (the phoneme feature table in pronunciation/phoneme/speech.py).
     """
     os.environ.setdefault("PYTHONUTF8", "1")
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")

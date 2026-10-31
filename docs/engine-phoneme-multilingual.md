@@ -62,8 +62,9 @@ tolerate this (see below).
 
 The two phoneme sequences are aligned with an **edit-distance** algorithm - the
 standard way to compare symbol sequences - but with a twist: the cost of a
-mismatch is **how articulatorily different the two sounds are**, measured with a
-phonetics library (**panphon**). Confusing the two English "r" sounds barely
+mismatch is **how articulatorily different the two sounds are**, measured with
+articulatory features from a phonetics library (**panphon**). The features are
+stored in a table that ships with Mimora, so panphon itself is not installed. Confusing the two English "r" sounds barely
 costs anything; swapping unrelated sounds costs a lot. Feedback therefore reflects
 the *severity* of an error, not just its presence.
 

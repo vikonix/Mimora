@@ -354,7 +354,7 @@ PLAYBACK_OWN_RECORDING = _bool("playback_own_recording", True)
 # latency. Off by default: the passes lengthen startup, and on slow machines
 # the wait up front hurts more than a slower first take - the cost simply
 # moves to the first take (and, for the phoneme engine, to the first
-# panphon/espeak use), it is never paid twice.
+# feature-table/espeak use), it is never paid twice.
 WARM_UP = _bool("warm_up", False)
 
 # Hardware Acceleration setup. A detected "cpu" wins outright (and costs no

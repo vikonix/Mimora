@@ -33,6 +33,9 @@ English (`american`/`british`) is fully calibrated; Spanish (`castilian`) runs
 the phoneme engine as **experimental** until
 `pronunciation/phoneme/es_model_calibration.json` lands. Adding a language is a
 profile module plus an engine calibration, never a new `if language == ...`.
+After a new language or variant, run `tools/gen_phone_features.py` again: its
+espeak output goes into the phoneme feature table, and a phone missing there
+costs 1.0.
 
 The pronunciation-scoring core in `pronunciation/acoustic/` is adapted from
 [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) and reused as
@@ -170,6 +173,12 @@ installs or imports llama-cpp-python.
   are different in KIND, which is why they sit in different directories: one
   ships with the code, the other is state this machine produced, and an
   installed package's own directory is no place to write state to.
+  The articulatory feature vectors of the substitution cost come from
+  `pronunciation/phoneme/phone_features.json`, generated from panphon by
+  `tools/gen_phone_features.py`. The runtime does not import panphon: it
+  depends on `editdistance`, which has no wheels for new Pythons. Generate the
+  table again after a change of the recognizer, of espeak-ng, of
+  `_normalize_phones` / `_PHONE_FOLD`, or of the languages.
 - [`pronunciation/acoustic/speech.py`](pronunciation/acoustic/speech.py) -
   alternative engine (adapted from OpenPronounce). Wav2Vec2 embeddings +
   per-step cosine DTW. Calibratable floor in `config/calibration_acoustic.json`;
@@ -353,6 +362,16 @@ answered in `first_run.py` instead.
   built from the current code - for one fix at a time. It installs nothing and
   uses no network: a file name in the index is spent once and for all, so the
   artefact is checked before the upload rather than after it.
+- [`tools/gen_phone_features.py`](tools/gen_phone_features.py) - generates
+  `pronunciation/phoneme/phone_features.json` from panphon, for every token of
+  the recognizer vocabulary and of the espeak output of every language
+  profile. Needs [`tools/requirements-dev.txt`](tools/requirements-dev.txt)
+  (panphon, not in the wheel) and `python -X utf8`.
+- [`tools/capture_golden_scores.py`](tools/capture_golden_scores.py) - wrote
+  `tests/data/phoneme_alignment_golden.json` with panphon before the move to
+  the table. The test compares the alignments with it to the bit. It refuses
+  to run on the table-based code and does not replace the file without
+  `--force`.
 
 ### Shipped data
 

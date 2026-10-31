@@ -1,0 +1,14 @@
+# Packages for development tools only. They are NOT in the wheel and NOT in
+# [project.dependencies]. They are also not an extra in pyproject.toml: an
+# extra goes into the metadata of the wheel, and panphon must not be there.
+#
+# Install them into the virtual environment of the clone:
+#
+#     pip install -r tools/requirements-dev.txt
+#
+# panphon: the source of the articulatory feature vectors. Only
+# tools/gen_phone_features.py and tools/capture_golden_scores.py import it.
+# The runtime reads the generated pronunciation/phoneme/phone_features.json.
+# A new panphon version can change the vectors: after an update, generate the
+# table again and run tests/test_phoneme.py.
+panphon>=0.20.0

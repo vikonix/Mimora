@@ -120,10 +120,7 @@ WHEEL_TESTED_MAX = (3, 12)
 # requirements step installs binary-only to stop an unsupported interpreter
 # from silently compiling a package that lacks a wheel; these few must be
 # exempted or the install would fail on them on every Python version.
-# unicodecsv: pulled by panphon (phoneme engine); every panphon release depends
-# on it and it ships sdist-only, so --only-binary makes the resolve impossible
-# without this exemption. Pure-Python - builds from sdist with no compiler.
-SOURCE_ONLY_PACKAGES = ("fastdtw", "docopt", "unicodecsv")
+SOURCE_ONLY_PACKAGES = ("fastdtw", "docopt")
 
 # CUDA wheel series, newest first. We pick the newest series whose CUDA version
 # is not greater than the one the driver reports (CUDA is forward compatible at
@@ -164,7 +161,7 @@ REQUIRED_DISTS = [
     "numpy", "soundfile", "sounddevice", "kokoro", "supertonic", "openai",
     "torch", "transformers",
     "librosa", "scipy", "scikit-learn", "fastdtw",
-    "phonemizer-fork", "espeakng-loader", "python-Levenshtein", "panphon",
+    "phonemizer-fork", "espeakng-loader", "python-Levenshtein",
     "sentencepiece",
     "ttkbootstrap", "pillow", "onnxruntime", "wordfreq",
 ]
