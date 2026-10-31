@@ -8,7 +8,7 @@ in the comment next to that line.
 
 ## Project Overview
 
-Mimora is a local, offline **pronunciation trainer** (Python 3.11/3.12, Tkinter
+Mimora is a local, offline **pronunciation trainer** (Python 3.11-3.14, Tkinter
 GUI). It speaks an LLM-generated phrase aloud, records the user repeating it,
 then scores the attempt against the reference with the active pronunciation
 engine plus prosody. The user repeats the same phrase until satisfied, then

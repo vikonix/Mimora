@@ -12,27 +12,32 @@ name = "mimora"
 dynamic = ["version"]
 description = "Free, offline pronunciation trainer for English and Spanish. Speech synthesis, recognition and scoring run on your computer."
 readme = "README.md"
-# Tested on 3.11 and 3.12, and bounded rather than left open. The bound is not a
-# statement about the application: a full 3.14 run passed end to end,
-# pronunciation analysis and llama-server included. It is a statement about
-# the INSTALL. Two dependencies publish no cp314 wheels and are therefore
-# compiled from source - editdistance (via panphon) and curated-tokenizers (via
-# kokoro -> misaki[en] -> spacy-curated-transformers 0.3.1) - and both are C
-# extensions, so the install needs a C++ compiler the audience for a published
-# package does not have. Both lines end upstream: raising
-# spacy-curated-transformers to 2.x wants thinc 9, while misaki pins spacy 3.8 to
-# thinc 8.
+# Bounded rather than left open: the bound is a statement about the INSTALL,
+# that every dependency has a wheel. For 3.13 and 3.14 a resolution on every
+# platform found wheels for all of them (2026-10-31, see
+# prototypes-pronunciation/tasks/fix-linux-xft-problem.md, 3.5). The two
+# packages that used to be compiled from source are gone or fixed:
+# editdistance came with panphon, which the runtime no longer needs (the
+# feature vectors ship in pronunciation/phoneme/phone_features.json), and
+# curated-tokenizers publishes cp314 wheels since 0.0.10.
 #
-# With the bound, `pip install mimora` on 3.14 refuses in one line instead of
-# dying in somebody else's Cython. Raising it would REMOVE that refusal and gain
-# nothing in exchange, because `uv tool install` ignores requires-python outright
-# (documented behaviour) - which is why README passes --python 3.12 explicitly
-# rather than relying on this value.
+# Two platforms are narrower than this range, and the bound cannot say so:
+# - Intel macOS stays on 3.12. Its pinned torch==2.2.2 has no wheels newer
+#   than cp312, so the install stops with a resolution error there.
+# - Apple Silicon on 3.14 needs macOS 14 or newer: the onnxruntime wheels
+#   for cp314 (from 1.24.1, via supertonic) are built for macOS 14.
+# The install scripts choose the Python version per platform for that reason.
+#
+# uv ignores requires-python when it CHOOSES the interpreter of a tool
+# environment (documented behaviour), which is why README passes --python
+# explicitly. The resolution still checks the bound, so a newer, unverified
+# minor refuses in one line instead of failing on a missing wheel.
 #
 # Raising the ceiling is a deliberate act, together with WHEEL_TESTED_MAX in
-# install.py and the "Install from PyPI" section of README.md, once a newer
-# minor is verified to have wheels for every dependency.
-requires-python = ">=3.11,<3.13"
+# install.py, the classifiers below and the "Install from PyPI" section of
+# README.md, once a newer minor is verified to have wheels for every
+# dependency.
+requires-python = ">=3.11,<3.15"
 # PEP 639 SPDX expression, not the older license = { file = ... } table: that
 # form embeds the whole licence TEXT into the License: metadata field, and
 # setuptools deprecated it in 77 - which is the floor in build-system above.
@@ -74,6 +79,8 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Education",
     "Topic :: Multimedia :: Sound/Audio :: Speech",
 ]

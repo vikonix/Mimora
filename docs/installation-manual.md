@@ -44,7 +44,7 @@ pipx install --python 3.12 mimora
 pipx runpip mimora install torch --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
 ```
 
-**pip** works too, into a virtual environment of Python 3.11 or 3.12:
+**pip** works too, into a virtual environment of Python 3.11 to 3.14 (3.11 or 3.12 on an Intel Mac):
 
 ```bash
 python -m venv .venv
@@ -288,10 +288,9 @@ just several times slower.
   Python version requests like `.python-version` files and the `requires-python`
   value" ([uv docs](https://docs.astral.sh/uv/concepts/tools/#python-versions)),
   so without the flag uv installs into whatever interpreter it finds first. On a
-  machine where that is 3.14 the install compiles `editdistance` and
-  `curated-tokenizers` from source, because neither publishes a cp314 wheel - and
-  fails outright without a C++ compiler. uv downloads a 3.12 itself if there is
-  none.
+  machine where that is newer than 3.14 the resolution refuses, because the
+  package declares `requires-python = ">=3.11,<3.15"`. uv downloads a 3.12 itself
+  if there is none.
 - **The LLM** needs no pip package at all: it runs in the official llama.cpp
   binary, and the fetcher below picks the GPU build for your platform
   automatically - CUDA on Windows, Vulkan on Linux, where llama.cpp publishes

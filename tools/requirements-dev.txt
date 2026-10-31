@@ -11,4 +11,8 @@
 # The runtime reads the generated pronunciation/phoneme/phone_features.json.
 # A new panphon version can change the vectors: after an update, generate the
 # table again and run tests/test_phoneme.py.
+#
+# panphon depends on editdistance, which publishes no wheels for Python 3.13
+# and newer, so there it needs a C++ compiler. Use a virtual environment with
+# Python 3.12 for these tools.
 panphon>=0.20.0

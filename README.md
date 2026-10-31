@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://pypi.org/project/mimora/"><img src="https://img.shields.io/pypi/v/mimora" alt="PyPI version"></a>
-  <a href="https://pypi.org/project/mimora/"><img src="https://img.shields.io/pypi/pyversions/mimora" alt="Python 3.11 | 3.12"></a>
+  <a href="https://pypi.org/project/mimora/"><img src="https://img.shields.io/pypi/pyversions/mimora" alt="Python 3.11 | 3.12 | 3.13 | 3.14"></a>
   <a href="https://github.com/vikonix/Mimora/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="License: MIT"></a>
 </p>
 
@@ -224,10 +224,10 @@ installer instead of adding it to an everyday environment.
 installer that supplies both the Python version and the CUDA build of PyTorch by
 itself.
 
-Mimora needs **Python 3.11 or 3.12**. Python 3.13 and newer install only with a
-C++ compiler, because two dependencies publish no wheels for them. `pip` refuses
-such a version by itself; `uv` does not, so pass `--python 3.12` to it (see
-below).
+Mimora needs **Python 3.11 to 3.14**. Two platforms are narrower: an Intel Mac
+needs 3.11 or 3.12, and a Mac with Apple Silicon needs macOS 14 or newer for
+3.14. `pip` checks the version range by itself; `uv` does not when it chooses
+the interpreter, so pass `--python` to it (see below).
 
 uv is a single binary and needs no Python of its own:
 
