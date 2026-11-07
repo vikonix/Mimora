@@ -173,8 +173,9 @@ dependencies = [
     # the application stops at "Initialization Failed" (explosion/spaCy#14058).
     # An upper bound and not "!=3.0.14": the cause is not known, and the next
     # release can break the same way. Raise it only after the issue is closed
-    # and a load of en_core_web_sm passes with the new version. install.sh and
-    # install.ps1 pass the same bound to uv for releases built without it.
+    # and a load of en_core_web_sm passes with the new version. The install
+    # scripts (install-linux.sh, install-macos.sh, install.ps1) pass the same
+    # bound to uv for releases built without it.
     "preshed<3.0.14",
     # Supertonic 3 (mimora/tts.py SupertonicBackend, Spanish). Pulls
     # onnxruntime and huggingface-hub. The weights (~400 MB, OpenRAIL-M) are

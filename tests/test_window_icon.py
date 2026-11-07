@@ -159,7 +159,7 @@ class WindowClassTests(unittest.TestCase):
     def test_the_splash_and_the_menu_entry_use_the_same_class(self):
         # With a different value in one place, the Linux desktop does not
         # match that window to the menu entry, and no other test fails.
-        sh = (_INSTALLER_DIR / "install.sh").read_text(encoding="utf-8")
+        sh = (_INSTALLER_DIR / "install-linux.sh").read_text(encoding="utf-8")
         self.assertEqual(splash._WM_CLASS, window_icon.WM_CLASS)
         self.assertEqual(
             re.findall(r"^StartupWMClass=(.+)$", sh, re.MULTILINE),

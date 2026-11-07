@@ -44,10 +44,13 @@ goto collect_components
 
 rem --managed-python: always the Python build of uv, never a Python that is
 rem   already on the computer.
-rem --python 3.12: a uv tool environment ignores requires-python (see README).
+rem --python 3.14: a uv tool environment ignores requires-python (see README),
+rem   so the version is named here. Every dependency has cp314 wheels for
+rem   Windows, the CUDA build of torch from --torch-backend included. Keep it
+rem   the same as in install.ps1.
 rem --torch-backend auto: without it an NVIDIA computer gets a CPU-only torch.
 rem --force: an upgrade replaces the previous installation.
-"%APP_DIR%uv.exe" tool install --force --managed-python --python 3.12 --torch-backend auto "%SPEC%"
+"%APP_DIR%uv.exe" tool install --force --managed-python --python 3.14 --torch-backend auto "%SPEC%"
 if errorlevel 1 (
     echo.
     echo Mimora installation failed. Read the messages above.
