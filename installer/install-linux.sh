@@ -1,13 +1,13 @@
 #!/bin/sh
 # Installs Mimora on Linux with uv, for a user who uses a terminal.
-# install.sh chooses this script on Linux. It also runs by itself:
+# It also runs from a downloaded file:
 #   sh install-linux.sh
 #
 # Install or upgrade (Ubuntu Desktop has wget but not curl):
-#   wget -qO- https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh
+#   wget -qO- https://github.com/vikonix/Mimora/releases/latest/download/install-linux.sh | sh
 #
 # Uninstall:
-#   wget -qO- https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh -s -- --uninstall
+#   wget -qO- https://github.com/vikonix/Mimora/releases/latest/download/install-linux.sh | sh -s -- --uninstall
 #
 # Environment variables:
 #   MIMORA_VERSION      install this exact version, for example 1.2.0rc1.

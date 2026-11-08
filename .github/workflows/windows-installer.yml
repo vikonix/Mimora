@@ -116,6 +116,9 @@ jobs:
       # The install scripts go to the same release in the same step: they
       # are served from releases/latest/download/, and a second workflow that
       # creates the same release at the same time can fail.
+      # install.sh is only a stub that prints the command for the platform
+      # script, so that the old one-line command does not fail without a
+      # message. It can go once that command is no longer in use.
       - name: "Attach the installer and the install scripts to the release"
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2

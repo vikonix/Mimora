@@ -61,7 +61,8 @@ jobs:
         uses: astral-sh/setup-uv@v6
 
       # --managed-python: the Python build from uv, the same that
-      # install.ps1 and install.sh install. Without it uv takes the Python of
+      # install.ps1 and install-macos.sh install (install-linux.sh uses the
+      # system Python, for its Tk with Xft). Without it uv takes the Python of
       # the runner image when one is there, and the system Python on Ubuntu
       # has no tkinter.
       # Editable, as AGENTS.md says: paths.py stays in source-tree mode.

@@ -1,13 +1,13 @@
 #!/bin/sh
 # Installs Mimora on macOS with uv, for a user who uses a terminal.
-# install.sh chooses this script on macOS. It also runs by itself:
+# It also runs from a downloaded file:
 #   sh install-macos.sh
 #
 # Install or upgrade (macOS has curl but not wget):
-#   curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh
+#   curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install-macos.sh | sh
 #
 # Uninstall:
-#   curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh -s -- --uninstall
+#   curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install-macos.sh | sh -s -- --uninstall
 #
 # Environment variables:
 #   MIMORA_VERSION      install this exact version, for example 1.2.0rc1.
@@ -20,7 +20,7 @@
 # This script does not change shell startup files. It prints the commands
 # that do.
 #
-# POSIX sh, not bash, the same as install.sh and install-linux.sh.
+# POSIX sh, not bash, the same as install-linux.sh.
 
 set -eu
 
