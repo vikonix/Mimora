@@ -214,7 +214,15 @@ dependencies = [
     # builds a fast tokenizer; both NLLB and the wav2vec2 phoneme tokenizer take
     # that path. Usually transitive, pinned so a minimal resolve cannot fail
     # with "requires the protobuf library".
-    "sentencepiece>=0.1.99",
+    #
+    # Upper bound on Intel macOS only: sentencepiece 0.2.3 has no wheel that
+    # Intel macOS 12 can use, so uv builds it from source (with its bundled
+    # protobuf and abseil), and the build fails with "bad_optional_access is
+    # unavailable: introduced in macOS 10.13" (the package compiles with
+    # -mmacosx-version-min=10.9). 0.2.1 ships macosx_10_9_x86_64 wheels.
+    # Found on Intel Mac, macOS 12.7.6, 2026-11-08.
+    "sentencepiece>=0.1.99; platform_system != 'Darwin' or platform_machine != 'x86_64'",
+    "sentencepiece>=0.1.99,<0.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
     "protobuf>=3.20.0",
 
     # --- LLM and phrase generation ---------------------------------------
