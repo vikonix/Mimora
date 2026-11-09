@@ -103,6 +103,18 @@ The Windows Setup file takes no options: it always installs its own version.
 `install.sh` in a release only prints the command for your platform. It stays
 so that the old one-line command does not fail without a message.
 
+When Mimora is already installed, the scripts first install the new version
+with the same options into a temporary folder next to the uv tools folder
+(`<uv tool dir>-mimora-trial`). They replace the installed Mimora only when
+that works. When uv makes the environment again (for example for another
+Python), it deletes the old one before the new one is complete, so without this
+check a failed update could leave no Mimora at all. The check fills the uv
+cache, so the real installation after it downloads nothing again. The check
+and the messages of uv go to `logs/install.log` in the
+[data directory](technical-details.md#where-mimora-keeps-your-files). An
+interrupted check leaves its folder; the next run deletes it. A first
+installation has no check.
+
 ---
 
 ## Python dependencies

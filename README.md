@@ -186,7 +186,9 @@ downloads.
 <details>
 <summary>Upgrade and uninstall</summary>
 
-To upgrade, run the same command again. To uninstall:
+To upgrade, run the same command again. The script first tries the new version
+in a separate folder and replaces the installed Mimora only when that works.
+To uninstall:
 
 ```powershell
 # Windows (PowerShell)
@@ -396,8 +398,9 @@ Found a bug, or have a question or an idea? Open an issue on
 `main.log` and `install.log` from the `logs/` folder of the [data
 directory](#where-mimora-keeps-your-files), and say which operating system and
 which way of installing you used. `main.log` is rewritten at every start, so
-copy it before you start Mimora again. `install.log` keeps every installation
-and first-start download, and is there once Mimora has downloaded something.
+copy it before you start Mimora again. `install.log` keeps every installation,
+update check and first-start download, and is there once Mimora has downloaded
+or updated something.
 
 ## Contributing
 
