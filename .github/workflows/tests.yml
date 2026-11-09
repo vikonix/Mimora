@@ -33,9 +33,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 3.12: the Python of Ubuntu 24.04 and of an Intel Mac.
           - { os: windows-latest, python: "3.12" }
           - { os: ubuntu-latest, python: "3.12" }
           - { os: macos-latest, python: "3.12" }
+          # 3.14 is the upper limit of requires-python and the Python that
+          # the install scripts use on Windows and on Apple Silicon. On Linux
+          # it is the system Python of Ubuntu 26.04; here it is a build from
+          # uv, which is sufficient because the tests draw no window.
+          - { os: windows-latest, python: "3.14" }
+          - { os: ubuntu-latest, python: "3.14" }
+          - { os: macos-latest, python: "3.14" }
           # 3.11 is the lower limit of requires-python. One platform is
           # sufficient: the difference is in dependency resolution, not in
           # platform branches.
