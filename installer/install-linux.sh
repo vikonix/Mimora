@@ -33,6 +33,9 @@ warn() {
     printf 'WARNING: %s\n' "$1" >&2
 }
 
+# The rule that opens a section of logs/install.log, as in install.py.
+log_rule='======================================================================'
+
 die() {
     printf 'ERROR: %s\n' "$1" >&2
     exit 1
@@ -320,12 +323,142 @@ data_dir() {
     fi
 }
 
+# The update check (trial_update) writes into logs/install.log of the data
+# directory: the same append-only file that install.py and the first start of
+# Mimora write, so that one file tells what was installed on this computer
+# and how. Each run is one section, in the format of install.py.
+log_line() {
+    printf '    %s\n' "$1" >>"$install_log"
+}
+
+# Writes one line into the log only when this run made an update check. A
+# first installation has no check and writes no log.
+log_result() {
+    if [ -n "$install_log" ]; then
+        log_line "$1"
+    fi
+}
+
+# The distribution and the architecture, for the log.
+system_info() {
+    name=""
+    if [ -r /etc/os-release ]; then
+        # In a subshell, so that no variable of os-release changes this script.
+        name=$(. /etc/os-release && printf '%s' "${PRETTY_NAME:-}")
+    fi
+    printf '%s, %s\n' "${name:-Linux}" "$(uname -m)"
+}
+
+# Prints the version and Python of the installed Mimora, for example
+# "Mimora 1.2.0, Python 3.12.3", or nothing when they cannot be read.
+# $1 is the full path of uv.
+installed_version() {
+    installed_python="$("$1" tool dir)/mimora/bin/python"
+    if [ -x "$installed_python" ]; then
+        "$installed_python" -c 'import platform, mimora; print("Mimora", mimora.__version__ + ", Python", platform.python_version())' 2>/dev/null || true
+    fi
+}
+
+# Installs Mimora with the same options into a temporary tool directory
+# first, when Mimora is already installed. When uv changes the Python of a
+# tool, it deletes the old environment before the new one is complete, so a
+# failed update would leave no Mimora at all. When the check fails, the
+# installed Mimora is not changed. The check fills the uv cache, so the
+# installation after it downloads nothing again.
+# A first installation has nothing to keep, so it gets no check.
+# $1 is the full path of uv; the other arguments are those of
+# "uv tool install". Sets install_log when it writes the log.
+trial_update() {
+    uv_path=$1
+    shift
+    tool_dir=$("$uv_path" tool dir) || return 0
+    if [ -z "$tool_dir" ] || [ ! -d "$tool_dir/mimora" ]; then
+        return 0
+    fi
+    # Beside the real tool directory, so usually on the same disk as the uv
+    # cache: uv then links the files from the cache instead of copying them.
+    trial_dir="${tool_dir%/}-mimora-trial"
+    log_dir="$(data_dir)/logs"
+    mkdir -p "$log_dir" || die "Could not create the log directory $log_dir"
+    install_log="$log_dir/install.log"
+    # An interrupted check (Ctrl+C) leaves its directory behind. It is
+    # removed here, before the next check.
+    rm -rf "$trial_dir" \
+        || die "Could not delete $trial_dir, which an earlier check left. Delete it yourself and run this command again."
+
+    step "Checking the update in a separate environment first. The installed Mimora stays until the check passes."
+    printf '  uv shows no progress bars in this step. Its messages also go to %s\n' "$install_log"
+    # A blank line only between two sections, so that a new file opens with
+    # the rule, as in install.py.
+    if [ -s "$install_log" ]; then
+        printf '\n' >>"$install_log"
+    fi
+    printf '%s\nMimora update check (install-linux.sh)\n%s\n' "$log_rule" "$log_rule" >>"$install_log"
+    log_line "started: $(date '+%Y-%m-%d %H:%M:%S %z')"
+    log_line "requested: $package"
+    installed=$(installed_version "$uv_path")
+    log_line "installed: ${installed:-unknown (the installed environment did not answer)}"
+    log_line "uv: $("$uv_path" --version 2>/dev/null || true)"
+    log_line "system: $(system_info)"
+    log_line "command: uv tool install $*"
+
+    # The loop puts each message on the screen and into the log, where it
+    # gets the prefix that install.py gives the output of a command: so
+    # the messages of uv are not mixed up with the lines of the section.
+    # "|| [ -n ... ]" keeps a last line without a newline. A pipeline gives
+    # the exit code of its last command (the loop), and POSIX sh has no
+    # pipefail, so the exit code of uv goes through a file.
+    # PATH with the temporary bin directory: without it uv warns that the
+    # directory is not on PATH, which is true and does not matter here.
+    status_file=$(mktemp) || die "Could not create a temporary file."
+    {
+        code=0
+        UV_TOOL_DIR="$trial_dir" UV_TOOL_BIN_DIR="$trial_dir/bin" PATH="$trial_dir/bin:$PATH" \
+            "$uv_path" tool install "$@" 2>&1 || code=$?
+        printf '%s\n' "$code" >"$status_file"
+    } | while IFS= read -r line || [ -n "$line" ]; do
+        printf '%s\n' "$line"
+        log_line "| $line"
+    done
+    trial_status=$(cat "$status_file")
+    rm -f "$status_file"
+
+    if [ "$trial_status" = 0 ]; then
+        # --version answers without importing torch (mimora/cli.py), so it
+        # costs less than a second. It finds a broken command or a broken
+        # installation of the Mimora package itself.
+        if trial_version=$("$trial_dir/bin/mimora" --version 2>&1); then
+            log_line "check: passed"
+            log_line "version: $trial_version"
+        else
+            log_line "check: installed, but \"mimora --version\" failed: $trial_version"
+            trial_status=version
+        fi
+    else
+        log_line "check: failed, exit code $trial_status"
+    fi
+    rm -rf "$trial_dir"
+
+    if [ "$trial_status" != 0 ]; then
+        log_line "result: the installed Mimora was not changed"
+        die "The update failed in the check, so the installed Mimora was not changed. Read the messages above; they are also in $install_log"
+    fi
+    step "The check passed. Replacing the installed Mimora"
+}
+
+# Ends the installation after the real "uv tool install" failed.
+install_failed() {
+    log_result "result: the installation failed after the check passed"
+    die "The Mimora installation failed. Read the messages above. If uv reports an unknown option, update uv ('uv self update') and run this command again."
+}
+
 install_mimora() {
     package=mimora
     if [ -n "${MIMORA_VERSION:-}" ]; then
         package="mimora==$MIMORA_VERSION"
     fi
     banner "$package"
+    install_log=""
 
     uv=$(find_uv)
     # Set when this run installed uv: the uv installer adds its own directory
@@ -361,8 +494,13 @@ install_mimora() {
     #   The wheels up to 1.2.0rc1 do not exclude it, and the script installs
     #   them too. uv keeps the requirement, so "uv tool upgrade" keeps it.
     #   Remove it together with the bound in pyproject.toml.
-    "$uv" tool install --upgrade --python-preference system --python ">=3.12,<3.15" --with "preshed<3.0.14" "$package" \
-        || die "The Mimora installation failed. Read the messages above. If uv reports an unknown option, update uv ('uv self update') and run this command again."
+    set -- --upgrade --python-preference system --python ">=3.12,<3.15" --with "preshed<3.0.14" "$package"
+    trial_update "$uv" "$@"
+    "$uv" tool install "$@" || install_failed
+    if [ -n "$install_log" ]; then
+        installed=$(installed_version "$uv")
+        log_line "result: installed ${installed:-Mimora, the version could not be read}"
+    fi
 
     bin_dir=$("$uv" tool dir --bin)
     check_tool_python "$uv"

@@ -125,7 +125,9 @@ installs or imports llama-cpp-python.
   `with` block, so that what the first-run window downloaded outlives the next
   launch truncating `main.log`. It writes the same `logs/install.log` that
   `install.py` writes, which is the point - that script is not in the wheel,
-  so on a wheel install nothing else records what was installed. What that file
+  so on a wheel install nothing else records what was installed (the installer
+  scripts in `installer/` add a section only for an update check, never for a
+  first installation). What that file
   does NOT keep is named in `_INSTALL_LOG_MUTED` (`httpx`, one INFO line per
   request), by logger name and on that handler only - `main.log` keeps them.
   `open_log_section()` writes a run header into one handler's file, blank-line
