@@ -143,17 +143,17 @@ model list: [Technical details](https://github.com/vikonix/Mimora/blob/main/docs
 ### Quick install (recommended)
 
 One command installs [uv](https://docs.astral.sh/uv/) if it is missing, then
-Mimora with Python 3.12, and adds Mimora to the Start menu (Windows) or the
-application menu (Linux). On macOS, start it with `mimora` in a terminal. Copy
-the command into a terminal. Do not download the script with a browser and run
+Mimora, and adds Mimora to the Start menu (Windows) or the application menu
+(Linux). On macOS, start it with `mimora` in a terminal. Copy the command into
+a terminal. Do not download the script with a browser and run
 it as a file.
 
 ```bash
 # macOS
-curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh
+curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install-macos.sh | sh
 
 # Linux (Ubuntu Desktop has wget but not curl)
-wget -qO- https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh
+wget -qO- https://github.com/vikonix/Mimora/releases/latest/download/install-linux.sh | sh
 ```
 
 ```powershell
@@ -168,6 +168,11 @@ powershell -ExecutionPolicy ByPass -c "irm https://github.com/vikonix/Mimora/rel
 does not change. On Windows the script also installs the Visual C++ runtime if
 it is missing, and on a computer with an NVIDIA GPU it gets the CUDA build of
 PyTorch.
+
+**Python.** On Windows and macOS the script uses a Python build from uv: 3.14,
+or 3.12 on an Intel Mac and on macOS 13. On Linux it uses the system Python
+(3.12 on Ubuntu 24.04, 3.14 on Ubuntu 26.04), because only its Tk draws smooth
+text.
 
 **On Linux** the script does not run `sudo`. When system packages are missing,
 it prints one `apt` command for them at the end: run it before the first start.
@@ -190,10 +195,10 @@ powershell -ExecutionPolicy ByPass -c "& ([scriptblock]::Create((irm https://git
 
 ```bash
 # macOS
-curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh -s -- --uninstall
+curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install-macos.sh | sh -s -- --uninstall
 
 # Linux
-wget -qO- https://github.com/vikonix/Mimora/releases/latest/download/install.sh | sh -s -- --uninstall
+wget -qO- https://github.com/vikonix/Mimora/releases/latest/download/install-linux.sh | sh -s -- --uninstall
 ```
 
 Uninstalling keeps the models, settings and logs. The script prints the
@@ -226,8 +231,8 @@ itself.
 
 Mimora needs **Python 3.11 to 3.14**. Two platforms are narrower: an Intel Mac
 needs 3.11 or 3.12, and a Mac with Apple Silicon needs macOS 14 or newer for
-3.14. `pip` checks the version range by itself; `uv` does not when it chooses
-the interpreter, so pass `--python` to it (see below).
+3.14. uv does not check this range when it chooses the interpreter, so pass
+`--python` to it (see below).
 
 uv is a single binary and needs no Python of its own:
 
@@ -267,8 +272,8 @@ portaudio`. Details in [Tk on
 Linux](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#tk-on-linux-tkinter) and [Audio on
 Linux](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#audio-on-linux-portaudio). Add a monochrome
 emoji font as well, or the mic button draws blank boxes. The font helps only
-when uv uses the system Python; with a Python that uv downloads itself the icons
-stay blank (see [Emoji icons on
+with the system Python, which the Linux command below asks for; with a Python
+that uv downloads itself the icons stay blank (see [Emoji icons on
 Linux](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#emoji-icons-on-linux-mic-button-shows-a-blank-box)).
 On a minimal system (WSL, a container, a server) also install `libgomp1`: the
 phrase generator links against it, and a desktop system usually has it already
@@ -280,13 +285,23 @@ binary](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#
 Then install Mimora and start it:
 
 ```bash
+# Windows, and macOS 14 or newer on Apple Silicon
+uv tool install mimora --python 3.14
+
+# Intel Mac, or macOS 13
 uv tool install mimora --python 3.12
+
+# Linux: the system Python (3.12 on Ubuntu 24.04, 3.14 on Ubuntu 26.04)
+uv tool install mimora --python-preference system --python ">=3.12,<3.15"
+
 mimora
 ```
 
-`--python 3.12` is not optional. A uv tool environment ignores the package's
+`--python` is not optional. A uv tool environment ignores the package's
 `requires-python`, so without the flag uv installs into whatever interpreter it
-finds first. uv downloads a 3.12 itself if the machine has none.
+finds first. uv downloads the version itself if the machine has none. On Linux
+the system Python matters for the window: the Python build from uv has a Tk
+that draws the text without smoothing.
 
 <details>
 <summary><b>Windows with an NVIDIA GPU:</b> add <code>--torch-backend auto</code></summary>
@@ -296,13 +311,13 @@ PyPI's CPU-only wheel. **Do not add this flag on Linux or macOS** - see [GPU sup
 what it does there.
 
 ```powershell
-uv tool install mimora --python 3.12 --torch-backend auto
+uv tool install mimora --python 3.14 --torch-backend auto
 ```
 
 </details>
 
 **[pipx and pip](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#pipx-and-pip)**
-work as well.
+work as well, but only with Python 3.11 or 3.12.
 
 The install itself downloads no models. The first start does, and it asks first
 (see [Models](https://github.com/vikonix/Mimora/blob/main/docs/technical-details.md#models)). Those downloads and your settings live in the operating

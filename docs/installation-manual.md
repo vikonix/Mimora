@@ -44,7 +44,7 @@ pipx install --python 3.12 mimora
 pipx runpip mimora install torch --index-url https://download.pytorch.org/whl/cu128 --force-reinstall
 ```
 
-**pip** works too, into a virtual environment of Python 3.11 to 3.14 (3.11 or 3.12 on an Intel Mac):
+**pip** works too, into a virtual environment of Python 3.11 or 3.12:
 
 ```bash
 python -m venv .venv
@@ -54,6 +54,11 @@ python -m venv .venv
 pip install mimora
 mimora
 ```
+
+pipx and pip stop at 3.12 for now. The speech synthesizer (kokoro and misaki,
+up to 0.9.4) declares `requires-python <3.13`; pip respects that bound and
+finds no version for 3.13 or 3.14. uv ignores the upper bound of a dependency,
+which is why the uv installs can use 3.14.
 
 Upgrade and uninstall with pipx:
 
@@ -66,7 +71,7 @@ pipx uninstall mimora
 
 ## Options of the install scripts
 
-`install.ps1` and `install.sh` (the [quick
+`install.ps1`, `install-macos.sh` and `install-linux.sh` (the [quick
 install](../README.md#quick-install-recommended)) read two environment
 variables:
 
@@ -74,6 +79,9 @@ variables:
   a plain install does not take. After an exact version, `uv tool upgrade
   mimora` does not upgrade: run the script again, with the new version in the
   variable, or without it for the newest normal version.
+  The newest script is written for the newest version. For an older version,
+  take the script from the release of that version:
+  `https://github.com/vikonix/Mimora/releases/download/v<version>/`.
 - `MIMORA_NO_SHORTCUT` - any value: no Start menu shortcut (Windows) and no
   application menu entry (Linux).
 
@@ -81,16 +89,19 @@ The variable has to reach the script, not the download command:
 
 ```powershell
 # Windows (PowerShell)
-$env:MIMORA_VERSION = "1.2.0"
+$env:MIMORA_VERSION = "1.4.0rc1"
 irm https://github.com/vikonix/Mimora/releases/latest/download/install.ps1 | iex
 ```
 
 ```bash
-# macOS (on Linux: wget -qO- instead of curl -LsSf)
-curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install.sh | MIMORA_VERSION=1.2.0 sh
+# macOS (on Linux: wget -qO- instead of curl -LsSf, and install-linux.sh)
+curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install-macos.sh | MIMORA_VERSION=1.4.0rc1 sh
 ```
 
 The Windows Setup file takes no options: it always installs its own version.
+
+`install.sh` in a release only prints the command for your platform. It stays
+so that the old one-line command does not fail without a message.
 
 ---
 
@@ -180,14 +191,13 @@ environment built from it sees directly (a venv isolates `site-packages`, not
 the stdlib), so the module becomes importable at once: nothing to reinstall and
 no environment to recreate.
 
-Which machines this hits is not obvious, because uv reuses a **system**
-interpreter when it finds one of the requested version and downloads its own
-only otherwise - and the build it downloads (python-build-standalone) carries
-Tcl/Tk inside. So `uv tool install mimora --python 3.12` needs the package
-above on Ubuntu 24.04 (system 3.12) and Debian 12 (3.11), and needs nothing on
-a distribution whose system Python is 3.13, where uv has to fetch a 3.12 of its
-own. Adding `--managed-python` forces that second path everywhere and needs no
-root, but it does not help with PortAudio below.
+Which machines need it: `install-linux.sh` and the Linux command in README ask
+uv for the system Python (`--python-preference system`), so they need the
+package above. The Python build that uv downloads (python-build-standalone)
+carries Tcl/Tk inside, but its Tk has no Xft (see [Emoji icons on
+Linux](#emoji-icons-on-linux-mic-button-shows-a-blank-box)).
+`--managed-python` forces that build and needs no root, but the text is not
+smoothed, and it does not help with PortAudio below.
 
 On macOS the python.org installer bundles Tcl/Tk and Homebrew Python does not;
 there the package is `python-tk@<version>`, matching the interpreter in use.
@@ -250,9 +260,10 @@ Then restart Mimora.
 This works only with a Tk that uses Xft, which is the Tk of a system Python
 with `python3-tk`. The Python build that uv downloads (python-build-standalone)
 has a Tk without Xft: it sees only the fonts of the X server, so the icons stay
-blank with the font installed, and the text is not smoothed. `install.sh`
-always installs that build (`--managed-python`), and `uv tool install` uses it
-wherever the system has no Python 3.12 (for example Ubuntu 26.04).
+blank with the font installed, and the text is not smoothed.
+`install-linux.sh` and the Linux command in README ask for the system Python
+for that reason; uv uses its own build only when the system has no Python 3.12
+to 3.14.
 
 ## GPU support
 
@@ -271,9 +282,9 @@ just several times slower.
   With **uv** this is one flag instead - it reads the installed driver and picks
   the matching PyTorch index itself, falling back to CPU when there is no GPU:
   ```powershell
-  uv tool install mimora --python 3.12 --torch-backend auto
+  uv tool install mimora --python 3.14 --torch-backend auto
   # or, equivalently:
-  # UV_TORCH_BACKEND=auto uv tool install mimora --python 3.12
+  # UV_TORCH_BACKEND=auto uv tool install mimora --python 3.14
   ```
   Needs uv 0.9.20 or newer. There is no equivalent for `pipx`: an index cannot be
   named in a published package's metadata, so a pipx install gets the CPU wheel
@@ -284,13 +295,13 @@ just several times slower.
   the index every other package in the resolution is taken from, and the result
   is not even stable between runs. macOS has no CUDA at all.
 
-  `--python 3.12` is not optional. A tool environment "will ignore non-global
+  `--python` is not optional. A tool environment "will ignore non-global
   Python version requests like `.python-version` files and the `requires-python`
   value" ([uv docs](https://docs.astral.sh/uv/concepts/tools/#python-versions)),
   so without the flag uv installs into whatever interpreter it finds first. On a
   machine where that is newer than 3.14 the resolution refuses, because the
-  package declares `requires-python = ">=3.11,<3.15"`. uv downloads a 3.12 itself
-  if there is none.
+  package declares `requires-python = ">=3.11,<3.15"`. uv downloads that version
+  itself if there is none.
 - **The LLM** needs no pip package at all: it runs in the official llama.cpp
   binary, and the fetcher below picks the GPU build for your platform
   automatically - CUDA on Windows, Vulkan on Linux, where llama.cpp publishes
