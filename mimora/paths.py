@@ -40,6 +40,7 @@ same reason) as ``mimora/models_info.py``: modules forbidden to import
 
 from __future__ import annotations
 
+import ntpath
 import os
 import sys
 from pathlib import Path
@@ -70,6 +71,31 @@ _APP_DIR_NAME_LINUX = "mimora"
 def repo_mode() -> bool:
     """True when the code is running from a source tree rather than a package."""
     return (_PARENT_OF_PACKAGE / _REPO_MARKER).is_file()
+
+
+def module_command(module: str, *args: str) -> str:
+    """``python -m <module> <args>``, spelled so that THIS installation runs it.
+
+    For advice in messages: the user types the result into a terminal. In a
+    clone, ``python`` is the interpreter of the checkout's activated virtual
+    environment. An installed package has no interpreter on PATH that can
+    ``import mimora`` (uv puts only the console scripts there), so a plain
+    ``python`` fails with "No module named mimora". The full path of the
+    running interpreter is printed instead, in double quotes because it can
+    contain spaces.
+
+    pythonw.exe (the Start menu shortcut starts Mimora with it) runs the
+    command without any output in the terminal, so the console interpreter
+    next to it is named instead. ntpath, not Path: the name is a Windows name
+    on every platform the tests run on.
+    """
+    interpreter = "python"
+    if not repo_mode() and sys.executable:
+        executable = sys.executable
+        if ntpath.basename(executable).lower() == "pythonw.exe":
+            executable = executable[:-len("pythonw.exe")] + "python.exe"
+        interpreter = f'"{executable}"'
+    return " ".join((interpreter, "-m", module) + args)
 
 
 def _env_root() -> Path | None:

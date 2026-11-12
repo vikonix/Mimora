@@ -369,5 +369,40 @@ class EnsureDirsTests(unittest.TestCase):
         self.assertIn(paths.HOME_ENV_VAR, message)
 
 
+class ModuleCommandTests(unittest.TestCase):
+    """paths.module_command: advice the user types into a terminal.
+
+    An installed package has no interpreter on PATH that can import mimora,
+    so a plain "python -m ..." there fails with "No module named mimora".
+    """
+
+    def test_a_clone_names_python(self):
+        # The checkout's activated virtual environment is "python".
+        with _with_marker():
+            self.assertEqual(
+                paths.module_command("mimora.llama_server_fetch", "--force"),
+                "python -m mimora.llama_server_fetch --force")
+
+    def test_an_installation_names_its_own_interpreter_in_quotes(self):
+        # Quotes: the path of a uv tool environment can contain spaces.
+        exe = r"C:\Users\A B\AppData\Roaming\uv\tools\mimora\Scripts\python.exe"
+        with _no_marker(), mock.patch.object(paths.sys, "executable", exe):
+            self.assertEqual(paths.module_command("mimora.spacy_model_fetch"),
+                             f'"{exe}" -m mimora.spacy_model_fetch')
+
+    def test_pythonw_is_replaced_by_the_console_interpreter(self):
+        # pythonw.exe would run the command with no output in the terminal.
+        with _no_marker(), mock.patch.object(
+                paths.sys, "executable", r"C:\env\Scripts\pythonw.exe"):
+            self.assertEqual(paths.module_command("mimora.detect_hardware"),
+                             r'"C:\env\Scripts\python.exe" -m mimora.detect_hardware')
+
+    def test_an_unknown_interpreter_falls_back_to_python(self):
+        # sys.executable is empty when Python cannot find its own path.
+        with _no_marker(), mock.patch.object(paths.sys, "executable", ""):
+            self.assertEqual(paths.module_command("mimora.detect_hardware"),
+                             "python -m mimora.detect_hardware")
+
+
 if __name__ == "__main__":
     unittest.main()

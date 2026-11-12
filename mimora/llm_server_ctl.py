@@ -30,7 +30,7 @@ import urllib.request
 from pathlib import Path
 from typing import Optional
 
-from mimora import bootstrap, config, llama_server_fetch
+from mimora import bootstrap, config, llama_server_fetch, paths
 from mimora.llm import LLMManager
 
 # How long to wait for a graceful exit before killing the subprocess.
@@ -165,8 +165,9 @@ def log_compute_devices(exe_path: str) -> None:
     logging.warning(
         "llama-server is installed as %s but reports no matching compute "
         "device - it will run on the CPU, roughly three times slower, without "
-        "reporting an error. Re-run `python -m mimora.llama_server_fetch "
-        "--force` to repair the installation.", variant_name)
+        "reporting an error. Re-run `%s` to repair the installation.",
+        variant_name,
+        paths.module_command("mimora.llama_server_fetch", "--force"))
 
 
 class LLMServerController:
@@ -220,9 +221,9 @@ class LLMServerController:
             logging.error(
                 "llama-server binary not found: settings.json "
                 "'llama_server_path' is empty, %s holds no installation and "
-                "no llama-server is on PATH. Run "
-                "`python -m mimora.llama_server_fetch` or set the path.",
-                llama_server_fetch.INSTALL_DIR)
+                "no llama-server is on PATH. Run `%s` or set the path.",
+                llama_server_fetch.INSTALL_DIR,
+                paths.module_command("mimora.llama_server_fetch"))
             return None
         if not os.path.isfile(exe_path):
             logging.error("llama-server binary not found at %s (settings.json "

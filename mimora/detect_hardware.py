@@ -311,10 +311,10 @@ def _probe_llama_offload(warnings: list,
     exe = llama_server_fetch.installed_exe()
     if exe is None:
         if gpu_present:
+            fetch = paths.module_command("mimora.llama_server_fetch")
             warnings.append(
-                "llama-server is not installed in bin/llama (run "
-                "'python -m mimora.llama_server_fetch'); GPU offload "
-                "capability unknown")
+                f"llama-server is not installed in bin/llama (run "
+                f"'{fetch}'); GPU offload capability unknown")
         return None, None
 
     variant_name = llama_server_fetch.installed_variant(exe)
@@ -337,11 +337,11 @@ def _probe_llama_offload(warnings: list,
             # and on whether its backend comes up at all, and guessing it here
             # would be a second copy of a decision llama_server_fetch already
             # owns. The command re-runs that decision and says what it chose.
+            fetch = paths.module_command("mimora.llama_server_fetch", "--force")
             warnings.append(
                 f"the installed llama-server is the '{variant_name}' build - "
                 f"the LLM cannot use the GPU; reinstall it with "
-                f"'python -m mimora.llama_server_fetch --force' to re-run the "
-                f"build selection for this machine")
+                f"'{fetch}' to re-run the build selection for this machine")
         return False, None
 
     try:

@@ -295,6 +295,16 @@ mimora = "mimora.cli:main"
 [project.gui-scripts]
 mimora-gui = "mimora.cli:main"
 
+# The data files reach the wheel only through package-data below, which names
+# them. include-package-data (true by default for pyproject.toml) adds the files
+# that the source manifest lists, and with it setuptools warns that the data
+# directories (mimora.icons, mimora.texts, mimora.themes) are absent from the
+# packages: they have no __init__.py, and namespaces = false keeps them out on
+# purpose. tools/check_wheel.py compares the wheel with the tree, so a file
+# that only that route carried would show up there.
+[tool.setuptools]
+include-package-data = false
+
 # Discovered rather than listed by hand. The previous explicit list had silently
 # lost mimora.languages, without which config.LANGUAGE_PROFILES cannot be built
 # and the app does not start at all - and a hand-written list loses the next

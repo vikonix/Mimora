@@ -40,7 +40,7 @@ from tkinter import messagebox, ttk
 import numpy as np
 
 from mimora import (config, detect_hardware, first_run, first_run_window,
-                    lifecycle, models_info, prosody, spacy_model_fetch,
+                    lifecycle, models_info, paths, prosody, spacy_model_fetch,
                     splash, window_icon)
 from mimora.llm import LLMManager, phrase_sampling
 from mimora.llm_server_ctl import LLMServerController
@@ -548,8 +548,9 @@ class PronunciationTrainerGUI:
                     'set "LLM backend" to "off" to take phrases from the '
                     'practice text, or to "lm-studio" to generate them with '
                     'LM Studio.')
+        fetch = paths.module_command("mimora.llama_server_fetch")
         return ('Error: no llama-server binary was found. Install one with '
-                "'python -m mimora.llama_server_fetch', or point "
+                f"'{fetch}', or point "
                 '"llama_server_path" in config/settings.json at a build you '
                 'make yourself, or set "llm_backend" to "lm-studio" and '
                 'generate phrases with LM Studio instead.')
@@ -1727,8 +1728,9 @@ def _log_spacy_model_location() -> None:
     logging.warning(
         "spaCy pipeline %s was not found. Kokoro's phonemiser will try to "
         "install it itself, which fails in an environment without pip. Run "
-        "`python -m mimora.spacy_model_fetch` to put it in place.",
-        spacy_model_fetch.MODEL.name)
+        "`%s` to put it in place.",
+        spacy_model_fetch.MODEL.name,
+        paths.module_command("mimora.spacy_model_fetch"))
 
 
 def run(append_log: bool = False):

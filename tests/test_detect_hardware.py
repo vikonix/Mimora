@@ -115,6 +115,17 @@ class ProbeLlamaOffloadTests(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertIn(CPU_VARIANT, warnings[0])
 
+    def test_cpu_build_advice_names_the_interpreter_of_this_installation(self):
+        # The advice is a command the user types. Installed, a plain "python"
+        # is not the interpreter that can import mimora.
+        exe = r"C:\tools\mimora\Scripts\python.exe"
+        with patch.object(detect_hardware.paths, "repo_mode",
+                          return_value=False), \
+                patch.object(detect_hardware.paths.sys, "executable", exe):
+            _, warnings = self._probe(variant=CPU_VARIANT)
+        self.assertIn(f'"{exe}" -m mimora.llama_server_fetch --force',
+                      warnings[0])
+
     def test_cpu_build_is_not_worth_a_warning_without_a_gpu(self):
         # The overwhelmingly common case: no GPU, so the CPU build was the
         # right choice and there is nothing to tell the user about.

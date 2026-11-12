@@ -42,6 +42,15 @@ function Write-MimoraWarning([string]$Message) {
     Write-Host "WARNING: $Message" -ForegroundColor Yellow
 }
 
+# Stops the script with a message for the user. The catch at the end prints
+# the line number only for other errors: those are unexpected, and the number
+# helps with a report. Under this message it is only noise.
+function Stop-Mimora([string]$Message) {
+    $exception = New-Object Exception $Message
+    $exception.Data['MimoraStop'] = $true
+    throw $exception
+}
+
 # The first output of an installation: what is installed, and that it can
 # take long. Without it, the first line names uv, which the user did not ask for.
 function Write-MimoraBanner([string]$Package) {
@@ -68,7 +77,7 @@ function Assert-MimoraNotRunning {
         $mutex.Dispose()
     }
     if ($running) {
-        throw 'Mimora is running. Close it, then run this command again.'
+        Stop-Mimora 'Mimora is running. Close it, then run this command again.'
     }
 }
 
@@ -104,11 +113,11 @@ function Install-MimoraUv {
     # path of uv.exe together as one value.
     & powershell -NoProfile -ExecutionPolicy ByPass -Command "irm https://astral.sh/uv/install.ps1 | iex" | Out-Host
     if ($LASTEXITCODE -ne 0) {
-        throw "The uv installation failed (exit code $LASTEXITCODE). Read the messages above."
+        Stop-Mimora "The uv installation failed (exit code $LASTEXITCODE). Read the messages above."
     }
     $uv = Find-MimoraUv
     if (-not $uv) {
-        throw 'uv was installed, but uv.exe was not found. Open a new terminal and run this command again.'
+        Stop-Mimora 'uv was installed, but uv.exe was not found. Open a new terminal and run this command again.'
     }
     return $uv
 }
@@ -140,17 +149,17 @@ function Install-MimoraVcRuntime {
             $process = Start-Process -FilePath $installer -ArgumentList '/install', '/passive', '/norestart' -Wait -PassThru
         } catch {
             # Start-Process throws when the user refuses the UAC prompt.
-            throw 'The Visual C++ runtime was not installed. Mimora cannot start without it. Run this command again and allow the installation.'
+            Stop-Mimora 'The Visual C++ runtime was not installed. Mimora cannot start without it. Run this command again and allow the installation.'
         }
         # 1602: the user cancelled the vc_redist window. Not a failure of
         # the runtime installer, so the same message as a refused UAC prompt.
         if ($process.ExitCode -eq 1602) {
-            throw 'The Visual C++ runtime was not installed. Mimora cannot start without it. Run this command again and allow the installation.'
+            Stop-Mimora 'The Visual C++ runtime was not installed. Mimora cannot start without it. Run this command again and allow the installation.'
         }
         # 3010: installed, a restart is required later.
         # 1638: a newer version is already installed.
         if ($process.ExitCode -notin @(0, 3010, 1638)) {
-            throw "The Visual C++ runtime installer failed (exit code $($process.ExitCode))."
+            Stop-Mimora "The Visual C++ runtime installer failed (exit code $($process.ExitCode))."
         }
     } finally {
         Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
@@ -362,7 +371,7 @@ function Invoke-MimoraTrialUpdate([string]$Uv, [string]$Package, [string[]]$Inst
         try {
             Remove-Item -LiteralPath $trialDir -Recurse -Force
         } catch {
-            throw "Could not delete $trialDir, which an earlier check left. Close the programs that use it (for example an Explorer window that shows it), delete it yourself, and run this command again."
+            Stop-Mimora "Could not delete $trialDir, which an earlier check left. Close the programs that use it (for example an Explorer window that shows it), delete it yourself, and run this command again."
         }
     }
 
@@ -468,7 +477,7 @@ function Invoke-MimoraTrialUpdate([string]$Uv, [string]$Package, [string[]]$Inst
 
     if ($check -ne 'passed') {
         Add-MimoraLogLine $log '    result: the installed Mimora was not changed'
-        throw "The update failed in the check, so the installed Mimora was not changed. Read the messages above; they are also in $log"
+        Stop-Mimora "The update failed in the check, so the installed Mimora was not changed. Read the messages above; they are also in $log"
     }
     Write-MimoraStep 'The check passed. Replacing the installed Mimora'
     return $log
@@ -524,7 +533,7 @@ function Install-Mimora {
         if ($installLog) {
             Add-MimoraLogLine $installLog '    result: the installation failed after the check passed'
         }
-        throw "The Mimora installation failed (exit code $LASTEXITCODE). Read the messages above. If uv reports an unknown option, update uv ('uv self update') and run this command again."
+        Stop-Mimora "The Mimora installation failed (exit code $LASTEXITCODE). Read the messages above. If uv reports an unknown option, update uv ('uv self update') and run this command again."
     }
 
     if ($installLog) {
@@ -560,7 +569,12 @@ function Install-Mimora {
     } else {
         Write-Host '  Upgrade:   uv tool upgrade mimora   (or run this command again)'
     }
-    Write-Host '  Uninstall: see the top of this script, or run "uv tool uninstall mimora" and delete the shortcut.'
+    # The whole command: a user who ran "irm | iex" never saw this file, so
+    # "the top of this script" would mean nothing to them. On its own line,
+    # so that it is easy to select. Removing does not depend on the version,
+    # so the latest script also removes an exact MIMORA_VERSION.
+    Write-Host '  Uninstall:'
+    Write-Host '    powershell -ExecutionPolicy ByPass -c "& ([scriptblock]::Create((irm https://github.com/vikonix/Mimora/releases/latest/download/install.ps1))) -Uninstall"'
 }
 
 function Uninstall-Mimora {
@@ -617,14 +631,14 @@ function Uninstall-Mimora {
         # Only the message: the full PowerShell error record ("At line ...",
         # CategoryInfo, FullyQualifiedErrorId) hides it from the user. The
         # line number stays, on its own line, for a report of an unexpected
-        # error.
+        # error. Stop-Mimora marks the expected ones, which get no number.
         # No "exit": a user who pastes "irm | iex" into an open window
         # would lose that window. The cost is that "powershell -c" ends with
         # exit code 0 after a failure; nothing reads that code.
         Write-Host ''
         Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
         $line = $_.InvocationInfo.ScriptLineNumber
-        if ($line) {
+        if ($line -and -not $_.Exception.Data['MimoraStop']) {
             Write-Host "  (install.ps1, line $line)" -ForegroundColor DarkGray
         }
     }

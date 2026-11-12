@@ -21,6 +21,8 @@ import os
 import sys
 from pathlib import Path
 
+from mimora import paths
+
 
 def read_json(path: Path) -> dict:
     """Parse a JSON object from *path*; returns {} when absent or invalid.
@@ -258,6 +260,7 @@ def detect_device(hw_value) -> str:
     if hw_value == "cuda" and device != "cuda":
         print("[config] hardware_config.json says DEVICE=cuda, but this torch "
               "build cannot use CUDA; falling back to cpu. Re-run "
-              "`python -m mimora.detect_hardware` to refresh the file.",
+              f"`{paths.module_command('mimora.detect_hardware')}` to refresh "
+              "the file.",
               file=sys.stderr)
     return device
