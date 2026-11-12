@@ -82,12 +82,12 @@ network.
 | Model | Used by | Download | Notes |
 |---|---|---|---|
 | `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | pronunciation analysis (**phoneme** engine, default) | 1264 MB | espeak IPA phoneme recognizer; `python -m mimora.model_fetch --hf` |
-| `facebook/wav2vec2-large-960h` | pronunciation analysis (**acoustic** engine) | 1262 MB | `python -m mimora.model_fetch --hf` |
-| Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech (English) | 363 MB | `python -m mimora.model_fetch --hf` |
+| `facebook/wav2vec2-large-960h` | pronunciation analysis (**acoustic** engine) | 1263 MB | `python -m mimora.model_fetch --hf` |
+| Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech (English) | 364 MB | `python -m mimora.model_fetch --hf` |
 | Supertonic 3 (`Supertone/supertonic-3`) | text-to-speech (Spanish) | 404 MB | `python -m mimora.model_fetch --supertonic`. Weights are **OpenRAIL-M** licensed (code MIT), so they are downloaded, never bundled |
 | `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | 2483 MB | downloaded only once a translation language is selected |
-| A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | 2019 MB | `python -m mimora.gguf_fetch`. Not needed with `"llm_backend": "off"` |
-| llama-server binary (pinned llama.cpp release) | phrase generation | 641 MB CUDA, 18 MB CPU | most of the CUDA figure is NVIDIA's runtime; `python -m mimora.llama_server_fetch` |
+| A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | 2020 MB | `python -m mimora.gguf_fetch`. Not needed with `"llm_backend": "off"` |
+| llama-server binary (pinned llama.cpp release) | phrase generation | 643 MB CUDA, 19 MB CPU | most of the CUDA figure is NVIDIA's runtime; `python -m mimora.llama_server_fetch` |
 
 ---
 
