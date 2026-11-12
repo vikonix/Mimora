@@ -259,7 +259,11 @@ installs or imports llama-cpp-python.
   packaging, not taste: **setuptools puts a non-Python file into the wheel only
   from inside a package**. **Stdlib-only** - `install.py` reads it before the
   requirements exist, which is also what lets the modules forbidden to import
-  `config` import this one instead.
+  `config` import this one instead. Also `module_command()`: how a message
+  spells `python -m mimora.<module>` advice for THIS installation (plain
+  `python` in a clone, the quoted path of the running interpreter when
+  installed, where `python` on PATH cannot import mimora). Every such advice
+  in a user-facing message goes through it.
 - [`mimora/lifecycle.py`](mimora/lifecycle.py) - process-exit helpers, Tk-free:
   `hard_exit()` and `spawn_replacement()`. `relaunch_command()` reconstructs how
   THIS process was started rather than assuming, which is subtler than it looks
