@@ -300,15 +300,25 @@ class InstallLogTests(unittest.TestCase):
         self.assertEqual(lines.count(bootstrap._HEADER_RULE), 2)
         self.assertEqual(lines[4], "")
 
-    def test_the_muted_loggers_are_kept_out_of_this_file_only(self):
+    def test_the_muted_loggers_are_kept_out_of_this_file_and_the_console(self):
         # httpx logs one line per request, and an install is hundreds of them
         # with signed CDN URLs in each. They are noise in main.log too, but
-        # main.log is replaced every launch while this file only grows.
+        # main.log is replaced every launch while this file only grows, and
+        # in the console they bury the lines a person is watching.
         console = io.StringIO()
         with contextlib.redirect_stdout(console):
             bootstrap.setup_logging(self.path.parent / "main.log")
             with bootstrap.install_log(self.path):
                 logging.getLogger("httpx").info("HTTP Request: GET https://...")
+                # huggingface-hub 2.x downloads through httpx2.
+                logging.getLogger("httpx2").info(
+                    "HTTP Request: HEAD https://...")
+                # The token advice the hub relays from the server, and another
+                # warning of the same logger that must stay visible.
+                hub = logging.getLogger("huggingface_hub.utils._http")
+                hub.warning("Warning: You are sending unauthenticated requests "
+                            "to the HF Hub. Please set a HF_TOKEN ...")
+                hub.warning("Retrying in 1s [Retry 1/5].")
                 logging.getLogger("mimora.first_run_download").info(
                     "-> done: Kokoro-82M")
             for handler in logging.getLogger().handlers[:]:
@@ -316,11 +326,19 @@ class InstallLogTests(unittest.TestCase):
                     logging.getLogger().removeHandler(handler)
                     handler.close()
         written = "\n".join(self._lines())
-        self.assertNotIn("HTTP Request", written)
-        self.assertIn("-> done: Kokoro-82M", written)
-        # The filter is on this handler alone: the session log and the console
-        # still carry the request line, which is where it is worth having.
-        self.assertIn("HTTP Request", console.getvalue())
+        session = (self.path.parent / "main.log").read_text(encoding="utf-8")
+        for shown in (written, console.getvalue(), session):
+            # The token advice is muted on the hub logger, so it is gone from
+            # every log; the other warning of that logger stays everywhere.
+            self.assertNotIn("HF_TOKEN", shown)
+            self.assertIn("Retrying in 1s", shown)
+            self.assertIn("-> done: Kokoro-82M", shown)
+        for shown in (written, console.getvalue()):
+            self.assertNotIn("HTTP Request", shown)
+        # The session log still carries both request lines, which is where
+        # they are worth having.
+        self.assertIn("HTTP Request: GET", session)
+        self.assertIn("HTTP Request: HEAD", session)
 
     def test_an_unopenable_file_costs_the_file_and_not_the_download(self):
         console = io.StringIO()

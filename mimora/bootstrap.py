@@ -196,19 +196,59 @@ def log_file_mode():
     return "a" if _append_logs else "w"
 
 
-# Kept OUT of the install log, matched on the top-level logger name. httpx
-# logs one INFO line per request and a first run is hundreds of them: of the
-# first install log measured, 106 KB of 112 KB were request lines carrying
-# signed CDN URLs. They stay in main.log, which covers one run and is replaced
-# by the next launch - this file is appended to for the life of the machine, so
-# there the same lines accumulate instead. Nothing diagnostic is lost: a failed
-# download reaches this file as the traceback first_run_download logs.
-_INSTALL_LOG_MUTED = ("httpx",)
+# Kept OUT of the install log and the console, matched on the top-level logger
+# name. httpx logs one INFO line per request and a first run is hundreds of
+# them: of the first install log measured, 106 KB of 112 KB were request lines
+# carrying signed CDN URLs. They stay in main.log, which covers one run and is
+# replaced by the next launch - the install log is appended to for the life of
+# the machine, so there the same lines accumulate instead, and in the console
+# they bury the lines a person watching the download wants to read. Nothing
+# diagnostic is lost: a failed download reaches both as the traceback
+# first_run_download logs.
+# httpx2 is the same chatter under another name: huggingface-hub 2.x downloads
+# through it, and the match is on the whole first part of the name, so
+# "httpx" alone does not cover it.
+_MUTED_LOGGERS = ("httpx", "httpx2")
 
 
-def _wanted_in_install_log(record: logging.LogRecord) -> bool:
-    """False for the third-party chatter the install log does not keep."""
-    return record.name.split(".", 1)[0] not in _INSTALL_LOG_MUTED
+def not_muted(record: logging.LogRecord) -> bool:
+    """False for the third-party chatter that only main.log keeps.
+
+    Public because the Windows installer (installer/fetch_models.py) puts the
+    same filter on its console, so both places show the same lines.
+    """
+    return record.name.split(".", 1)[0] not in _MUTED_LOGGERS
+
+
+# huggingface-hub relays a server advisory (the X-HF-Warning header) at WARNING
+# level: "You are sending unauthenticated requests to the HF Hub. Please set a
+# HF_TOKEN ...". Mimora downloads public models and needs no token, so the
+# advice only alarms the user. Matched on the text, not muted by logger: the
+# same logger reports retries and other warnings that must stay visible.
+_HUB_HTTP_LOGGER = "huggingface_hub.utils._http"
+_HUB_TOKEN_ADVICE = "unauthenticated requests"
+
+
+def _not_token_advice(record: logging.LogRecord) -> bool:
+    """False for the token advice of the hub (see _HUB_TOKEN_ADVICE)."""
+    return _HUB_TOKEN_ADVICE not in record.getMessage()
+
+
+def mute_hub_token_advice():
+    """Drop the token advice of huggingface-hub from every log and console.
+
+    The filter goes on the hub LOGGER and not on a handler of ours, unlike
+    not_muted: huggingface-hub puts a stderr handler of its own on the
+    "huggingface_hub" logger, and a record reaches that handler before it
+    reaches the root ones, so no filter of ours on a handler can stop it. A
+    logger filter runs before every handler. The price is that main.log loses
+    the line too, which costs nothing: Mimora needs no token.
+
+    Safe before huggingface_hub is imported (getLogger by name returns the
+    object the hub gets later) and safe to call twice (addFilter does not add
+    the same filter again). Public because installer/fetch_models.py calls it.
+    """
+    logging.getLogger(_HUB_HTTP_LOGGER).addFilter(_not_token_advice)
 
 
 @contextlib.contextmanager
@@ -231,8 +271,8 @@ def install_log(log_file, intro=()):
     every thread, the download worker included. Keeping only ``mimora.*``
     instead would be the tempting shortcut and would drop exactly the
     third-party traceback that explains a failure; what is dropped is named
-    instead, one logger at a time, in :data:`_INSTALL_LOG_MUTED`, and only on
-    this handler.
+    instead, one logger at a time, in :data:`_MUTED_LOGGERS`, and only on
+    this handler and the console one.
 
     ``intro`` is written into this file only, under the header (see
     :func:`open_log_section`): the caller's summary of what is about to be
@@ -253,7 +293,7 @@ def install_log(log_file, intro=()):
 
     handler.setLevel(logging.INFO)
     handler.setFormatter(logging.Formatter(LOG_FORMAT))
-    handler.addFilter(_wanted_in_install_log)
+    handler.addFilter(not_muted)
     # Written before the handler is attached, so the header cannot be preceded
     # by a record of some other thread that logged in the meantime.
     open_log_section(handler, log_file, intro)
@@ -363,7 +403,10 @@ def setup_logging(log_file, append=False):
     """
     global _append_logs
     _append_logs = append
-    handlers = [logging.StreamHandler(sys.stdout)]
+    console = logging.StreamHandler(sys.stdout)
+    # The request chatter of httpx stays in the file only (see _MUTED_LOGGERS).
+    console.addFilter(not_muted)
+    handlers = [console]
     file_error = None
     try:
         handlers.insert(0, logging.FileHandler(
@@ -376,6 +419,7 @@ def setup_logging(log_file, append=False):
         handlers=handlers,
         force=True,
     )
+    mute_hub_token_advice()
     # Before anything else this process logs, including the failure below: the
     # header is what makes the first line of a log identifiable, and a run that
     # could not open its file still writes it to the console.
