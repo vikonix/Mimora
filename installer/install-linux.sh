@@ -496,13 +496,17 @@ install_mimora() {
     #   Remove it together with the bound in pyproject.toml.
     set -- --upgrade --python-preference system --python ">=3.12,<3.15" --with "preshed<3.0.14" "$package"
     trial_update "$uv" "$@"
-    "$uv" tool install "$@" || install_failed
+    # PATH with the bin directory, for this command only: without it uv
+    # warns that the directory is not on PATH, and the message at the end
+    # already says what to do about PATH. That message reads the PATH of
+    # the user, so the PATH of this script must not change.
+    bin_dir=$("$uv" tool dir --bin)
+    PATH="$bin_dir:$PATH" "$uv" tool install "$@" || install_failed
     if [ -n "$install_log" ]; then
         installed=$(installed_version "$uv")
         log_line "result: installed ${installed:-Mimora, the version could not be read}"
     fi
 
-    bin_dir=$("$uv" tool dir --bin)
     check_tool_python "$uv"
 
     if [ -n "${MIMORA_NO_SHORTCUT:-}" ]; then
