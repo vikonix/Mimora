@@ -116,7 +116,8 @@ cache, so the real installation after it downloads nothing again. The check
 and the messages of uv go to `logs/install.log` in the
 [data directory](technical-details.md#where-mimora-keeps-your-files). An
 interrupted check leaves its folder; the next run deletes it. A first
-installation has no check.
+installation has no check. When an installation fails, see
+[Troubleshooting](troubleshooting.md#if-the-installation-fails).
 
 ---
 

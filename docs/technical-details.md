@@ -14,7 +14,7 @@ languages](../README.md#supported-languages) in README.
 
 **English** is fully calibrated in both variants. **Spanish** is an experiment while multilingual support is in development. The scoring engine itself is language-independent, but its calibration is not, and a Spanish calibration needs labeled non-native speech that is not available yet. Until it lands, Spanish takes are scored with the English calibration: usable, but not tuned. The `acoustic` engine uses an English recognizer and is offered for English only.
 
-The translation panel covers 200+ languages, but that is the translation shown beside the phrase, not the practice language.
+The translation panel offers nine languages in the settings: English, Russian, Ukrainian, Spanish, French, German, Italian, Chinese and Japanese, without the practice language itself. The translator model (NLLB-200) supports more than 200 languages, so the list can grow without a new model. The translation is shown beside the phrase; it is not the practice language.
 
 ---
 

@@ -401,12 +401,8 @@ files](https://github.com/vikonix/Mimora/blob/main/docs/technical-details.md#whe
 
 Found a bug, or have a question or an idea? Open an issue on
 [GitHub](https://github.com/vikonix/Mimora/issues). When something fails, attach
-`main.log` and `install.log` from the `logs/` folder of the [data
-directory](#where-mimora-keeps-your-files), and say which operating system and
-which way of installing you used. `main.log` is rewritten at every start, so
-copy it before you start Mimora again. `install.log` keeps every installation,
-update check and first-start download, and is there once Mimora has downloaded
-or updated something.
+the logs: which ones, and where they are, is in
+[Troubleshooting](https://github.com/vikonix/Mimora/blob/main/docs/troubleshooting.md).
 
 ## Contributing
 
