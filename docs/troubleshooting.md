@@ -36,29 +36,36 @@ section. Its messages are only on the screen: see the next section.
 
 ## If the installation fails
 
-For a bug report, keep the messages of the terminal:
+For a bug report, copy the messages from the window where the installation
+ran, and paste them into the issue:
 
 - **Setup file** - the installation runs in a console window. When it fails,
   the window stays open with "Mimora installation failed". Select the text
-  (Ctrl+A), copy it (Ctrl+C) and paste it into the issue.
-- **Install script** - run the command again, so that the messages also go to
-  a file in your home folder:
+  (Ctrl+A) and copy it (Ctrl+C).
+- **Install script** - select the text in the terminal and copy it. Copy all of
+  it, from the command to the end, not only the last error.
 
-  ```powershell
-  # Windows (PowerShell)
-  powershell -ExecutionPolicy ByPass -c "irm https://github.com/vikonix/Mimora/releases/latest/download/install.ps1 | iex" 2>&1 | Tee-Object -FilePath "$HOME\mimora-install.txt"
-  ```
+Only if the terminal no longer shows the start of the messages (it was closed,
+or the text scrolled out of its buffer), run the command again, so that the
+messages also go to a file in your home folder:
 
-  ```bash
-  # macOS
-  curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install-macos.sh | sh 2>&1 | tee ~/mimora-install.txt
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://github.com/vikonix/Mimora/releases/latest/download/install.ps1 | iex" 2>&1 | Tee-Object -FilePath "$HOME\mimora-install.txt"
+```
 
-  # Linux
-  wget -qO- https://github.com/vikonix/Mimora/releases/latest/download/install-linux.sh | sh 2>&1 | tee ~/mimora-install.txt
-  ```
+```bash
+# macOS
+curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install-macos.sh | sh 2>&1 | tee ~/mimora-install.txt
 
-  Attach `mimora-install.txt` to the issue. For an update, attach
-  `logs/install.log` as well.
+# Linux
+wget -qO- https://github.com/vikonix/Mimora/releases/latest/download/install-linux.sh | sh 2>&1 | tee ~/mimora-install.txt
+```
+
+Then attach `mimora-install.txt` to the issue.
+
+For an update, attach `logs/install.log` as well: the update check writes its
+messages there too.
 
 ## If Mimora fails after the installation
 
