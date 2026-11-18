@@ -58,7 +58,8 @@ mimora
 pipx and pip stop at 3.12 for now. The speech synthesizer (kokoro and misaki,
 up to 0.9.4) declares `requires-python <3.13`; pip respects that bound and
 finds no version for 3.13 or 3.14. uv ignores the upper bound of a dependency,
-which is why the uv installs can use 3.14.
+which is why the uv installs can use 3.14. A clone is the exception: there pip
+gets `--ignore-requires-python` (see [Python dependencies](#python-dependencies)).
 
 Upgrade and uninstall with pipx:
 
@@ -329,6 +330,11 @@ just several times slower.
   no CUDA binaries at all (see the next section).
 
 ## Get the llama-server binary
+
+The `python -m mimora...` commands in this section and the next are for a clone,
+run in its virtual environment. In an installed Mimora, `python` on PATH cannot
+import Mimora: use the Python of the installation, which Mimora names in its
+messages (see [Models](technical-details.md#models)).
 
 The default LLM backend runs the official **llama.cpp** server as a subprocess.
 `install.py` installs it, and the app offers to fetch it on the first start; to

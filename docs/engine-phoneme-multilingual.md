@@ -20,7 +20,9 @@ Instead of comparing two audio clips, it compares two *sequences of phonemes*
 
 This shift has one large payoff: **adding a language becomes almost free.** There
 is no reference recording to synthesize and no per-language model to train -
-expected phonemes for any of 100+ languages come straight from text. The design
+expected phonemes for any of 100+ languages come straight from text. Only the
+calibration of the grade is per language, and it needs labeled speech of
+learners (see [Languages](technical-details.md#languages)). The design
 goal is not a perfect grade but **actionable feedback**: showing the learner
 *where* they went wrong so they can improve.
 

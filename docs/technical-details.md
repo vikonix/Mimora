@@ -79,11 +79,19 @@ translation on later restarts Mimora into the same window, because with
 translation off nothing about the translator is downloaded or checked over the
 network.
 
+The commands in the table are for a clone, run in its virtual environment. In
+an installed Mimora, `python` on PATH cannot import Mimora: use the Python of the
+installation, which Mimora names in its messages. `uv tool dir` prints the
+folder; the Python is `mimora/Scripts/python.exe` in it on Windows (in
+PowerShell, put `&` before the quoted path) and `mimora/bin/python` on macOS and
+Linux.
+
 | Model | Used by | Download | Notes |
 |---|---|---|---|
 | `facebook/wav2vec2-xlsr-53-espeak-cv-ft` | pronunciation analysis (**phoneme** engine, default) | 1264 MB | espeak IPA phoneme recognizer; `python -m mimora.model_fetch --hf` |
 | `facebook/wav2vec2-large-960h` | pronunciation analysis (**acoustic** engine) | 1263 MB | `python -m mimora.model_fetch --hf` |
 | Kokoro-82M (`hexgrad/Kokoro-82M`) | text-to-speech (English) | 364 MB | `python -m mimora.model_fetch --hf` |
+| spaCy `en_core_web_sm` | text-to-speech (English): the grapheme-to-phoneme step of Kokoro | 13 MB | `python -m mimora.spacy_model_fetch` |
 | Supertonic 3 (`Supertone/supertonic-3`) | text-to-speech (Spanish) | 404 MB | `python -m mimora.model_fetch --supertonic`. Weights are **OpenRAIL-M** licensed (code MIT), so they are downloaded, never bundled |
 | `facebook/nllb-200-distilled-600M` | offline translation (translation panel) | 2483 MB | downloaded only once a translation language is selected |
 | A GGUF chat model (e.g. `Llama-3.2-3B-Instruct-Q4_K_M`) | phrase generation | 2020 MB | `python -m mimora.gguf_fetch`. Not needed with `"llm_backend": "off"` |
@@ -116,9 +124,11 @@ leave out follow their own defaults instead, which are resolved for you.
 
 Most settings are editable in the settings window. For the rest,
 [`config/settings.example.json`](../config/settings.example.json) documents every
-key next to its default. Copy it to `config/settings.json` to start, or edit that
-file directly. The file and every key in it are optional, and anything missing
-falls back to the built-in default.
+key next to its default. The package does not include it: take it from the
+repository and copy it as `settings.json` into the `config/` folder of the data
+directory (of the project, in a clone), or edit an existing `settings.json`
+directly. The file and every key in it are optional, and anything missing falls
+back to the built-in default.
 
 ---
 

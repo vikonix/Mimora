@@ -97,7 +97,7 @@ Work on:    colder
 - 🗣️ **One consistent reference voice** - the prompt and the scored reference are the same voice, so the target never changes. Prefer variety? Turn on **Random voice per phrase** in the settings.
 - 🧠 **Practice your own material** - paste a paragraph, a song or a few sentences into the *practice text* panel, and the local LLM turns them into an endless stream of phrases.
 - ⚙️ **Settings window** (the gear button) - the practice **language** and its **accent** (both apply after a restart), the TTS **voice** and playback **speed**, **Random voice per phrase** (needs at least two voices of the current language), the **phrase length** (full phrase or a few words), the **translation language** shown under the phrase, and a **user name** that selects the per-user scoring calibration.
-- 📊 **Two interchangeable scoring engines**, selected in the settings window (**Engine**; settings.json `"engine"`). The default **phoneme** engine compares the phonemes of your take with the phonemes of the reference text. The **acoustic** engine compares the sound of the two recordings instead. Both are length-invariant, and both can be calibrated to your voice from a clone (`python pronunciation/<engine>/calibrate.py`).
+- 📊 **Two interchangeable scoring engines**, selected in the settings window (**Engine**; settings.json `"engine"`). The default **phoneme** engine compares the phonemes of your take with the phonemes of the reference text. The **acoustic** engine compares the sound of the two recordings instead. Both are length-invariant, and both can be calibrated to your voice from a clone (see [Known limitations](#known-limitations)).
 - 🔁 **Replay reference vs. your recording** to hear the difference.
 - 😀 **Articulation face** - a schematic mouth moves with the speech while audio plays, and shows a smiley for your score while idle.
 - 🧵 **Responsive window** - scoring and model loading never block the interface.
@@ -220,7 +220,11 @@ If you prefer not to use a terminal, download
 release](https://github.com/vikonix/Mimora/releases/latest) and run it. It
 installs for the current user, without administrator rights, and it also
 installs the Visual C++ runtime if it is missing. It downloads Mimora from
-PyPI, so it needs an internet connection. The Setup file is not signed yet.
+PyPI, so it needs an internet connection. It also offers to download the
+models during the installation: the English speech models and the chat model
+are selected, the translator, the Spanish voice and the acoustic engine are
+options. What you do not select, the first start offers again. The Setup file
+is not signed yet.
 Edge may say that the file "isn't commonly downloaded": select **Keep**, then
 **Keep anyway**. Windows then shows "Windows protected your PC" with an
 unknown publisher. Click **More info**, then **Run anyway**. To uninstall,
