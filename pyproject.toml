@@ -14,8 +14,7 @@ description = "Free, offline pronunciation trainer for English and Spanish. Spee
 readme = "README.md"
 # Bounded rather than left open: the bound is a statement about the INSTALL,
 # that every dependency has a wheel. For 3.13 and 3.14 a resolution on every
-# platform found wheels for all of them (2026-10-31, see
-# prototypes-pronunciation/tasks/fix-linux-xft-problem.md, 3.5). The two
+# platform found wheels for all of them (checked on 2026-10-31). The two
 # packages that used to be compiled from source are gone or fixed:
 # editdistance came with panphon, which the runtime no longer needs (the
 # feature vectors ship in pronunciation/phoneme/phone_features.json), and
@@ -204,8 +203,8 @@ dependencies = [
     # transcription diff against a reference espeak-ng before you do. 0.2.4 is
     # what the calibration was taken with; 0.2.x has shown no transcription
     # difference against a system espeak-ng 1.51.0 on ordinary prose.
-    # espeakng-loader 0.2.4 carries espeak-ng 1.52.0 (espeak_Info(), Windows,
-    # 2026-10-21). Read it again after any bump: the wheel version does not
+    # espeakng-loader 0.2.4 carries espeak-ng 1.52.0 (read with espeak_Info()
+    # on Windows). Read it again after any bump: the wheel version does not
     # tell which espeak-ng is inside.
     "espeakng-loader>=0.2.4,<0.3",
     "python-Levenshtein>=0.21.0",
@@ -220,7 +219,7 @@ dependencies = [
     # protobuf and abseil), and the build fails with "bad_optional_access is
     # unavailable: introduced in macOS 10.13" (the package compiles with
     # -mmacosx-version-min=10.9). 0.2.1 ships macosx_10_9_x86_64 wheels.
-    # Found on Intel Mac, macOS 12.7.6, 2026-11-08.
+    # Found on Intel Mac, macOS 12.7.6.
     "sentencepiece>=0.1.99; platform_system != 'Darwin' or platform_machine != 'x86_64'",
     "sentencepiece>=0.1.99,<0.2.2; platform_system == 'Darwin' and platform_machine == 'x86_64'",
     "protobuf>=3.20.0",

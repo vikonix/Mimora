@@ -1,8 +1,7 @@
 """Record the alignment results of the phoneme engine for the golden test.
 
-The articulatory feature vectors move from panphon to a generated table
-(prototypes-pronunciation/tasks/replace-panphon.md). The scores must stay the
-same to the bit. This script runs on the code BEFORE that change, with
+The articulatory feature vectors moved from panphon to a generated table
+(tools/gen_phone_features.py). The scores must stay the same to the bit. This script runs on the code BEFORE that change, with
 panphon, and writes the results that tests/test_phoneme.py compares with
 after the change.
 

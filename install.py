@@ -114,17 +114,17 @@ MIN_PYTHON = (3, 11)  # matches requires-python in pyproject.toml
 # only get a warning (see step_check_python). Because the requirements install
 # is binary-only, a missing wheel on such an interpreter fails loudly with a
 # "no matching distribution" error instead of silently source-building.
-# 3.14 since 2026-10-31 (resolution on every platform; Intel macOS is the
-# exception and stays on 3.12, see the comment over requires-python in
-# pyproject.toml).
+# 3.14: every dependency resolves with wheels on every platform. Intel macOS
+# is the exception and stays on 3.12, see the comment over requires-python in
+# pyproject.toml.
 WHEEL_TESTED_MAX = (3, 14)
 # kokoro and misaki (the English TTS) declare Requires-Python <3.13 up to
-# their current release, 0.9.4. Their main branches have dropped the bound
-# (hexgrad/kokoro#244, hexgrad/misaki#85), but no release has it yet. uv
-# ignores upper bounds of Requires-Python and installs 0.9.4 on 3.14, where it
-# works (Ubuntu 26.04, 2026-10-28). pip keeps the bound, finds no kokoro for
-# the interpreter and stops with "resolution-too-deep" after a long search
-# through old versions (Windows, 3.14, 2026-10-31). From this version on, step
+# 0.9.4, their newest release on 2026-10-31. Their main branches have dropped
+# the bound (hexgrad/kokoro#244, hexgrad/misaki#85), but no release had it
+# then. uv ignores upper bounds of Requires-Python and installs 0.9.4 on 3.14,
+# where it works (Ubuntu 26.04). pip keeps the bound, finds no kokoro for the
+# interpreter and stops with "resolution-too-deep" after a long search
+# through old versions (Windows, 3.14). From this version on, step
 # 4 therefore passes --ignore-requires-python. Remove the flag and this
 # constant once a kokoro and misaki release accepts the newest interpreter.
 IGNORE_REQUIRES_PYTHON_FROM = (3, 13)

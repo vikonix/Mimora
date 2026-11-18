@@ -2,8 +2,7 @@
 
 The phoneme engine needs one articulatory feature vector for each phone token
 (speech._phone_vector). This script gets the vectors from panphon once, on the
-computer of a developer, so that the runtime does not need panphon
-(prototypes-pronunciation/tasks/replace-panphon.md).
+computer of a developer, so that the runtime does not need panphon.
 
 The inventory of tokens is every token that the scorer can get:
 
@@ -50,8 +49,8 @@ sys.path.insert(0, str(REPO_ROOT))
 OUTPUT_FILE = REPO_ROOT / "pronunciation" / "phoneme" / "phone_features.json"
 
 # Number of most frequent words of each language that go through espeak-ng.
-# Decided 2026-10-31 (replace-panphon.md, 4.1). Rare phone combinations that
-# this misses get the cost 1.0 and a warning in main.log.
+# Rare phone combinations that this misses get the cost 1.0 and a warning in
+# main.log.
 WORDS_PER_LANGUAGE = 20_000
 
 _SIGN_OF_VALUE = {1: "+", -1: "-", 0: "0"}
