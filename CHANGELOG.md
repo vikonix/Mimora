@@ -6,7 +6,7 @@ the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Model weights are not part of a release. They are downloaded on the first start
 and stay in the user data directory across upgrades.
 
-## [1.3.0] - 2026-11-18
+## [1.3.0] - 2026-11-19
 
 Mimora runs on Python 3.13 and 3.14. The install scripts use Python 3.14 on
 Windows and on Apple Silicon, and on Linux the system Python, so that the
@@ -41,8 +41,8 @@ both scoring engines, both languages and both voices are unchanged.
   are the same: a test compares the alignments with recorded results. panphon,
   editdistance, munkres, pandas and unicodecsv are no longer installed.
 - The final lines of `install.ps1` show the full uninstall command.
-- README: shorter Download and Install from PyPI sections. The details are in
-  `docs/installation-manual.md`.
+- README: shorter Download, Install from PyPI and Feedback sections. The details
+  are in `docs/installation-manual.md` and the new `docs/troubleshooting.md`.
 
 ### Fixed
 
