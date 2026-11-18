@@ -76,26 +76,38 @@ def repo_mode() -> bool:
 def module_command(module: str, *args: str) -> str:
     """``python -m <module> <args>``, spelled so that THIS installation runs it.
 
-    For advice in messages: the user types the result into a terminal. In a
-    clone, ``python`` is the interpreter of the checkout's activated virtual
-    environment. An installed package has no interpreter on PATH that can
-    ``import mimora`` (uv puts only the console scripts there), so a plain
+    For advice in messages: the user types the result into a terminal. The
+    result is ready to put into a sentence, in backticks, so callers add no
+    quotes of their own.
+
+    In a clone, ``python`` is the interpreter of the checkout's activated
+    virtual environment. An installed package has no interpreter on PATH that
+    can ``import mimora`` (uv puts only the console scripts there), so a plain
     ``python`` fails with "No module named mimora". The full path of the
     running interpreter is printed instead, in double quotes because it can
     contain spaces.
+
+    On Windows that quoted path needs a second form. cmd runs it as it is, but
+    PowerShell (the default shell of Windows Terminal) reads a quoted string as
+    a value and stops at ``-m`` with "Unexpected token"; it needs the call
+    operator ``&`` in front, which cmd in turn rejects. No one spelling works
+    in both, so both are printed. bash and zsh run the quoted path as it is.
 
     pythonw.exe (the Start menu shortcut starts Mimora with it) runs the
     command without any output in the terminal, so the console interpreter
     next to it is named instead. ntpath, not Path: the name is a Windows name
     on every platform the tests run on.
     """
-    interpreter = "python"
-    if not repo_mode() and sys.executable:
-        executable = sys.executable
-        if ntpath.basename(executable).lower() == "pythonw.exe":
-            executable = executable[:-len("pythonw.exe")] + "python.exe"
-        interpreter = f'"{executable}"'
-    return " ".join((interpreter, "-m", module) + args)
+    tail = " ".join(("-m", module) + args)
+    if repo_mode() or not sys.executable:
+        return f"`python {tail}`"
+    executable = sys.executable
+    if ntpath.basename(executable).lower() == "pythonw.exe":
+        executable = executable[:-len("pythonw.exe")] + "python.exe"
+    command = f'"{executable}" {tail}'
+    if sys.platform != "win32":
+        return f"`{command}`"
+    return f"`{command}` (PowerShell: `& {command}`)"
 
 
 def _env_root() -> Path | None:

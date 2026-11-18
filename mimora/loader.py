@@ -260,7 +260,7 @@ def detect_device(hw_value) -> str:
     if hw_value == "cuda" and device != "cuda":
         print("[config] hardware_config.json says DEVICE=cuda, but this torch "
               "build cannot use CUDA; falling back to cpu. Re-run "
-              f"`{paths.module_command('mimora.detect_hardware')}` to refresh "
+              f"{paths.module_command('mimora.detect_hardware')} to refresh "
               "the file.",
               file=sys.stderr)
     return device

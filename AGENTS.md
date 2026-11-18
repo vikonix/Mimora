@@ -48,6 +48,11 @@ pip install -e .
 python main.py
 ```
 
+On Python 3.13 and 3.14 use `pip install -e . --ignore-requires-python`:
+kokoro and misaki (up to 0.9.4) declare `requires-python <3.13`, and pip
+stops with `resolution-too-deep`. `install.py` adds the flag itself (see
+`IGNORE_REQUIRES_PYTHON_FROM` there).
+
 Editable on purpose: a plain `pip install .` from a clone leaves a second copy
 in site-packages that your edits never reach, and switches `paths.py` out of
 source-tree mode. Dependencies come from `[project.dependencies]` and cover both
@@ -127,9 +132,12 @@ installs or imports llama-cpp-python.
   `install.py` writes, which is the point - that script is not in the wheel,
   so on a wheel install nothing else records what was installed (the installer
   scripts in `installer/` add a section only for an update check, never for a
-  first installation). What that file
-  does NOT keep is named in `_INSTALL_LOG_MUTED` (`httpx`, one INFO line per
-  request), by logger name and on that handler only - `main.log` keeps them.
+  first installation). What that file and the console do NOT show is named
+  in `_MUTED_LOGGERS` (`httpx` and `httpx2`, one INFO line per request), by
+  logger name, through the handler filter `not_muted()` - `main.log` keeps
+  them. The token advice of huggingface-hub is a different case:
+  `mute_hub_token_advice()` puts a filter on the hub's own logger, because
+  the hub has a stderr handler of its own, so that line leaves `main.log` too.
   `open_log_section()` writes a run header into one handler's file, blank-line
   separated from what is already there; `detect_hardware` uses it as well.
 - [`mimora/ui.py`](mimora/ui.py) - `TrainerView`: the view facade `app.py`
@@ -262,8 +270,10 @@ installs or imports llama-cpp-python.
   `config` import this one instead. Also `module_command()`: how a message
   spells `python -m mimora.<module>` advice for THIS installation (plain
   `python` in a clone, the quoted path of the running interpreter when
-  installed, where `python` on PATH cannot import mimora). Every such advice
-  in a user-facing message goes through it.
+  installed, where `python` on PATH cannot import mimora; on Windows a second,
+  PowerShell form with `&`, because no one spelling of a quoted path runs in
+  both cmd and PowerShell). The result is already in backticks, so callers add
+  no quotes. Every such advice in a user-facing message goes through it.
 - [`mimora/lifecycle.py`](mimora/lifecycle.py) - process-exit helpers, Tk-free:
   `hard_exit()` and `spawn_replacement()`. `relaunch_command()` reconstructs how
   THIS process was started rather than assuming, which is subtler than it looks

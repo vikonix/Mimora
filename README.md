@@ -33,12 +33,11 @@ without administrator rights.
 install](#quick-install-recommended).
 
 Needs 16 GB RAM and no graphics card. The models take about 4 GB (up to about
-8.5 GB with every model), and Mimora asks before it downloads them. The Setup
-file is not code-signed yet. Edge may say that the file "isn't commonly
-downloaded": select **Keep**, then **Keep anyway**. The first time, Windows
-may show "Windows protected your PC": click **More info**, then **Run
-anyway**. Other ways to
-install (uv, pipx, pip, from a clone): [Installation](#installation).
+8.5 GB with every model), and Mimora asks before it downloads them. Other ways
+to install (uv, pipx, pip, from a clone): [Installation](#installation).
+
+The Setup file is not code-signed yet, so Edge and Windows can warn about it
+before it runs. What to click: [Windows Setup file](#windows-setup-file).
 
 ---
 
@@ -115,6 +114,8 @@ Work on:    colder
 
 ## Installation
 
+Installed with the Setup file? Go to [Usage](#usage).
+
 Two ways in, in the order most people should try them:
 
 1. **[Quick install](#quick-install-recommended)** - one command on Windows,
@@ -122,7 +123,8 @@ Two ways in, in the order most people should try them:
    adds Mimora to the Start menu or the Linux application menu. This is the
    recommended way.
 2. **[From PyPI](#install-from-pypi)** - the same package, installed with uv,
-   pipx or pip, with every command and option in your hands.
+   with every command and option in your hands. pipx and pip: [Manual
+   installation](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#pipx-and-pip).
 
 To work on the code, or to have every model in place before the first start,
 install from a clone: [Installation from a clone](https://github.com/vikonix/Mimora/blob/main/docs/installation-from-clone.md).
@@ -134,6 +136,9 @@ needed**. You need neither a C/C++ compiler nor a CUDA toolkit.
 ### Requirements
 
 - **Hardware** - a typical laptop or desktop: **16 GB RAM and no GPU required**. On CPU the first phrases are slower. An NVIDIA GPU is optional, needs a CUDA build of PyTorch, and speeds up scoring and phrase generation.
+- **Less RAM or disk?** Decline the chat model on the first start, or set
+  **LLM backend** to `off` in the settings. Phrases then come from your practice
+  text as written (see [How it works](#how-it-works)).
 - **Windows** is the primary target. macOS and Linux are supported as well.
 - A microphone and speakers.
 
@@ -233,8 +238,7 @@ itself.
 
 Mimora needs **Python 3.11 to 3.14**. Two platforms are narrower: an Intel Mac
 needs 3.11 or 3.12, and a Mac with Apple Silicon needs macOS 14 or newer for
-3.14. uv does not check this range when it chooses the interpreter, so pass
-`--python` to it (see below).
+3.14. Pass `--python` to uv as shown below.
 
 uv is a single binary and needs no Python of its own:
 
@@ -253,9 +257,9 @@ The terminal that ran this command does not see `uv` yet. Open a new
 terminal, or on macOS and Linux run `source ~/.local/bin/env`.
 
 `brew install uv`, `winget install --id=astral-sh.uv -e`, `scoop install main/uv`
-and `pipx install uv` install it as well. If you already have uv, check the
-version (`uv --version`) and update it with `uv self update`: the GPU flag below
-needs 0.9.20 or newer.
+and `pipx install uv` install it as well. If you already have uv, update it
+with `uv self update` (version requirements: [GPU
+support](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#gpu-support)).
 
 <details>
 <summary><b>Linux:</b> install <code>python3-tk</code> and <code>libportaudio2</code> first</summary>
@@ -272,15 +276,12 @@ sudo apt install python3-tk libportaudio2
 Fedora: `sudo dnf install python3-tkinter portaudio`. Arch: `sudo pacman -S tk
 portaudio`. Details in [Tk on
 Linux](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#tk-on-linux-tkinter) and [Audio on
-Linux](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#audio-on-linux-portaudio). Add a monochrome
-emoji font as well, or the mic button draws blank boxes. The font helps only
-with the system Python, which the Linux command below asks for; with a Python
-that uv downloads itself the icons stay blank (see [Emoji icons on
-Linux](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#emoji-icons-on-linux-mic-button-shows-a-blank-box)).
-On a minimal system (WSL, a container, a server) also install `libgomp1`: the
-phrase generator links against it, and a desktop system usually has it already
-(see [Get the llama-server
-binary](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#get-the-llama-server-binary)).
+Linux](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#audio-on-linux-portaudio). For the
+icons of the mic button and for a minimal system (WSL, a container), see
+[Emoji icons on
+Linux](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#emoji-icons-on-linux-mic-button-shows-a-blank-box)
+and [Get the llama-server
+binary](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#get-the-llama-server-binary).
 
 </details>
 
@@ -299,11 +300,11 @@ uv tool install mimora --python-preference system --python ">=3.12,<3.15"
 mimora
 ```
 
-`--python` is not optional. A uv tool environment ignores the package's
-`requires-python`, so without the flag uv installs into whatever interpreter it
-finds first. uv downloads the version itself if the machine has none. On Linux
-the system Python matters for the window: the Python build from uv has a Tk
-that draws the text without smoothing.
+`--python` is not optional: without it uv takes whatever interpreter it finds
+first, and does not check the Python range of Mimora. uv downloads the version
+itself if the machine has none. On Linux the system Python matters for the
+window: the Python build from uv has a Tk that draws the text without
+smoothing.
 
 <details>
 <summary><b>Windows with an NVIDIA GPU:</b> add <code>--torch-backend auto</code></summary>
@@ -386,6 +387,7 @@ files](https://github.com/vikonix/Mimora/blob/main/docs/technical-details.md#whe
 
 - **Spanish scoring is experimental**, because the calibration is per-language and no Spanish one exists yet (see [Languages](https://github.com/vikonix/Mimora/blob/main/docs/technical-details.md#languages)). The app logs a startup warning, and the settings window shows a notice.
 - **No local phrase generator on older Macs.** It needs macOS 26 (Tahoe) on Apple Silicon and macOS 13.3 (Ventura) on an Intel Mac. Below that, Mimora says so before any download and works on without it. See [macOS notes](https://github.com/vikonix/Mimora/blob/main/docs/technical-details.md#macos-notes).
+- **The first start after an installation is slow.** Before the window is ready it can take a minute or more, while the system checks the new libraries: the antivirus on Windows, macOS itself on a Mac. Later starts take a few seconds. If nothing happens for several minutes, close Mimora and start it again.
 - **Only mistakes the recognizer hears become word errors.** A distorted word that is still recognized may not appear in the list. The phoneme distance, the DTW of the acoustic engine and the prosody part compensate for this in the score.
 - **Scoring is heuristic** and depends on your voice and microphone. Every take's raw components are logged to `phoneme_samples.jsonl` (or `acoustic_samples.jsonl`) and to `main.log` in the `logs/` folder of the [data directory](#where-mimora-keeps-your-files). From a clone you can re-anchor the active engine to that data after a practice session: `python pronunciation/phoneme/calibrate.py` or `python pronunciation/acoustic/calibrate.py`, where `--dry-run` previews the change.
 

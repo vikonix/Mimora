@@ -550,7 +550,7 @@ class PronunciationTrainerGUI:
                     'LM Studio.')
         fetch = paths.module_command("mimora.llama_server_fetch")
         return ('Error: no llama-server binary was found. Install one with '
-                f"'{fetch}', or point "
+                f"{fetch}, or point "
                 '"llama_server_path" in config/settings.json at a build you '
                 'make yourself, or set "llm_backend" to "lm-studio" and '
                 'generate phrases with LM Studio instead.')
@@ -1728,7 +1728,7 @@ def _log_spacy_model_location() -> None:
     logging.warning(
         "spaCy pipeline %s was not found. Kokoro's phonemiser will try to "
         "install it itself, which fails in an environment without pip. Run "
-        "`%s` to put it in place.",
+        "%s to put it in place.",
         spacy_model_fetch.MODEL.name,
         paths.module_command("mimora.spacy_model_fetch"))
 

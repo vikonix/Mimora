@@ -165,7 +165,7 @@ def log_compute_devices(exe_path: str) -> None:
     logging.warning(
         "llama-server is installed as %s but reports no matching compute "
         "device - it will run on the CPU, roughly three times slower, without "
-        "reporting an error. Re-run `%s` to repair the installation.",
+        "reporting an error. Re-run %s to repair the installation.",
         variant_name,
         paths.module_command("mimora.llama_server_fetch", "--force"))
 
@@ -221,7 +221,7 @@ class LLMServerController:
             logging.error(
                 "llama-server binary not found: settings.json "
                 "'llama_server_path' is empty, %s holds no installation and "
-                "no llama-server is on PATH. Run `%s` or set the path.",
+                "no llama-server is on PATH. Run %s or set the path.",
                 llama_server_fetch.INSTALL_DIR,
                 paths.module_command("mimora.llama_server_fetch"))
             return None

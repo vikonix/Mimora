@@ -313,8 +313,8 @@ def _probe_llama_offload(warnings: list,
         if gpu_present:
             fetch = paths.module_command("mimora.llama_server_fetch")
             warnings.append(
-                f"llama-server is not installed in bin/llama (run "
-                f"'{fetch}'); GPU offload capability unknown")
+                f"llama-server is not installed in bin/llama, so GPU offload "
+                f"capability is unknown; install it with {fetch}")
         return None, None
 
     variant_name = llama_server_fetch.installed_variant(exe)
@@ -341,7 +341,7 @@ def _probe_llama_offload(warnings: list,
             warnings.append(
                 f"the installed llama-server is the '{variant_name}' build - "
                 f"the LLM cannot use the GPU; reinstall it with "
-                f"'{fetch}' to re-run the build selection for this machine")
+                f"{fetch} to re-run the build selection for this machine")
         return False, None
 
     try:

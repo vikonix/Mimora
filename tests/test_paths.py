@@ -374,34 +374,57 @@ class ModuleCommandTests(unittest.TestCase):
 
     An installed package has no interpreter on PATH that can import mimora,
     so a plain "python -m ..." there fails with "No module named mimora".
+    The result comes in backticks, ready to put into a sentence. Every test
+    sets sys.platform, because the Windows form differs and CI runs the suite
+    on Windows too.
     """
 
     def test_a_clone_names_python(self):
-        # The checkout's activated virtual environment is "python".
-        with _with_marker():
+        # The checkout's activated virtual environment is "python", and a plain
+        # "python" runs in PowerShell as well, so there is one form only.
+        with _with_marker(), mock.patch.object(paths.sys, "platform", "win32"):
             self.assertEqual(
                 paths.module_command("mimora.llama_server_fetch", "--force"),
-                "python -m mimora.llama_server_fetch --force")
+                "`python -m mimora.llama_server_fetch --force`")
 
     def test_an_installation_names_its_own_interpreter_in_quotes(self):
-        # Quotes: the path of a uv tool environment can contain spaces.
-        exe = r"C:\Users\A B\AppData\Roaming\uv\tools\mimora\Scripts\python.exe"
-        with _no_marker(), mock.patch.object(paths.sys, "executable", exe):
+        # Quotes: the path of a uv tool environment can contain spaces. bash
+        # and zsh run a quoted path as it is, so there is one form only.
+        exe = "/home/a b/.local/share/uv/tools/mimora/bin/python"
+        with _no_marker(), mock.patch.object(paths.sys, "executable", exe), \
+                mock.patch.object(paths.sys, "platform", "linux"):
             self.assertEqual(paths.module_command("mimora.spacy_model_fetch"),
-                             f'"{exe}" -m mimora.spacy_model_fetch')
+                             f'`"{exe}" -m mimora.spacy_model_fetch`')
+
+    def test_windows_adds_the_powershell_form(self):
+        # PowerShell reads a quoted path as a value and stops at "-m"; it
+        # needs "&" in front, which cmd rejects. So both forms are printed.
+        exe = r"C:\Users\A B\AppData\Roaming\uv\tools\mimora\Scripts\python.exe"
+        with _no_marker(), mock.patch.object(paths.sys, "executable", exe), \
+                mock.patch.object(paths.sys, "platform", "win32"):
+            self.assertEqual(
+                paths.module_command("mimora.llama_server_fetch", "--force"),
+                f'`"{exe}" -m mimora.llama_server_fetch --force` '
+                f'(PowerShell: `& "{exe}" -m mimora.llama_server_fetch --force`)')
 
     def test_pythonw_is_replaced_by_the_console_interpreter(self):
         # pythonw.exe would run the command with no output in the terminal.
+        # The replacement reaches both forms.
         with _no_marker(), mock.patch.object(
-                paths.sys, "executable", r"C:\env\Scripts\pythonw.exe"):
-            self.assertEqual(paths.module_command("mimora.detect_hardware"),
-                             r'"C:\env\Scripts\python.exe" -m mimora.detect_hardware')
+                paths.sys, "executable", r"C:\env\Scripts\pythonw.exe"), \
+                mock.patch.object(paths.sys, "platform", "win32"):
+            self.assertEqual(
+                paths.module_command("mimora.detect_hardware"),
+                r'`"C:\env\Scripts\python.exe" -m mimora.detect_hardware` '
+                r'(PowerShell: `& "C:\env\Scripts\python.exe" -m mimora.detect_hardware`)')
 
     def test_an_unknown_interpreter_falls_back_to_python(self):
-        # sys.executable is empty when Python cannot find its own path.
-        with _no_marker(), mock.patch.object(paths.sys, "executable", ""):
+        # sys.executable is empty when Python cannot find its own path. A plain
+        # "python" needs no PowerShell form.
+        with _no_marker(), mock.patch.object(paths.sys, "executable", ""), \
+                mock.patch.object(paths.sys, "platform", "win32"):
             self.assertEqual(paths.module_command("mimora.detect_hardware"),
-                             "python -m mimora.detect_hardware")
+                             "`python -m mimora.detect_hardware`")
 
 
 if __name__ == "__main__":

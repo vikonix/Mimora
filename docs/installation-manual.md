@@ -75,13 +75,15 @@ pipx uninstall mimora
 install](../README.md#quick-install-recommended)) read two environment
 variables:
 
-- `MIMORA_VERSION` - install this exact version, for example a pre-release that
-  a plain install does not take. After an exact version, `uv tool upgrade
-  mimora` does not upgrade: run the script again, with the new version in the
-  variable, or without it for the newest normal version.
+- `MIMORA_VERSION` - install this exact version, for example `1.3.0`, or a
+  pre-release that a plain install does not take. After an exact version,
+  `uv tool upgrade mimora` does not upgrade: run the script again, with the new
+  version in the variable, or without it for the newest normal version.
   The newest script is written for the newest version. For an older version,
   take the script from the release of that version:
   `https://github.com/vikonix/Mimora/releases/download/v<version>/`.
+  A pre-release has no release of its own: use the scripts of the newest
+  release.
 - `MIMORA_NO_SHORTCUT` - any value: no Start menu shortcut (Windows) and no
   application menu entry (Linux).
 
@@ -89,13 +91,13 @@ The variable has to reach the script, not the download command:
 
 ```powershell
 # Windows (PowerShell)
-$env:MIMORA_VERSION = "1.4.0rc1"
+$env:MIMORA_VERSION = "1.3.0"
 irm https://github.com/vikonix/Mimora/releases/latest/download/install.ps1 | iex
 ```
 
 ```bash
 # macOS (on Linux: wget -qO- instead of curl -LsSf, and install-linux.sh)
-curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install-macos.sh | MIMORA_VERSION=1.4.0rc1 sh
+curl -LsSf https://github.com/vikonix/Mimora/releases/latest/download/install-macos.sh | MIMORA_VERSION=1.3.0 sh
 ```
 
 The Windows Setup file takes no options: it always installs its own version.
@@ -135,6 +137,13 @@ cd Mimora
 #    user-data directory (see mimora/paths.py).
 pip install -e .
 ```
+
+On Python 3.13 and 3.14, add `--ignore-requires-python`:
+`pip install -e . --ignore-requires-python`. The speech synthesizer (kokoro and
+misaki, up to 0.9.4) declares `requires-python <3.13`, and without the flag pip
+stops with `resolution-too-deep`. `install.py` adds the flag itself. The bound
+is older than the packages: they work on 3.14, which is how the uv installs use
+them there (see [pipx and pip](#pipx-and-pip)).
 
 The offline translator (NLLB-200) needs no extra step - its dependencies
 (`transformers`, `sentencepiece`) are in that same list.
