@@ -82,9 +82,10 @@ network.
 The commands in the table are for a clone, run in its virtual environment. In
 an installed Mimora, `python` on PATH cannot import Mimora: use the Python of the
 installation, which Mimora names in its messages. `uv tool dir` prints the
-folder; the Python is `mimora/Scripts/python.exe` in it on Windows (in
-PowerShell, put `&` before the quoted path) and `mimora/bin/python` on macOS and
-Linux.
+folder of an install with uv or an install script; the Setup file uses
+`%LOCALAPPDATA%\Programs\Mimora\tools`. The Python is
+`mimora\Scripts\python.exe` in it on Windows (in PowerShell, put `&` before the
+quoted path) and `mimora/bin/python` on macOS and Linux.
 
 | Model | Used by | Download | Notes |
 |---|---|---|---|
