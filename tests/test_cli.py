@@ -55,12 +55,20 @@ from mimora import cli
 ALLOWED_FROM_PACKAGE = {"__version__", "bootstrap", "splash"}
 
 
+_splash_show_patcher = mock.patch.object(cli.splash, "show")
+
+
 def setUpModule():
     # cli.main() starts the splash, which is a real process with a real
     # window. No test in this file may open one.
-    patcher = mock.patch.object(cli.splash, "show")
-    patcher.start()
-    unittest.addModuleCleanup(patcher.stop)
+    _splash_show_patcher.start()
+
+
+def tearDownModule():
+    # A pair of module functions, not unittest.addModuleCleanup: pytest did
+    # not run that cleanup before the next test module, so the stub stayed in
+    # place and tests/test_splash.py tested the stub instead of show().
+    _splash_show_patcher.stop()
 
 
 def _fake_app(run):

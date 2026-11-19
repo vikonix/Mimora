@@ -6,6 +6,65 @@ the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Model weights are not part of a release. They are downloaded on the first start
 and stay in the user data directory across upgrades.
 
+## [1.3.0] - 2026-11-19
+
+Mimora runs on Python 3.13 and 3.14. The install scripts use Python 3.14 on
+Windows and on Apple Silicon, and on Linux the system Python, so that the
+window shows smooth text and the icons of the mic button. The practice loop,
+both scoring engines, both languages and both voices are unchanged.
+
+### Added
+
+- Python 3.13 and 3.14 (`requires-python >=3.11,<3.15`). An Intel Mac and
+  macOS 13 stay on Python 3.12.
+- One install script for each platform on the release: `install.ps1`,
+  `install-macos.sh` and `install-linux.sh`.
+- An update with an install script first installs the new version in a
+  separate folder and replaces the installed Mimora only when that works.
+  Before, a failed update could leave no Mimora at all. The check writes to
+  `logs/install.log`.
+- The fast test suite also runs on Python 3.14 on Windows, macOS and Ubuntu.
+
+### Changed
+
+- `install.sh` on the release only prints the command for your platform. It
+  installs nothing, so that the old one-line command does not fail without a
+  message.
+- Linux: `install-linux.sh` uses the system Python 3.12 to 3.14 when there is
+  one, because only its Tk draws smooth text. The `apt` command at the end also
+  names `fonts-symbola` when the mic button needs it.
+- Windows: the Setup file and `install.ps1` install on Python 3.14 instead of
+  3.12. The first update from 1.2.0 makes the environment again; the models and
+  settings stay.
+- The phoneme engine reads the articulatory features of the phones from a table
+  in the package (`phone_features.json`) instead of from panphon. The grades
+  are the same: a test compares the alignments with recorded results. panphon,
+  editdistance, munkres, pandas and unicodecsv are no longer installed.
+- The final lines of `install.ps1` show the full uninstall command.
+- README: shorter Download, Install from PyPI and Feedback sections. The details
+  are in `docs/installation-manual.md` and the new `docs/troubleshooting.md`.
+
+### Fixed
+
+- Linux: recording failed with "Invalid sample rate" on a USB microphone that
+  refuses 16 kHz (issue #3). Mimora now records at the native rate of the
+  device and converts the take to 16 kHz.
+- In an installed Mimora, the advice to run `python -m mimora...` (for example
+  to install llama-server) failed with "No module named mimora". The advice now
+  names the Python of the installation. On Windows it also shows the form for
+  PowerShell.
+- Intel Mac: a new install stopped at `sentencepiece` 0.2.3, which has no
+  wheel there and does not build. It is held below 0.2.2.
+- `logs/install.log` and the console no longer show one line for each download
+  request of huggingface-hub 2.x, or its advice to set `HF_TOKEN`. `main.log`
+  keeps the request lines.
+- The first-run log no longer says "Downloaded more than planned (3691 MB
+  against 3691 MB)" for a download that was less than 1 MB larger. The
+  message shows the sizes with one decimal, and the recorded model sizes are
+  measured again.
+- Windows: `install.ps1` no longer adds `(install.ps1, line N)` to its own
+  error messages.
+
 ## [1.2.0] - 2026-10-30
 
 Mimora installs without a terminal on Windows, and with one command on Windows,
@@ -142,6 +201,7 @@ First public release. Phoneme and acoustic scoring engines, English and Spanish,
 Kokoro and Supertonic text to speech, offline NLLB translation, and a guided
 `install.py` for a clone.
 
+[1.3.0]: https://github.com/vikonix/Mimora/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/vikonix/Mimora/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/vikonix/Mimora/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/vikonix/Mimora/releases/tag/v1.0.0

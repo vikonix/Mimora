@@ -107,6 +107,35 @@ def dump_record_text(text: str, file_name: str):
         logging.exception("Failed to save record text:")
 
 
+def capture_rate(device) -> int:
+    """Return the sample rate to open the input *device* at (None = default).
+
+    config.AUDIO_SAMPLE_RATE when the device accepts it, which keeps every
+    machine that records today on the same path. Otherwise the native rate
+    of the device: a USB microphone opened directly through ALSA (hw:) can
+    refuse 16 kHz, and the stream then fails with "Invalid sample rate". A
+    fixed second choice such as 48000 is not enough, because some devices
+    offer only 44100. get_audio() resamples to 16 kHz, so the rest of the
+    pipeline does not see the difference. When the native rate cannot be
+    read either, the configured rate is returned and the stream reports the
+    error as before.
+    """
+    try:
+        sd.check_input_settings(device=device, samplerate=config.AUDIO_SAMPLE_RATE,
+                                channels=config.AUDIO_CHANNELS, dtype="float32")
+        return config.AUDIO_SAMPLE_RATE
+    except Exception as check_error:
+        refusal = check_error
+    try:
+        native_sr = int(round(sd.query_devices(device, "input")["default_samplerate"]))
+    except Exception:
+        logging.exception("Could not read the native sample rate of the input device.")
+        return config.AUDIO_SAMPLE_RATE
+    logging.info("Input device %s refused %d Hz (%s); capturing at its native %d Hz.",
+                 device, config.AUDIO_SAMPLE_RATE, refusal, native_sr)
+    return native_sr
+
+
 class AudioRecorder:
     """One-press microphone capture running on its own daemon thread.
 
@@ -232,12 +261,13 @@ class AudioRecorder:
         On Windows the default PortAudio host API is MME, which drops samples
         (driver-inserted silence gaps -> clicks). WASAPI is glitch-free, so we
         prefer its default input device and capture at that device's native rate.
-        Returns (device_index, sample_rate); falls back to the configured device
-        at 16 kHz if WASAPI or its device cannot be resolved.
+        Returns (device_index, sample_rate). Without WASAPI (Linux, macOS) or
+        with an explicit device, the device is the configured one and the rate
+        comes from capture_rate().
         """
         # An explicit device override always wins.
         if config.AUDIO_INPUT_DEVICE is not None:
-            return config.AUDIO_INPUT_DEVICE, config.AUDIO_SAMPLE_RATE
+            return config.AUDIO_INPUT_DEVICE, capture_rate(config.AUDIO_INPUT_DEVICE)
         try:
             for api in sd.query_hostapis():
                 if "wasapi" not in api["name"].lower():
@@ -250,7 +280,7 @@ class AudioRecorder:
                 return dev_index, native_sr
         except Exception:
             logging.exception("WASAPI device selection failed; using defaults.")
-        return config.AUDIO_INPUT_DEVICE, config.AUDIO_SAMPLE_RATE
+        return config.AUDIO_INPUT_DEVICE, capture_rate(config.AUDIO_INPUT_DEVICE)
 
     def _record_loop(self):
         start_time = time.time()

@@ -10,21 +10,24 @@ Two layers (mirrors tests/test_speech.py for the acoustic engine):
      phoneme model, so they run offline and quickly.
   2. An optional end-to-end runner (``python tests/test_phoneme.py user.wav
      [ref.wav]``) that exercises ``analyze`` on real audio. That path downloads the
-     ~1.2 GB recognizer and needs espeak-ng + panphon installed, so it is gated
+     ~1.2 GB recognizer and needs espeak-ng installed, so it is gated
      behind the CLI and is not run by the unit tests.
 
-The articulatory substitution cost (``_substitution_cost``) is backed by panphon's
-feature table; only its ``a == b -> 0.0`` short-circuit is exercised directly. Every
-test of a *higher-level* algorithm (alignment, recall, scoring, word mapping) stubs
-the cost with a deterministic ``0.0 if equal else 1.0`` so the logic is verified
-without depending on panphon's data being installed.
+The articulatory substitution cost (``_substitution_cost``) reads the generated
+feature table (``phone_features.json``). The table is checked on its own, against
+panphon when panphon is installed, and through golden alignments recorded with
+panphon. Every test of a *higher-level* algorithm (alignment, recall, scoring, word
+mapping) stubs the cost with a deterministic ``0.0 if equal else 1.0`` so the logic
+is verified independently of the feature values.
 
 Run unit tests:   python -m unittest tests.test_phoneme
 End-to-end check: python tests/test_phoneme.py path/to/user.wav [path/to/ref.wav]
 """
 
+import json
 import sys
 import unittest
+from pathlib import Path
 from typing import Optional
 from unittest import mock
 
@@ -34,11 +37,11 @@ from pronunciation.phoneme import speech
 
 
 def _binary_cost(a: str, b: str) -> float:
-    """Deterministic stand-in for the panphon-backed substitution cost.
+    """Deterministic stand-in for the table-backed substitution cost.
 
     Identical phones cost 0; any mismatch costs the full 1.0. This makes the
     feature-weighted edit distance behave like a plain token Levenshtein, so the
-    higher-level algorithms can be asserted exactly without panphon installed.
+    higher-level algorithms can be asserted exactly, whatever the feature values.
     """
     return 0.0 if a == b else 1.0
 
@@ -73,11 +76,112 @@ class TestTokenizationAndFold(unittest.TestCase):
 
 
 class TestSubstitutionCost(unittest.TestCase):
-    """Only the panphon-free short-circuit of the real cost is exercised here."""
+    """The short-circuit of the real cost, before any table lookup."""
 
     def test_identical_phones_cost_zero(self):
-        # a == b returns 0.0 before any panphon lookup, so this needs no data files.
+        # a == b returns 0.0 before any table lookup.
         self.assertEqual(speech._substitution_cost("a", "a"), 0.0)
+
+
+_GOLDEN_FILE = Path(__file__).resolve().parent / "data" / "phoneme_alignment_golden.json"
+
+
+def _read_feature_document() -> dict:
+    """phone_features.json as written by tools/gen_phone_features.py."""
+    with speech._PHONE_FEATURES_FILE.open(encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+class TestPhoneFeatureTable(unittest.TestCase):
+    """The generated feature table that replaced panphon at runtime."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.document = _read_feature_document()
+
+    def test_every_vector_has_one_sign_per_feature(self):
+        width = len(self.document["features"])
+        for token, signs in self.document["phones"].items():
+            if signs is None:
+                continue
+            with self.subTest(token=token):
+                self.assertEqual(len(signs), width)
+                self.assertLessEqual(set(signs), {"+", "-", "0"})
+
+    def test_recognizer_vocabulary_is_covered(self):
+        # Normalized with the CURRENT code, so a change of _normalize_phones or
+        # _PHONE_FOLD that creates a new token fails here, not in main.log.
+        # Both forms, as the generator adds them: a transcript of one token
+        # has no space and _tokenize_ipa splits it into characters.
+        phones = self.document["phones"]
+        for vocab_token in self.document["recognizer_vocab"]:
+            forms = (speech._normalize_phones([vocab_token])
+                     + speech._normalize_phones(speech._tokenize_ipa(vocab_token)))
+            for token in forms:
+                with self.subTest(vocab_token=vocab_token, token=token):
+                    self.assertIn(token, phones)
+
+    def test_table_names_the_configured_recognizer(self):
+        # A new recognizer has a new vocabulary: generate the table again.
+        from mimora import models_info
+
+        self.assertEqual(self.document["_meta"]["recognizer"],
+                         models_info.WAV2VEC2_PHONEME.repo_id)
+
+    def test_cost_is_the_share_of_differing_features(self):
+        # Decoded independently of speech.py: count differing signs.
+        phones = self.document["phones"]
+        a, b = "p", "b"
+        expected = sum(x != y for x, y in zip(phones[a], phones[b])) / len(phones[a])
+        self.assertGreater(expected, 0.0)
+        self.assertEqual(speech._substitution_cost(a, b), expected)
+
+    def test_unknown_phone_costs_one_and_is_logged(self):
+        token = "phone-not-in-table"
+        speech._phone_vector.cache_clear()
+        speech._substitution_cost.cache_clear()
+        with self.assertLogs(level="WARNING") as captured:
+            self.assertEqual(speech._substitution_cost(token, "a"), 1.0)
+        self.assertTrue(any(token in line for line in captured.output))
+
+
+class TestFeatureTableMatchesPanphon(unittest.TestCase):
+    """Every vector of the table is panphon's own. Skipped without panphon."""
+
+    def test_vectors_equal_panphon(self):
+        try:
+            import panphon
+        except ImportError:
+            self.skipTest("panphon is not installed (tools/requirements-dev.txt)")
+        try:
+            table = panphon.FeatureTable()
+        except UnicodeDecodeError:
+            # panphon reads its data files without an encoding.
+            self.skipTest("panphon needs UTF-8 mode: run the tests with python -X utf8")
+        sign_of = {1: "+", -1: "-", 0: "0"}
+        for token, signs in _read_feature_document()["phones"].items():
+            vectors = table.word_to_vector_list(token, numeric=True)
+            expected = "".join(sign_of[v] for v in vectors[0]) if vectors else None
+            with self.subTest(token=token):
+                self.assertEqual(signs, expected)
+
+
+class TestGoldenAlignment(unittest.TestCase):
+    """Alignments recorded with panphon (tools/capture_golden_scores.py).
+
+    The move to phone_features.json must not change a single score, so the
+    pairs and the distance must be equal to the bit, not only approximately.
+    """
+
+    def test_alignments_equal_the_recorded_ones(self):
+        with _GOLDEN_FILE.open(encoding="utf-8") as fh:
+            cases = json.load(fh)["cases"]
+        self.assertTrue(cases)
+        for case in cases:
+            with self.subTest(case=case["name"]):
+                pairs, distance = speech._edit_alignment(case["reference"], case["spoken"])
+                self.assertEqual([list(pair) for pair in pairs], case["pairs"])
+                self.assertEqual(distance, case["distance"])
 
 
 class TestEditAlignment(unittest.TestCase):
@@ -362,7 +466,7 @@ class TestAlignAndScore(unittest.TestCase):
 
 
 # Note: reference_phonemes / reference_word_phonemes need espeak-ng, and analyze()
-# needs the wav2vec2 recognizer + panphon, so they are exercised only by the
+# needs the wav2vec2 recognizer, so they are exercised only by the
 # optional end-to-end runner below, never by the offline unit tests.
 
 

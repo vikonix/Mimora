@@ -37,6 +37,7 @@ the model has to be present already.
 
 from __future__ import annotations
 
+import math
 import sys
 import urllib.error
 import urllib.request
@@ -60,8 +61,13 @@ _USER_AGENT = "mimora-measure-model-sizes/1.0"
 
 
 def _mb(size_bytes: int) -> int:
-    """Bytes to decimal MB, which is what size_mb means everywhere."""
-    return round(size_bytes / 1_000_000)
+    """Bytes to decimal MB, which is what size_mb means everywhere.
+
+    Rounded up, never to the nearest: the first-run download compares the
+    bytes it received with these numbers, and a record smaller than the real
+    file makes every full installation log that the sizes are stale.
+    """
+    return math.ceil(size_bytes / 1_000_000)
 
 
 # ---------------------------------------------------------------------------

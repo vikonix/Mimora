@@ -37,7 +37,8 @@ from typing import NamedTuple
 # What size_mb means
 # ---------------------------------------------------------------------------
 #
-# BYTES OVER THE NETWORK, in decimal MB (bytes / 1_000_000). The first-run
+# BYTES OVER THE NETWORK, in decimal MB (bytes / 1_000_000), rounded up so
+# that a record is never smaller than the real download. The first-run
 # dialog promises traffic ("you are about to download X GB") to somebody who
 # may be on a metered connection, so traffic is what is stored.
 #
@@ -138,7 +139,7 @@ class PackagedModel(NamedTuple):
 WAV2VEC2_ACOUSTIC = HfRepo(
     "facebook/wav2vec2-large-960h",
     "Wav2Vec2 (acoustic pronunciation engine)",
-    size_mb=1262,  # measured 2026-07-28
+    size_mb=1263,  # measured 2026-11-12
 )
 
 WAV2VEC2_PHONEME = HfRepo(
@@ -150,7 +151,7 @@ WAV2VEC2_PHONEME = HfRepo(
 KOKORO = HfRepo(
     "hexgrad/Kokoro-82M",
     "Kokoro-82M (text-to-speech, English)",
-    size_mb=363,  # measured 2026-07-28
+    size_mb=364,  # measured 2026-11-12
 )
 
 NLLB = HfRepo(
@@ -195,7 +196,7 @@ GGUF_CHAT = HfFile(
     "hugging-quants/Llama-3.2-3B-Instruct-Q4_K_M-GGUF",
     "llama-3.2-3b-instruct-q4_k_m.gguf",
     "Llama 3.2 3B Instruct Q4_K_M (chat model for llama-server)",
-    size_mb=2019,  # measured 2026-07-28
+    size_mb=2020,  # measured 2026-11-12
 )
 
 # ---------------------------------------------------------------------------

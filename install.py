@@ -114,16 +114,26 @@ MIN_PYTHON = (3, 11)  # matches requires-python in pyproject.toml
 # only get a warning (see step_check_python). Because the requirements install
 # is binary-only, a missing wheel on such an interpreter fails loudly with a
 # "no matching distribution" error instead of silently source-building.
-WHEEL_TESTED_MAX = (3, 12)
+# 3.14: every dependency resolves with wheels on every platform. Intel macOS
+# is the exception and stays on 3.12, see the comment over requires-python in
+# pyproject.toml.
+WHEEL_TESTED_MAX = (3, 14)
+# kokoro and misaki (the English TTS) declare Requires-Python <3.13 up to
+# 0.9.4, their newest release on 2026-10-31. Their main branches have dropped
+# the bound (hexgrad/kokoro#244, hexgrad/misaki#85), but no release had it
+# then. uv ignores upper bounds of Requires-Python and installs 0.9.4 on 3.14,
+# where it works (Ubuntu 26.04). pip keeps the bound, finds no kokoro for the
+# interpreter and stops with "resolution-too-deep" after a long search
+# through old versions (Windows, 3.14). From this version on, step
+# 4 therefore passes --ignore-requires-python. Remove the flag and this
+# constant once a kokoro and misaki release accepts the newest interpreter.
+IGNORE_REQUIRES_PYTHON_FROM = (3, 13)
 
 # Dependencies that publish no wheels (pure-Python, sdist only). The
 # requirements step installs binary-only to stop an unsupported interpreter
 # from silently compiling a package that lacks a wheel; these few must be
 # exempted or the install would fail on them on every Python version.
-# unicodecsv: pulled by panphon (phoneme engine); every panphon release depends
-# on it and it ships sdist-only, so --only-binary makes the resolve impossible
-# without this exemption. Pure-Python - builds from sdist with no compiler.
-SOURCE_ONLY_PACKAGES = ("fastdtw", "docopt", "unicodecsv")
+SOURCE_ONLY_PACKAGES = ("fastdtw", "docopt")
 
 # CUDA wheel series, newest first. We pick the newest series whose CUDA version
 # is not greater than the one the driver reports (CUDA is forward compatible at
@@ -164,7 +174,7 @@ REQUIRED_DISTS = [
     "numpy", "soundfile", "sounddevice", "kokoro", "supertonic", "openai",
     "torch", "transformers",
     "librosa", "scipy", "scikit-learn", "fastdtw",
-    "phonemizer-fork", "espeakng-loader", "python-Levenshtein", "panphon",
+    "phonemizer-fork", "espeakng-loader", "python-Levenshtein",
     "sentencepiece",
     "ttkbootstrap", "pillow", "onnxruntime", "wordfreq",
 ]
@@ -1123,6 +1133,13 @@ def step_install_requirements(
     cmd = PIP + ["install", *requirements,
                  "--only-binary", ":all:",
                  "--no-binary", ",".join(SOURCE_ONLY_PACKAGES)]
+    if sys.version_info[:2] >= IGNORE_REQUIRES_PYTHON_FROM:
+        # See IGNORE_REQUIRES_PYTHON_FROM. The flag turns off the check for
+        # every package, not only kokoro, so say it openly.
+        cmd.append("--ignore-requires-python")
+        log.log("    Note: --ignore-requires-python is added. kokoro and misaki "
+                "0.9.4 declare Requires-Python <3.13, although they work on this "
+                "interpreter (see IGNORE_REQUIRES_PYTHON_FROM in install.py).")
     desc = (f"Install all {len(requirements)} Python dependencies declared in "
             f"pyproject.toml (both pronunciation engines included).")
     if installed:

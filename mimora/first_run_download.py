@@ -187,10 +187,12 @@ class ProgressState:
                 # would make the percentage jump, so the plan wins on screen
                 # and the disagreement goes to the log instead.
                 self._overflow_logged = True
-                log.info("Downloaded more than planned (%d MB against %d MB) - "
-                         "the recorded sizes are stale; re-snap them with "
-                         "tools/measure_model_sizes.py.",
-                         done // BYTES_PER_MB, self._total // BYTES_PER_MB)
+                # One decimal: the excess can be a fraction of a megabyte,
+                # and whole numbers would print two equal figures.
+                log.info("Downloaded more than planned (%.1f MB against "
+                         "%.1f MB) - the recorded sizes are stale; re-snap "
+                         "them with tools/measure_model_sizes.py.",
+                         done / BYTES_PER_MB, self._total / BYTES_PER_MB)
             return Snapshot(label=self._label,
                             done_bytes=min(done, self._total),
                             total_bytes=self._total,

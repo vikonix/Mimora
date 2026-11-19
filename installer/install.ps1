@@ -42,6 +42,15 @@ function Write-MimoraWarning([string]$Message) {
     Write-Host "WARNING: $Message" -ForegroundColor Yellow
 }
 
+# Stops the script with a message for the user. The catch at the end prints
+# the line number only for other errors: those are unexpected, and the number
+# helps with a report. Under this message it is only noise.
+function Stop-Mimora([string]$Message) {
+    $exception = New-Object Exception $Message
+    $exception.Data['MimoraStop'] = $true
+    throw $exception
+}
+
 # The first output of an installation: what is installed, and that it can
 # take long. Without it, the first line names uv, which the user did not ask for.
 function Write-MimoraBanner([string]$Package) {
@@ -68,7 +77,7 @@ function Assert-MimoraNotRunning {
         $mutex.Dispose()
     }
     if ($running) {
-        throw 'Mimora is running. Close it, then run this command again.'
+        Stop-Mimora 'Mimora is running. Close it, then run this command again.'
     }
 }
 
@@ -104,11 +113,11 @@ function Install-MimoraUv {
     # path of uv.exe together as one value.
     & powershell -NoProfile -ExecutionPolicy ByPass -Command "irm https://astral.sh/uv/install.ps1 | iex" | Out-Host
     if ($LASTEXITCODE -ne 0) {
-        throw "The uv installation failed (exit code $LASTEXITCODE). Read the messages above."
+        Stop-Mimora "The uv installation failed (exit code $LASTEXITCODE). Read the messages above."
     }
     $uv = Find-MimoraUv
     if (-not $uv) {
-        throw 'uv was installed, but uv.exe was not found. Open a new terminal and run this command again.'
+        Stop-Mimora 'uv was installed, but uv.exe was not found. Open a new terminal and run this command again.'
     }
     return $uv
 }
@@ -140,17 +149,17 @@ function Install-MimoraVcRuntime {
             $process = Start-Process -FilePath $installer -ArgumentList '/install', '/passive', '/norestart' -Wait -PassThru
         } catch {
             # Start-Process throws when the user refuses the UAC prompt.
-            throw 'The Visual C++ runtime was not installed. Mimora cannot start without it. Run this command again and allow the installation.'
+            Stop-Mimora 'The Visual C++ runtime was not installed. Mimora cannot start without it. Run this command again and allow the installation.'
         }
         # 1602: the user cancelled the vc_redist window. Not a failure of
         # the runtime installer, so the same message as a refused UAC prompt.
         if ($process.ExitCode -eq 1602) {
-            throw 'The Visual C++ runtime was not installed. Mimora cannot start without it. Run this command again and allow the installation.'
+            Stop-Mimora 'The Visual C++ runtime was not installed. Mimora cannot start without it. Run this command again and allow the installation.'
         }
         # 3010: installed, a restart is required later.
         # 1638: a newer version is already installed.
         if ($process.ExitCode -notin @(0, 3010, 1638)) {
-            throw "The Visual C++ runtime installer failed (exit code $($process.ExitCode))."
+            Stop-Mimora "The Visual C++ runtime installer failed (exit code $($process.ExitCode))."
         }
     } finally {
         Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
@@ -308,6 +317,172 @@ function Get-MimoraDataDir {
     return Join-Path $env:USERPROFILE 'AppData\Roaming\Mimora'
 }
 
+# The update check (Invoke-MimoraTrialUpdate) writes into logs\install.log
+# of the data directory: the same append-only file that install.py and the
+# first start of Mimora write, so that one file tells what was installed on
+# this computer and how. Each run is one section, in the format of install.py.
+# UTF-8 without a BOM, as Python writes the file. Tee-Object is not used: in
+# Windows PowerShell 5.1 it writes UTF-16.
+function Add-MimoraLogLine([string]$Log, [string]$Line) {
+    [IO.File]::AppendAllText($Log, "$Line`r`n", (New-Object Text.UTF8Encoding($false)))
+}
+
+# Returns the version and Python of the installed Mimora, for example
+# "Mimora 1.2.0, Python 3.14.9", or $null when they cannot be read.
+# The Python code has no double quotes: Windows PowerShell 5.1 does not
+# escape them in the arguments of a native command.
+function Get-MimoraInstalledVersion([string]$Uv) {
+    $ErrorActionPreference = 'Continue'
+    $python = Join-Path (& $Uv tool dir).Trim() 'mimora\Scripts\python.exe'
+    if (-not (Test-Path -LiteralPath $python)) {
+        return $null
+    }
+    $text = & $python -c 'import platform, mimora; print(''Mimora'', mimora.__version__ + '', Python'', platform.python_version())' 2>$null
+    if ($LASTEXITCODE -ne 0 -or -not $text) {
+        return $null
+    }
+    return "$text".Trim()
+}
+
+# Installs Mimora with the same arguments into a temporary tool directory
+# first, when Mimora is already installed. When uv changes the Python of a
+# tool, it deletes the old environment before the new one is complete, so a
+# failed update would leave no Mimora at all. When the check fails, the
+# installed Mimora is not changed. The check fills the uv cache, so the
+# installation after it downloads nothing again.
+# A first installation has nothing to keep, so it gets no check.
+# Returns the path of the log, or $null when there was no check.
+function Invoke-MimoraTrialUpdate([string]$Uv, [string]$Package, [string[]]$InstallArgs) {
+    $toolDir = (& $Uv tool dir).Trim()
+    if (-not $toolDir -or -not (Test-Path -LiteralPath (Join-Path $toolDir 'mimora'))) {
+        return $null
+    }
+    # Beside the real tool directory, so usually on the same disk as the uv
+    # cache: uv then links the files from the cache instead of copying them.
+    $trialDir = $toolDir.TrimEnd('\') + '-mimora-trial'
+    $trialBin = Join-Path $trialDir 'bin'
+    $logDir = Join-Path (Get-MimoraDataDir) 'logs'
+    New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+    $log = Join-Path $logDir 'install.log'
+    # An interrupted check (Ctrl+C) leaves its directory behind. It is
+    # removed here, before the next check. A file that an antivirus scan
+    # still holds can stop the removal.
+    if (Test-Path -LiteralPath $trialDir) {
+        try {
+            Remove-Item -LiteralPath $trialDir -Recurse -Force
+        } catch {
+            Stop-Mimora "Could not delete $trialDir, which an earlier check left. Close the programs that use it (for example an Explorer window that shows it), delete it yourself, and run this command again."
+        }
+    }
+
+    Write-MimoraStep 'Checking the update in a separate environment first. The installed Mimora stays until the check passes.'
+    Write-Host "  uv shows no progress bars in this step. Its messages also go to $log"
+    # A blank line only between two sections, so that a new file opens with
+    # the rule, as in install.py.
+    if ((Test-Path -LiteralPath $log) -and (Get-Item -LiteralPath $log).Length -gt 0) {
+        Add-MimoraLogLine $log ''
+    }
+    $rule = '======================================================================'
+    Add-MimoraLogLine $log $rule
+    Add-MimoraLogLine $log 'Mimora update check (install.ps1)'
+    Add-MimoraLogLine $log $rule
+    Add-MimoraLogLine $log "    started: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz')"
+    Add-MimoraLogLine $log "    requested: $Package"
+    $installed = Get-MimoraInstalledVersion $Uv
+    if (-not $installed) {
+        $installed = 'unknown (the installed environment did not answer)'
+    }
+    Add-MimoraLogLine $log "    installed: $installed"
+    Add-MimoraLogLine $log "    uv: $((& $Uv --version) -join ' ')"
+    Add-MimoraLogLine $log "    system: $([Environment]::OSVersion.VersionString), $env:PROCESSOR_ARCHITECTURE"
+    Add-MimoraLogLine $log "    command: uv tool install $($InstallArgs -join ' ')"
+
+    $saved = @{
+        UV_TOOL_DIR = $env:UV_TOOL_DIR
+        UV_TOOL_BIN_DIR = $env:UV_TOOL_BIN_DIR
+        Path = $env:Path
+    }
+    # PowerShell decodes the output of a native command in a pipeline
+    # with [Console]::OutputEncoding, the OEM code page, but uv writes
+    # UTF-8: a path with non-ASCII letters (a user name in Cyrillic) would
+    # be garbled on the screen and in the log. A host without a console
+    # refuses the change; then the output stays as it is.
+    $savedEncoding = [Console]::OutputEncoding
+    # Continue: with Stop, Windows PowerShell 5.1 ends the script at the
+    # first line that uv writes to stderr once stderr is redirected.
+    $ErrorActionPreference = 'Continue'
+    try {
+        try {
+            [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
+        } catch {
+        }
+        $env:UV_TOOL_DIR = $trialDir
+        $env:UV_TOOL_BIN_DIR = $trialBin
+        # Without it uv warns that the directory is not on PATH, which is
+        # true and does not matter here.
+        $env:Path = "$trialBin;$env:Path"
+        # 2>&1 turns each stderr line of uv into an error record; "$_" is
+        # its text. Each line goes to the screen and into the log, where it
+        # gets the prefix that install.py gives the output of a command: so
+        # the messages of uv are not mixed up with the lines of the section.
+        & $Uv tool install @InstallArgs 2>&1 | ForEach-Object {
+            $line = "$_"
+            Write-Host $line
+            Add-MimoraLogLine $log "    | $line"
+        }
+        $code = $LASTEXITCODE
+
+        $check = 'failed'
+        if ($code -eq 0) {
+            # --version answers without importing torch (mimora\cli.py), so
+            # it costs less than a second. It finds a broken command or a
+            # broken installation of the Mimora package itself.
+            # Test-Path first: calling a missing file is an error that ends
+            # the script, not an exit code.
+            $exe = Join-Path $trialBin 'mimora.exe'
+            $version = 'mimora.exe was not created'
+            $versionCode = 1
+            if (Test-Path -LiteralPath $exe) {
+                $version = (& $exe --version 2>&1 | ForEach-Object { "$_" }) -join ' '
+                $versionCode = $LASTEXITCODE
+            }
+            if ($versionCode -eq 0) {
+                $check = 'passed'
+                Add-MimoraLogLine $log '    check: passed'
+                Add-MimoraLogLine $log "    version: $version"
+            } else {
+                Add-MimoraLogLine $log "    check: installed, but ""mimora --version"" failed: $version"
+            }
+        } else {
+            Add-MimoraLogLine $log "    check: failed, exit code $code"
+        }
+    } finally {
+        try {
+            [Console]::OutputEncoding = $savedEncoding
+        } catch {
+        }
+        $env:UV_TOOL_DIR = $saved.UV_TOOL_DIR
+        $env:UV_TOOL_BIN_DIR = $saved.UV_TOOL_BIN_DIR
+        $env:Path = $saved.Path
+    }
+    $ErrorActionPreference = 'Stop'
+
+    try {
+        Remove-Item -LiteralPath $trialDir -Recurse -Force
+    } catch {
+        # The next check removes it. Not a reason to stop an update that
+        # passed.
+        Write-MimoraWarning "Could not delete $trialDir. You can delete it yourself."
+    }
+
+    if ($check -ne 'passed') {
+        Add-MimoraLogLine $log '    result: the installed Mimora was not changed'
+        Stop-Mimora "The update failed in the check, so the installed Mimora was not changed. Read the messages above; they are also in $log"
+    }
+    Write-MimoraStep 'The check passed. Replacing the installed Mimora'
+    return $log
+}
+
 function Install-Mimora {
     $package = 'mimora'
     if ($env:MIMORA_VERSION) {
@@ -342,16 +517,31 @@ function Install-Mimora {
     # --upgrade: a second run of this script is an upgrade.
     # --managed-python: always the Python build of uv, never a Python that is
     #   already on the computer and can be a version that Mimora does not support.
-    # --python 3.12: a uv tool environment ignores requires-python.
+    # --python 3.14: a uv tool environment ignores requires-python, so the
+    #   version is named here. Every dependency has cp314 wheels for Windows,
+    #   the CUDA build of torch from --torch-backend included.
     # --torch-backend auto: without it an NVIDIA computer gets a CPU-only torch.
     # --with 'preshed<3.0.14': preshed 3.0.14 breaks the spaCy pipeline load,
     #   and Mimora stops at "Initialization Failed" (explosion/spaCy#14058).
     #   The wheels up to 1.2.0rc1 do not exclude it, and the script installs
     #   them too. uv keeps the requirement, so "uv tool upgrade" keeps it.
     #   Remove it together with the bound in pyproject.toml.
-    & $uv tool install --upgrade --managed-python --python 3.12 --torch-backend auto --with 'preshed<3.0.14' $package
+    $installArgs = @('--upgrade', '--managed-python', '--python', '3.14', '--torch-backend', 'auto', '--with', 'preshed<3.0.14', $package)
+    $installLog = Invoke-MimoraTrialUpdate $uv $package $installArgs
+    & $uv tool install @installArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "The Mimora installation failed (exit code $LASTEXITCODE). Read the messages above. If uv reports an unknown option, update uv ('uv self update') and run this command again."
+        if ($installLog) {
+            Add-MimoraLogLine $installLog '    result: the installation failed after the check passed'
+        }
+        Stop-Mimora "The Mimora installation failed (exit code $LASTEXITCODE). Read the messages above. If uv reports an unknown option, update uv ('uv self update') and run this command again."
+    }
+
+    if ($installLog) {
+        $installed = Get-MimoraInstalledVersion $uv
+        if (-not $installed) {
+            $installed = 'Mimora, the version could not be read'
+        }
+        Add-MimoraLogLine $installLog "    result: installed $installed"
     }
 
     Add-MimoraBinToPath $uv $binDir
@@ -379,7 +569,12 @@ function Install-Mimora {
     } else {
         Write-Host '  Upgrade:   uv tool upgrade mimora   (or run this command again)'
     }
-    Write-Host '  Uninstall: see the top of this script, or run "uv tool uninstall mimora" and delete the shortcut.'
+    # The whole command: a user who ran "irm | iex" never saw this file, so
+    # "the top of this script" would mean nothing to them. On its own line,
+    # so that it is easy to select. Removing does not depend on the version,
+    # so the latest script also removes an exact MIMORA_VERSION.
+    Write-Host '  Uninstall:'
+    Write-Host '    powershell -ExecutionPolicy ByPass -c "& ([scriptblock]::Create((irm https://github.com/vikonix/Mimora/releases/latest/download/install.ps1))) -Uninstall"'
 }
 
 function Uninstall-Mimora {
@@ -436,14 +631,14 @@ function Uninstall-Mimora {
         # Only the message: the full PowerShell error record ("At line ...",
         # CategoryInfo, FullyQualifiedErrorId) hides it from the user. The
         # line number stays, on its own line, for a report of an unexpected
-        # error.
+        # error. Stop-Mimora marks the expected ones, which get no number.
         # No "exit": a user who pastes "irm | iex" into an open window
         # would lose that window. The cost is that "powershell -c" ends with
         # exit code 0 after a failure; nothing reads that code.
         Write-Host ''
         Write-Host "ERROR: $($_.Exception.Message)" -ForegroundColor Red
         $line = $_.InvocationInfo.ScriptLineNumber
-        if ($line) {
+        if ($line -and -not $_.Exception.Data['MimoraStop']) {
             Write-Host "  (install.ps1, line $line)" -ForegroundColor DarkGray
         }
     }

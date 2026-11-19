@@ -4,10 +4,11 @@
 """Unit tests for mimora.loader - the pure configuration machinery.
 
 These exercise the validation rules and fallbacks in isolation: loader imports
-only the standard library, so nothing here touches the HuggingFace stack or
-config.py's import-time side effects. The one function that reaches for torch
-(detect_device, lazily) gets a stub in sys.modules, so these stay fast and pass
-with or without torch and a GPU. Run from the project root with:
+only the standard library and mimora.paths (itself stdlib-only), so nothing
+here touches the HuggingFace stack or config.py's import-time side effects. The
+one function that reaches for torch (detect_device, lazily) gets a stub in
+sys.modules, so these stay fast and pass with or without torch and a GPU. Run
+from the project root with:
 
     python -m unittest tests.test_loader
 """

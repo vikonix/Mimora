@@ -110,8 +110,8 @@ class RequiredLevelTests(unittest.TestCase):
         # These three numbers are what the dialog reads out to the user, so a
         # re-snap of models_info has to fail here rather than quietly change
         # what the app asks for.
-        cases = {("phoneme", "kokoro"): 1640,     # default configuration
-                 ("acoustic", "kokoro"): 1638,    # the other engine
+        cases = {("phoneme", "kokoro"): 1641,     # default configuration
+                 ("acoustic", "kokoro"): 1640,    # the other engine
                  ("phoneme", "supertonic"): 1668}  # Spanish, no spaCy pipeline
         for (engine, tts_backend), expected in cases.items():
             with self.subTest(engine=engine, tts_backend=tts_backend):
@@ -429,12 +429,12 @@ class BuildPlanTests(unittest.TestCase):
                          [models_info.KOKORO.repo_id,
                           models_info.SPACY_EN.name,
                           models_info.WAV2VEC2_PHONEME.repo_id])
-        self.assertEqual(plan.missing_required_mb, 1640)
+        self.assertEqual(plan.missing_required_mb, 1641)
         self.assertEqual([c.key for c in plan.optional],
                          [first_run.KEY_LLAMA_SERVER, first_run.KEY_GGUF])
         self.assertIsNone(plan.llama_server_blocked)
         # A first run is a machine with translation off, so the third level is
-        # empty even here. It is what keeps the default first run at 1640 MB.
+        # empty even here. It is what keeps the default first run at 1641 MB.
         self.assertEqual(plan.translator, ())
 
     def test_translation_on_adds_the_third_level_and_nothing_else(self):

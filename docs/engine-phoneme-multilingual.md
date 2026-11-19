@@ -20,7 +20,9 @@ Instead of comparing two audio clips, it compares two *sequences of phonemes*
 
 This shift has one large payoff: **adding a language becomes almost free.** There
 is no reference recording to synthesize and no per-language model to train -
-expected phonemes for any of 100+ languages come straight from text. The design
+expected phonemes for any of 100+ languages come straight from text. Only the
+calibration of the grade is per language, and it needs labeled speech of
+learners (see [Languages](technical-details.md#languages)). The design
 goal is not a perfect grade but **actionable feedback**: showing the learner
 *where* they went wrong so they can improve.
 
@@ -62,8 +64,9 @@ tolerate this (see below).
 
 The two phoneme sequences are aligned with an **edit-distance** algorithm - the
 standard way to compare symbol sequences - but with a twist: the cost of a
-mismatch is **how articulatorily different the two sounds are**, measured with a
-phonetics library (**panphon**). Confusing the two English "r" sounds barely
+mismatch is **how articulatorily different the two sounds are**, measured with
+articulatory features from a phonetics library (**panphon**). The features are
+stored in a table that ships with Mimora, so panphon itself is not installed. Confusing the two English "r" sounds barely
 costs anything; swapping unrelated sounds costs a lot. Feedback therefore reflects
 the *severity* of an error, not just its presence.
 

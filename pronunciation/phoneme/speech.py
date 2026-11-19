@@ -26,11 +26,10 @@ the same:
 Implementation notes:
     * The recognizer works on in-memory waveforms, not file paths, so only the
       model is cached.
-    * panphon's bundled data is UTF-8; on a cp1252 Windows process its load raises
-      UnicodeDecodeError. Instead of an unconditional ``pathlib.Path.open``
-      monkey-patch we build the table normally and only fall back to a narrowly
-      scoped UTF-8 default on that error (never triggered when the app runs in
-      UTF-8 mode -- set PYTHONUTF8=1 at launch).
+    * The articulatory feature vectors come from panphon through a generated
+      table (``phone_features.json``, written by ``tools/gen_phone_features.py``),
+      so the runtime does not import panphon. A token that is not in the table
+      costs 1.0, as a token unknown to panphon did, and is logged once.
     * Scoring constants (GOOD anchor, recall threshold, axis weights, insertion
       cap/gate, buckets) load from a per-language model file next to this module
       (``<lang>_model_calibration.json``, committed), selected by the configured
@@ -503,7 +502,7 @@ def load_models() -> None:
 
 
 def warm_up() -> None:
-    """Run dummy passes to remove first-call latency (recognizer + panphon + espeak)."""
+    """Run dummy passes to remove first-call latency (recognizer + feature table + espeak)."""
     load_models()
     _ensure_calibration()
     cfg = get_config()
@@ -513,7 +512,7 @@ def warm_up() -> None:
     except Exception:
         logging.exception("[phoneme] recognizer warm-up failed")
     try:
-        _feature_table()                                   # build panphon table once
+        _phone_feature_table()                             # read the feature table once
         reference_phonemes("warm up", cfg.espeak_language)  # spawn espeak once
     except Exception:
         logging.exception("[phoneme] scoring warm-up failed")
@@ -704,42 +703,42 @@ def _normalize_phones(tokens: List[str]) -> List[str]:
 
 
 # =====================================================================
-# Articulatory feature distance (panphon). Imported lazily and cached so the
-# module imports without panphon and the feature table is built only once.
+# Articulatory feature distance. The vectors are panphon's, generated once into
+# phone_features.json by tools/gen_phone_features.py, so the runtime does not
+# need panphon (and its editdistance, which has no wheels for new Pythons).
 # =====================================================================
+_PHONE_FEATURES_FILE = _DIR / "phone_features.json"
+_VALUE_OF_SIGN = {"+": 1, "-": -1, "0": 0}
+
+
 @lru_cache(maxsize=1)
-def _feature_table():
-    """Build the panphon feature table once (UTF-8 safe on cp1252 Windows)."""
-    import panphon
+def _phone_feature_table() -> Dict[str, Optional[Tuple[int, ...]]]:
+    """Read phone_features.json once: {token: feature vector, or None}.
 
-    try:
-        return panphon.FeatureTable()
-    except UnicodeDecodeError:
-        # panphon opens its bundled UTF-8 data via pathlib.Path.open without an
-        # encoding, which fails under a cp1252 default. Retry once with a narrowly
-        # scoped UTF-8 default, restored immediately afterwards. Running the app in
-        # UTF-8 mode (PYTHONUTF8=1 at launch) makes this branch never execute.
-        import pathlib
-
-        original_open = pathlib.Path.open
-
-        def _utf8_open(self, mode="r", buffering=-1, encoding=None, errors=None, newline=None):
-            if "b" not in mode and encoding is None:
-                encoding = "utf-8"
-            return original_open(self, mode, buffering, encoding, errors, newline)
-
-        pathlib.Path.open = _utf8_open
-        try:
-            return panphon.FeatureTable()
-        finally:
-            pathlib.Path.open = original_open
+    A missing or broken file raises: it is a packaging error, and scoring every
+    phone at the full cost 1.0 would hide it behind wrong grades.
+    """
+    with _PHONE_FEATURES_FILE.open(encoding="utf-8") as fh:
+        document = json.load(fh)
+    return {
+        token: None if signs is None else tuple(_VALUE_OF_SIGN[sign] for sign in signs)
+        for token, signs in document["phones"].items()
+    }
 
 
+# The cache also makes the warning below appear once per token, not once per
+# alignment cell.
 @lru_cache(maxsize=4096)
 def _phone_vector(phone: str):
     """Numeric articulatory feature vector for one phone, or None if unknown."""
-    vectors = _feature_table().word_to_vector_list(phone, numeric=True)
-    return tuple(vectors[0]) if vectors else None
+    table = _phone_feature_table()
+    if phone in table:
+        return table[phone]
+    # Same cost as a phone that panphon does not know (1.0), but visible in
+    # main.log, so that a gap of the table can be found and filled.
+    logging.warning("[phoneme] phone %r is not in %s, substitution cost 1.0; "
+                    "run tools/gen_phone_features.py", phone, _PHONE_FEATURES_FILE.name)
+    return None
 
 
 @lru_cache(maxsize=8192)

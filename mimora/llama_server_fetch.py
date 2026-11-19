@@ -176,7 +176,7 @@ VARIANTS: dict[str, Variant] = {
         assets=(
             Asset("llama-{tag}-bin-win-cuda-12.4-x64.zip",
                   "02dc3cb4a1a336cb91c53c41522cfd994cb307c5c881f442be80c6ff54443330",
-                  size_mb=250),  # measured 2026-07-28
+                  size_mb=251),  # measured 2026-11-12
             # The CUDA runtime that ships with the release. Its major version
             # MUST match the build (cuda-12.4 loads cudart64_12.dll,
             # cublas64_12.dll, cublasLt64_12.dll) - a cudart from another major
@@ -186,7 +186,7 @@ VARIANTS: dict[str, Variant] = {
             # install downloads is NVIDIA's runtime, not llama.cpp.
             Asset("cudart-llama-bin-win-cuda-12.4-x64.zip",
                   "8c79a9b226de4b3cacfd1f83d24f962d0773be79f1e7b75c6af4ded7e32ae1d6",
-                  size_mb=391),  # measured 2026-07-28
+                  size_mb=392),  # measured 2026-11-12
         ),
         min_driver_cuda=(12, 4),
         device_pattern=r"\bCUDA\d+\b",
@@ -196,7 +196,7 @@ VARIANTS: dict[str, Variant] = {
         assets=(
             Asset("llama-{tag}-bin-win-cpu-x64.zip",
                   "b1db6ea811e564f4bffe6c5eb699a025bb14b16b4f641404cb95189fe3f550b1",
-                  size_mb=18),  # measured 2026-07-28
+                  size_mb=19),  # measured 2026-11-12
         ),
         min_driver_cuda=None,
         device_pattern=None,
@@ -217,7 +217,7 @@ VARIANTS: dict[str, Variant] = {
         assets=(
             Asset("llama-{tag}-bin-ubuntu-vulkan-x64.tar.gz",
                   "b4ac074f3b2309653b951ac1757e7b9520cee4765e2f295f65bf00c44ac71560",
-                  size_mb=32),  # measured 2026-07-30
+                  size_mb=33),  # measured 2026-11-12
         ),
         min_driver_cuda=None,
         device_pattern=r"\bVulkan\d+\b",
@@ -231,7 +231,7 @@ VARIANTS: dict[str, Variant] = {
         assets=(
             Asset("llama-{tag}-bin-ubuntu-x64.tar.gz",
                   "1a0046e5ef3ca546402c10940f1f9d76e97a22e8cf31d9ecaa1ddccbb88be0a3",
-                  size_mb=16),  # measured 2026-07-30
+                  size_mb=17),  # measured 2026-11-12
         ),
         min_driver_cuda=None,
         device_pattern=None,
@@ -287,7 +287,7 @@ VARIANTS: dict[str, Variant] = {
         assets=(
             Asset("llama-{tag}-bin-macos-x64.tar.gz",
                   "211cb8c436eb4dba356345da505309a6c3e472de20284444b93517cfb14f3279",
-                  size_mb=11),  # measured 2026-07-31
+                  size_mb=12),  # measured 2026-11-12
         ),
         min_driver_cuda=None,
         device_pattern=None,

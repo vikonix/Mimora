@@ -16,8 +16,9 @@ import logging
 import sys
 from typing import Callable
 
-from mimora import (detect_hardware, gguf_fetch, llama_server_fetch,
-                    model_fetch, models_info, spacy_model_fetch)
+from mimora import (bootstrap, detect_hardware, gguf_fetch,
+                    llama_server_fetch, model_fetch, models_info,
+                    spacy_model_fetch)
 
 Step = Callable[[], int]
 
@@ -61,6 +62,13 @@ def main() -> int:
     # buffering mix their lines in the console.
     logging.basicConfig(level=logging.INFO, format="%(message)s",
                         stream=sys.stdout)
+    # The same filters as the console of the app: no request line per
+    # download (bootstrap.not_muted) and no token advice of the hub, which
+    # the hub prints through a handler of its own. A failed download still
+    # reaches the console, as the ModelFetchError that the step prints.
+    for handler in logging.getLogger().handlers:
+        handler.addFilter(bootstrap.not_muted)
+    bootstrap.mute_hub_token_advice()
 
     failed = []
     for name in args.components:

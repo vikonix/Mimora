@@ -8,7 +8,7 @@ in the comment next to that line.
 
 ## Project Overview
 
-Mimora is a local, offline **pronunciation trainer** (Python 3.11/3.12, Tkinter
+Mimora is a local, offline **pronunciation trainer** (Python 3.11-3.14, Tkinter
 GUI). It speaks an LLM-generated phrase aloud, records the user repeating it,
 then scores the attempt against the reference with the active pronunciation
 engine plus prosody. The user repeats the same phrase until satisfied, then
@@ -33,6 +33,9 @@ English (`american`/`british`) is fully calibrated; Spanish (`castilian`) runs
 the phoneme engine as **experimental** until
 `pronunciation/phoneme/es_model_calibration.json` lands. Adding a language is a
 profile module plus an engine calibration, never a new `if language == ...`.
+After a new language or variant, run `tools/gen_phone_features.py` again: its
+espeak output goes into the phoneme feature table, and a phone missing there
+costs 1.0.
 
 The pronunciation-scoring core in `pronunciation/acoustic/` is adapted from
 [OpenPronounce](https://github.com/Halleck45/OpenPronounce) (MIT) and reused as
@@ -44,6 +47,11 @@ a GUI-agnostic library.
 pip install -e .
 python main.py
 ```
+
+On Python 3.13 and 3.14 use `pip install -e . --ignore-requires-python`:
+kokoro and misaki (up to 0.9.4) declare `requires-python <3.13`, and pip
+stops with `resolution-too-deep`. `install.py` adds the flag itself (see
+`IGNORE_REQUIRES_PYTHON_FROM` there).
 
 Editable on purpose: a plain `pip install .` from a clone leaves a second copy
 in site-packages that your edits never reach, and switches `paths.py` out of
@@ -106,7 +114,7 @@ installs or imports llama-cpp-python.
   (`tests/test_window_icon.py` checks that they agree). A failure to load the icon is logged and never stops a window.
   `WM_CLASS` is the `className` of every `tk.Tk()` (main window, first-run
   window, splash) and the `StartupWMClass` of the Linux menu entry in
-  `installer/install.sh`; `mimora/splash.py` repeats it as `_WM_CLASS`.
+  `installer/install-linux.sh`; `mimora/splash.py` repeats it as `_WM_CLASS`.
   Change all three or none (the same test file checks them).
   On Windows each new `Toplevel` calls `sharpen_window_icon()`: the icon
   that it gets from the root is the small one and is blurred on a scaled
@@ -122,9 +130,14 @@ installs or imports llama-cpp-python.
   `with` block, so that what the first-run window downloaded outlives the next
   launch truncating `main.log`. It writes the same `logs/install.log` that
   `install.py` writes, which is the point - that script is not in the wheel,
-  so on a wheel install nothing else records what was installed. What that file
-  does NOT keep is named in `_INSTALL_LOG_MUTED` (`httpx`, one INFO line per
-  request), by logger name and on that handler only - `main.log` keeps them.
+  so on a wheel install nothing else records what was installed (the installer
+  scripts in `installer/` add a section only for an update check, never for a
+  first installation). What that file and the console do NOT show is named
+  in `_MUTED_LOGGERS` (`httpx` and `httpx2`, one INFO line per request), by
+  logger name, through the handler filter `not_muted()` - `main.log` keeps
+  them. The token advice of huggingface-hub is a different case:
+  `mute_hub_token_advice()` puts a filter on the hub's own logger, because
+  the hub has a stderr handler of its own, so that line leaves `main.log` too.
   `open_log_section()` writes a run header into one handler's file, blank-line
   separated from what is already there; `detect_hardware` uses it as well.
 - [`mimora/ui.py`](mimora/ui.py) - `TrainerView`: the view facade `app.py`
@@ -170,6 +183,12 @@ installs or imports llama-cpp-python.
   are different in KIND, which is why they sit in different directories: one
   ships with the code, the other is state this machine produced, and an
   installed package's own directory is no place to write state to.
+  The articulatory feature vectors of the substitution cost come from
+  `pronunciation/phoneme/phone_features.json`, generated from panphon by
+  `tools/gen_phone_features.py`. The runtime does not import panphon: it
+  depends on `editdistance`, which has no wheels for new Pythons. Generate the
+  table again after a change of the recognizer, of espeak-ng, of
+  `_normalize_phones` / `_PHONE_FOLD`, or of the languages.
 - [`pronunciation/acoustic/speech.py`](pronunciation/acoustic/speech.py) -
   alternative engine (adapted from OpenPronounce). Wav2Vec2 embeddings +
   per-step cosine DTW. Calibratable floor in `config/calibration_acoustic.json`;
@@ -248,7 +267,13 @@ installs or imports llama-cpp-python.
   packaging, not taste: **setuptools puts a non-Python file into the wheel only
   from inside a package**. **Stdlib-only** - `install.py` reads it before the
   requirements exist, which is also what lets the modules forbidden to import
-  `config` import this one instead.
+  `config` import this one instead. Also `module_command()`: how a message
+  spells `python -m mimora.<module>` advice for THIS installation (plain
+  `python` in a clone, the quoted path of the running interpreter when
+  installed, where `python` on PATH cannot import mimora; on Windows a second,
+  PowerShell form with `&`, because no one spelling of a quoted path runs in
+  both cmd and PowerShell). The result is already in backticks, so callers add
+  no quotes. Every such advice in a user-facing message goes through it.
 - [`mimora/lifecycle.py`](mimora/lifecycle.py) - process-exit helpers, Tk-free:
   `hard_exit()` and `spawn_replacement()`. `relaunch_command()` reconstructs how
   THIS process was started rather than assuming, which is subtler than it looks
@@ -353,6 +378,16 @@ answered in `first_run.py` instead.
   built from the current code - for one fix at a time. It installs nothing and
   uses no network: a file name in the index is spent once and for all, so the
   artefact is checked before the upload rather than after it.
+- [`tools/gen_phone_features.py`](tools/gen_phone_features.py) - generates
+  `pronunciation/phoneme/phone_features.json` from panphon, for every token of
+  the recognizer vocabulary and of the espeak output of every language
+  profile. Needs [`tools/requirements-dev.txt`](tools/requirements-dev.txt)
+  (panphon, not in the wheel) and `python -X utf8`.
+- [`tools/capture_golden_scores.py`](tools/capture_golden_scores.py) - wrote
+  `tests/data/phoneme_alignment_golden.json` with panphon before the move to
+  the table. The test compares the alignments with it to the bit. It refuses
+  to run on the table-based code and does not replace the file without
+  `--force`.
 
 ### Shipped data
 
