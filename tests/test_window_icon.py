@@ -39,6 +39,15 @@ class ShippedIconFilesTests(unittest.TestCase):
         for name in (window_icon.ICON_ICO_NAME, window_icon.ICON_PNG_NAME):
             self.assertTrue((icons_dir / name).is_file(), name)
 
+    def test_the_macos_installer_finds_a_shipped_icns(self):
+        # install-macos.sh copies the icon into Mimora.app from the installed
+        # package. With a renamed file the bundle gets the standard icon, and
+        # the script only warns.
+        sh = (_INSTALLER_DIR / "install-macos.sh").read_text(encoding="utf-8")
+        names = re.findall(r"site-packages/mimora/icons/([\w.-]+)'", sh)
+        self.assertEqual(names, ["mimora.icns"])
+        self.assertTrue((paths.shipped_icons_dir() / names[0]).is_file())
+
 
 class ApplyWindowIconTests(unittest.TestCase):
     def test_windows_sets_the_ico_as_the_default_icon(self):

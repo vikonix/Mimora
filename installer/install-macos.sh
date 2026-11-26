@@ -274,9 +274,10 @@ register_bundle() {
     fi
 }
 
-# $1 is the full path of uv, $2 the bin directory of uv. When the bundle
-# directory cannot be made, the script continues with a warning: Mimora is
-# installed, and the command in the terminal works without the bundle.
+# $1 is the full path of uv, $2 the bin directory of uv. Sets app_created
+# when this run made the bundle. When the bundle directory cannot be made,
+# the script continues with a warning: Mimora is installed, and the command
+# in the terminal works without the bundle.
 create_app_bundle() {
     uv=$1
     bin_dir=$2
@@ -345,6 +346,7 @@ create_app_bundle() {
 </plist>
 PLIST
     register_bundle -f "$app_bundle"
+    app_created=1
 }
 
 # Ends the installation after the real "uv tool install" failed.
@@ -409,6 +411,9 @@ install_mimora() {
         log_line "result: installed ${installed:-Mimora, the version could not be read}"
     fi
 
+    # Not the existence of the bundle: one from an earlier installation stays
+    # when MIMORA_NO_SHORTCUT is set, and this run did not make it.
+    app_created=""
     if [ -n "${MIMORA_NO_SHORTCUT:-}" ]; then
         step "MIMORA_NO_SHORTCUT is set: Mimora.app was not created"
     else
@@ -416,7 +421,7 @@ install_mimora() {
     fi
 
     printf '\nMimora is installed.\n'
-    if [ -f "$app_bundle/Contents/Info.plist" ]; then
+    if [ -n "$app_created" ]; then
         printf '  Mimora is in Launchpad and in ~/Applications.\n'
     fi
     case ":$PATH:" in

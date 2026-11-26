@@ -137,7 +137,7 @@ needed**. You need neither a C/C++ compiler nor a CUDA toolkit.
 ### Requirements
 
 - **Hardware** - a typical laptop or desktop: **16 GB RAM and no GPU required**. On CPU the first phrases are slower. An NVIDIA GPU is optional, needs a CUDA build of PyTorch, and speeds up scoring and phrase generation.
-- **Mac** - 16 GB RAM. Macs with 8 GB are not tested. On Apple Silicon the local phrase generator needs macOS 26 or newer; on an older macOS, phrases come from your practice text as written (see [Known limitations](#known-limitations)).
+- **Mac** - 16 GB RAM. Macs with 8 GB are not tested.
 - **Less RAM or disk?** Decline the chat model on the first start, or set
   **LLM backend** to `off` in the settings. Phrases then come from your practice
   text as written (see [How it works](#how-it-works)).
