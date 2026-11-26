@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/vikonix/Mimora/main/docs/mimora-icon.png" width="64" alt="Mimora icon">
+  <a href="https://github.com/vikonix/Mimora"><img src="https://raw.githubusercontent.com/vikonix/Mimora/main/docs/mimora-icon.png" width="64" alt="Mimora icon"></a>
 </p>
 
 <h1 align="center">Mimora</h1>
