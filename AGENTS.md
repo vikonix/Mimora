@@ -167,6 +167,13 @@ installs or imports llama-cpp-python.
 - [`mimora/settings_window.py`](mimora/settings_window.py) - the settings
   dialog. Declarative: every editable key is one `Field` grouped into
   `Section`s, and the window stays passive - changes go to `app.py`.
+  A button that edits no setting is an `Action` of its section (the log
+  folder in Technical): no key, so Cancel, Default, the restart hint and
+  `all_fields()` never see it.
+- [`mimora/file_manager.py`](mimora/file_manager.py) - `open_folder()`: shows
+  a folder in Explorer, Finder or `xdg-open`. Tk-free and stdlib-only; raises
+  OSError when nothing can be started, which the settings window shows in
+  its footer.
 - [`mimora/settings_ctl.py`](mimora/settings_ctl.py) - `SettingsGlue`: the
   persistence mechanics around settings.json (persist, live-apply tables,
   window sync, reset-to-defaults). The dispatch itself stays in `app.py`.

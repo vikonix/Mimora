@@ -8,6 +8,8 @@ is described by a :class:`Field` (key, label, widget kind, constraints), the
 fields are grouped into :class:`Section` blocks, and :class:`SettingsWindow`
 renders them into one scrollable column - most-used sections on top, technical
 ones at the bottom. Adding a setting is one Field line in build_sections().
+A button that does something instead of editing a setting (open the log
+folder) is an :class:`Action` of its section.
 
 The window follows the same architecture as TrainerView (ui.py): it holds no
 controller reference and no application logic. Every change is forwarded to
@@ -29,7 +31,7 @@ from tkinter import filedialog, messagebox
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-from mimora import config, window_icon
+from mimora import config, file_manager, paths, window_icon
 # Reuse the main view's resolved palette, platform font and wheel-event
 # helpers so the settings window matches the app theme exactly and scrolls
 # on every platform (ui.py builds/hosts all of these).
@@ -107,10 +109,29 @@ class Field:
 
 
 @dataclass(frozen=True)
+class Action:
+    """A label + button row that runs *run* instead of editing a setting.
+
+    It has no settings.json key, so Cancel, Default and the restart hint do
+    not see it, and all_fields() does not list it. *run* raises OSError when
+    it fails; the window shows the error in the footer. *help* is called when
+    the window opens (a path can depend on the environment of the run).
+    """
+    label: str
+    button: str
+    run: Callable[[], None]
+    help: Callable[[], str] = lambda: ""
+
+
+@dataclass(frozen=True)
 class Section:
-    """A titled group of fields, rendered as one block in the column."""
+    """A titled group of fields, rendered as one block in the column.
+
+    actions are rendered above the fields.
+    """
     title: str
     fields: tuple
+    actions: tuple = ()
 
 
 def _pending_language() -> str:
@@ -330,6 +351,14 @@ def build_sections() -> tuple:
                                               config.SILENCE_THRESHOLD),
                   minimum=0.001,
                   help="Chunk RMS above this counts as speech."),
+        ), actions=(
+            # The logs are what troubleshooting asks for, and a user who
+            # starts Mimora from a shortcut has no terminal that shows the
+            # path. The path stays visible in the help line too, for a
+            # message when the file manager does not open.
+            Action("Log folder", "Open",
+                   lambda: file_manager.open_folder(paths.log_dir()),
+                   help=lambda: str(paths.log_dir())),
         )),
     )
 
@@ -499,6 +528,8 @@ class SettingsWindow:
         row = 0
         for section in build_sections():
             row = self._add_section_header(inner, section.title, row)
+            for action in section.actions:
+                row = self._add_action_row(inner, action, row)
             for field in section.fields:
                 # The variant selector is hidden when the PENDING (saved)
                 # language has a single variant: there is nothing to choose
@@ -570,6 +601,40 @@ class SettingsWindow:
                 pady=(0, 2))
             row += 1
         return row
+
+    def _add_action_row(self, parent, action: Action, row: int) -> int:
+        """Render one action as label + button (+ optional help line)."""
+        tk.Label(parent, text=action.label, font=(FONT_FAMILY, FONT_SIZE_SMALL),
+                 fg=THEME["text_dim"], bg=THEME["bg_main"],
+                 wraplength=self._LABEL_WRAP, justify=tk.LEFT,
+                 anchor=tk.W).grid(
+            row=row, column=0, sticky=tk.W, padx=(14, 8), pady=2)
+        FlatButton(parent, text=action.button,
+                   command=lambda a=action: self._run_action(a),
+                   font=(FONT_FAMILY, FONT_SIZE_CAPTION), bg=THEME["bg_accent"],
+                   fg=THEME["text_accent"],
+                   activebackground=THEME["bg_accent_active"],
+                   activeforeground=THEME["text_bright"],
+                   bd=0, padx=8, pady=1, cursor="hand2").grid(
+            row=row, column=1, sticky=tk.W, padx=(0, 14), pady=2)
+        row += 1
+
+        help_text = action.help()
+        if help_text:
+            tk.Label(parent, text=help_text, font=(FONT_FAMILY, FONT_SIZE_CAPTION),
+                     fg=THEME["text_muted"], bg=THEME["bg_main"],
+                     wraplength=self._HELP_WRAP, justify=tk.LEFT).grid(
+                row=row, column=1, sticky=tk.W, padx=(0, 14), pady=(0, 2))
+            row += 1
+        return row
+
+    def _run_action(self, action: Action):
+        """Run an action button; show a failure in the footer, never raise."""
+        try:
+            action.run()
+        except OSError as exc:
+            logging.warning("Settings action %r failed: %s", action.label, exc)
+            self._show_status(f"{action.label}: {exc}", kind="error")
 
     def _make_control(self, parent, field: Field, value):
         """Build the non-bool control for a field row (stored in _widgets)."""

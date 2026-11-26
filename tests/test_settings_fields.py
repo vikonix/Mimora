@@ -35,7 +35,8 @@ try:
 finally:
     _loader.read_json = _real_read_json
 
-from mimora.settings_window import all_fields, build_sections
+from mimora import paths
+from mimora.settings_window import Action, all_fields, build_sections
 
 VALID_KINDS = {"bool", "choice", "number", "scale", "text", "path"}
 
@@ -100,6 +101,26 @@ class FieldModelTests(unittest.TestCase):
             self.assertTrue(section.title.strip())
             self.assertTrue(section.fields,
                             f"section {section.title!r} has no fields")
+
+    def test_actions_are_complete(self):
+        for section in build_sections():
+            for action in section.actions:
+                self.assertIsInstance(action, Action)
+                self.assertTrue(action.label.strip())
+                self.assertTrue(action.button.strip())
+                self.assertTrue(callable(action.run), action.label)
+
+    def test_the_log_folder_action_opens_the_log_dir(self):
+        # The help line shows the same folder that the button opens, so
+        # the path that a user reads out in a message is the right one.
+        technical = [s for s in build_sections() if s.title == "Technical"]
+        self.assertEqual(len(technical), 1)
+        action = technical[0].actions[0]
+        self.assertEqual(action.label, "Log folder")
+        self.assertEqual(action.help(), str(paths.log_dir()))
+        with mock.patch("mimora.file_manager.open_folder") as open_folder:
+            action.run()
+        open_folder.assert_called_once_with(paths.log_dir())
 
 
 class FieldValueTests(unittest.TestCase):

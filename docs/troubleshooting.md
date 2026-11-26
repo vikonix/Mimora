@@ -10,7 +10,9 @@ system and which way of installing you used.
 
 Mimora writes its logs to the `logs/` folder of the [data
 directory](technical-details.md#where-mimora-keeps-your-files) (in a clone, of
-the project directory).
+the project directory). To open it, click **Open** next to **Log folder** in
+the **Technical** section of the settings window. The path of the folder is
+shown under the button.
 
 | File | What it keeps | When it is written |
 |---|---|---|
