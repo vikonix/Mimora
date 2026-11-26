@@ -123,6 +123,9 @@ rebuilt on the next upgrade:
 | macOS | `~/Library/Application Support/Mimora/` |
 | Linux | `$XDG_DATA_HOME/mimora/` (default `~/.local/share/mimora/`) |
 
+The settings window shows the `logs/` folder of this directory and opens it
+(**Technical**, **Log folder**).
+
 The `MIMORA_HOME` environment variable puts that directory anywhere else, and it
 overrides the project directory of a clone as well. Use it to move several gigabytes of downloads to another
 drive, to escape a roaming Windows profile that would copy them over the network

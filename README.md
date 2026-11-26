@@ -405,7 +405,8 @@ files](https://github.com/vikonix/Mimora/blob/main/docs/technical-details.md#whe
 
 Found a bug, or have a question or an idea? Open an issue on
 [GitHub](https://github.com/vikonix/Mimora/issues). When something fails, attach
-the logs: which ones, and where they are, is in
+the logs: the settings window opens their folder (**Technical**, **Log
+folder**). Which ones to attach is in
 [Troubleshooting](https://github.com/vikonix/Mimora/blob/main/docs/troubleshooting.md).
 
 ## Contributing
