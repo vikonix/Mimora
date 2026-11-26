@@ -85,8 +85,8 @@ variables:
   `https://github.com/vikonix/Mimora/releases/download/v<version>/`.
   A pre-release has no release of its own: use the scripts of the newest
   release.
-- `MIMORA_NO_SHORTCUT` - any value: no Start menu shortcut (Windows) and no
-  application menu entry (Linux).
+- `MIMORA_NO_SHORTCUT` - any value: no Start menu shortcut (Windows), no
+  `~/Applications/Mimora.app` (macOS) and no application menu entry (Linux).
 
 The variable has to reach the script, not the download command:
 

@@ -399,8 +399,11 @@ answered in `first_run.py` instead.
   replaces a shipped one; `config._DARK_THEME` stays the last-resort fallback
   and the definition of which colour keys are valid.
 - [`mimora/icons/`](mimora/icons/) - the application icon (`mimora.ico` for
-  Windows, `mimora-256.png` for Tk on Linux and macOS), inside the package for
-  the same reason. The installer takes `mimora.ico` from here too. The vector
+  Windows, `mimora-256.png` for Tk on Linux and macOS, `mimora.icns` for the
+  `Mimora.app` bundle), inside the package for the same reason. The installer
+  takes `mimora.ico` from here too; `installer/install-macos.sh` copies
+  `mimora.icns` from the installed package, so the icon always matches the
+  installed version. The vector
   source is `docs/mimora-icon.svg`; the files here are renders of it.
 
 ## State Machine (pronunciation loop)

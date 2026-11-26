@@ -57,6 +57,16 @@ Mac, set the **LLM backend** to LM Studio, or build llama.cpp yourself and name
 the result in `"llama_server_path"`. See
 [llama-server](installation-manual.md#get-the-llama-server-binary).
 
+The [quick install](../README.md#quick-install-recommended) makes
+**`~/Applications/Mimora.app`**, so Mimora is in Launchpad, Spotlight and
+Finder and can be kept in the Dock. The bundle is small: it starts the
+`mimora-gui` command of the uv installation and carries the icon. It is not
+signed, but the script makes it on your Mac, so macOS does not quarantine it
+and Gatekeeper does not stop it. Each run of the script makes the bundle again,
+so it always starts the installed version. While Mimora runs, the Dock and the
+menu bar can show the name "Python": the window is Mimora's, but the process is
+the Python interpreter. Uninstalling with the script deletes the bundle.
+
 `tkinter` comes with the python.org installer, but not with Homebrew Python.
 `install.py` adds the matching `python-tk@<version>` formula for the interpreter
 it runs in. If you set things up by hand on Homebrew Python, match your version,

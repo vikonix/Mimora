@@ -32,7 +32,8 @@ without administrator rights.
 **macOS, Linux, or Windows from a terminal** - one command: see [Quick
 install](#quick-install-recommended).
 
-Needs 16 GB RAM and no graphics card. The models take about 4 GB (up to about
+Needs 16 GB RAM and no graphics card (Macs with 8 GB are not tested). The
+models take about 4 GB (up to about
 8.5 GB with every model), and Mimora asks before it downloads them. Other ways
 to install (uv, pipx, pip, from a clone): [Installation](#installation).
 
@@ -120,8 +121,8 @@ Two ways in, in the order most people should try them:
 
 1. **[Quick install](#quick-install-recommended)** - one command on Windows,
    macOS and Linux, or a Setup file on Windows. It installs uv and Mimora and
-   adds Mimora to the Start menu or the Linux application menu. This is the
-   recommended way.
+   adds Mimora to the Start menu, to Launchpad on macOS, or to the Linux
+   application menu. This is the recommended way.
 2. **[From PyPI](#install-from-pypi)** - the same package, installed with uv,
    with every command and option in your hands. pipx and pip: [Manual
    installation](https://github.com/vikonix/Mimora/blob/main/docs/installation-manual.md#pipx-and-pip).
@@ -136,6 +137,7 @@ needed**. You need neither a C/C++ compiler nor a CUDA toolkit.
 ### Requirements
 
 - **Hardware** - a typical laptop or desktop: **16 GB RAM and no GPU required**. On CPU the first phrases are slower. An NVIDIA GPU is optional, needs a CUDA build of PyTorch, and speeds up scoring and phrase generation.
+- **Mac** - 16 GB RAM. Macs with 8 GB are not tested. On Apple Silicon the local phrase generator needs macOS 26 or newer; on an older macOS, phrases come from your practice text as written (see [Known limitations](#known-limitations)).
 - **Less RAM or disk?** Decline the chat model on the first start, or set
   **LLM backend** to `off` in the settings. Phrases then come from your practice
   text as written (see [How it works](#how-it-works)).
@@ -148,8 +150,9 @@ model list: [Technical details](https://github.com/vikonix/Mimora/blob/main/docs
 ### Quick install (recommended)
 
 One command installs [uv](https://docs.astral.sh/uv/) if it is missing, then
-Mimora, and adds Mimora to the Start menu (Windows) or the application menu
-(Linux). On macOS, start it with `mimora` in a terminal. Copy the command into
+Mimora, and adds Mimora to the Start menu (Windows), to Launchpad and
+`~/Applications` (macOS) or to the application menu (Linux). The `mimora`
+command in a terminal works too. Copy the command into
 a terminal. Do not download the script with a browser and run
 it as a file.
 
@@ -345,7 +348,8 @@ hand to reclaim that space.
 ## Usage
 
 Installed with the Setup file or the quick install, start Mimora from the Start
-menu (Windows) or the application menu (Linux). In a terminal, and after an
+menu (Windows), from Launchpad (macOS) or from the application menu (Linux).
+On a Mac you can also keep it in the Dock. In a terminal, and after an
 install from PyPI, it is a console script:
 
 ```bash

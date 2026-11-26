@@ -15,6 +15,7 @@
 #                       not upgrade. Run this script again: with the new version
 #                       in the variable, or without the variable for the newest
 #                       normal version (a pre-release comes only with the variable).
+#   MIMORA_NO_SHORTCUT  any value: do not create ~/Applications/Mimora.app.
 #
 # The models are not downloaded here: the first start of Mimora asks for them.
 # This script does not change shell startup files. It prints the commands
@@ -237,6 +238,115 @@ trial_update() {
     step "The check passed. Replacing the installed Mimora"
 }
 
+# Mimora.app is a minimal bundle around the mimora-gui command, so that
+# Mimora is in Launchpad, Spotlight and Finder and can be kept in the Dock.
+# This script makes the files on this Mac, so they have no quarantine
+# attribute, and Gatekeeper does not stop the bundle without a signature.
+# ~/Applications and not /Applications: that one needs sudo, and this script
+# does not run sudo.
+
+# Finder shows the icon of a bundle from its own Resources, so a copy of the
+# icon that ships inside the package goes there. Its path in the package
+# contains the Python version. Prints the path, or nothing for a version
+# without the icon (1.3.0 and older). $1 is the full path of uv.
+find_icns() {
+    tool_dir=$("$1" tool dir)
+    find "$tool_dir/mimora/lib" -path '*/site-packages/mimora/icons/mimora.icns' 2>/dev/null | head -n 1
+}
+
+# Prints the version for Info.plist, for example "1.4.0", or nothing.
+# CFBundleShortVersionString takes only numbers and dots, so "1.4.0rc1"
+# becomes "1.4.0". --version answers without importing torch (mimora/cli.py).
+# $1 is the bin directory of uv.
+bundle_version() {
+    "$1/mimora" --version 2>/dev/null \
+        | sed -n 's/^Mimora \([0-9][0-9.]*\).*/\1/p' | sed 's/\.$//'
+}
+
+# Registers the bundle with Launch Services, so that Launchpad and Finder
+# show the new bundle at once and not the information of the one it replaced.
+# Without it macOS finds the bundle later by itself, so a failure is ignored.
+# $1 is -f to register or -u to unregister, $2 is the bundle.
+register_bundle() {
+    lsregister=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+    if [ -x "$lsregister" ]; then
+        "$lsregister" "$1" "$2" >/dev/null 2>&1 || true
+    fi
+}
+
+# $1 is the full path of uv, $2 the bin directory of uv. When the bundle
+# directory cannot be made, the script continues with a warning: Mimora is
+# installed, and the command in the terminal works without the bundle.
+create_app_bundle() {
+    uv=$1
+    bin_dir=$2
+    # A version without the mimora-gui script (1.1.0 and older) would give
+    # a bundle that starts nothing.
+    if [ ! -x "$bin_dir/mimora-gui" ]; then
+        warn "$bin_dir/mimora-gui was not found, so Mimora.app was not created."
+        return 0
+    fi
+    step "Creating $app_bundle"
+    # The whole bundle is made again at each run, so the path of the command
+    # and the version in Info.plist always agree with the installed Mimora.
+    if ! rm -rf "$app_bundle" \
+        || ! mkdir -p "$app_bundle/Contents/MacOS" "$app_bundle/Contents/Resources"; then
+        warn "Could not create $app_bundle. Start Mimora from the terminal."
+        return 0
+    fi
+
+    # An application that Finder starts does not get the PATH of the shell
+    # startup files, so the path of the command is absolute. The single quotes
+    # keep a home directory with spaces or other special characters as it is.
+    quoted_bin_dir=$(printf '%s' "$bin_dir" | sed "s/'/'\\\\''/g")
+    launcher="$app_bundle/Contents/MacOS/mimora"
+    {
+        printf '#!/bin/sh\n'
+        printf '# Made by install-macos.sh. Run that script again after you move uv or Mimora.\n'
+        printf "exec '%s/mimora-gui' \"\$@\"\n" "$quoted_bin_dir"
+    } >"$launcher"
+    chmod +x "$launcher"
+
+    icns=$(find_icns "$uv")
+    if [ -n "$icns" ]; then
+        cp "$icns" "$app_bundle/Contents/Resources/mimora.icns"
+    else
+        warn "The Mimora icon was not found. Mimora.app has the standard icon."
+    fi
+
+    version=$(bundle_version "$bin_dir")
+    # CFBundleIdentifier: the Dock keeps a pinned application by this value,
+    # so a change of it makes the pinned icon of an earlier installation stop
+    # working. CFBundleExecutable is the name of the launcher in MacOS/.
+    cat >"$app_bundle/Contents/Info.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>Mimora</string>
+    <key>CFBundleDisplayName</key>
+    <string>Mimora</string>
+    <key>CFBundleIdentifier</key>
+    <string>io.github.vikonix.Mimora</string>
+    <key>CFBundleExecutable</key>
+    <string>mimora</string>
+    <key>CFBundleIconFile</key>
+    <string>mimora.icns</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleShortVersionString</key>
+    <string>${version:-0}</string>
+    <key>CFBundleVersion</key>
+    <string>${version:-0}</string>
+</dict>
+</plist>
+PLIST
+    register_bundle -f "$app_bundle"
+}
+
 # Ends the installation after the real "uv tool install" failed.
 install_failed() {
     log_result "result: the installation failed after the check passed"
@@ -299,7 +409,16 @@ install_mimora() {
         log_line "result: installed ${installed:-Mimora, the version could not be read}"
     fi
 
+    if [ -n "${MIMORA_NO_SHORTCUT:-}" ]; then
+        step "MIMORA_NO_SHORTCUT is set: Mimora.app was not created"
+    else
+        create_app_bundle "$uv" "$bin_dir"
+    fi
+
     printf '\nMimora is installed.\n'
+    if [ -f "$app_bundle/Contents/Info.plist" ]; then
+        printf '  Mimora is in Launchpad and in ~/Applications.\n'
+    fi
     case ":$PATH:" in
         *":$bin_dir:"*)
             printf '  Start it with: mimora\n'
@@ -343,6 +462,12 @@ uninstall_mimora() {
         warn "uv was not found, so the Mimora uv tool was not removed."
     fi
 
+    if [ -d "$app_bundle" ]; then
+        step "Deleting $app_bundle"
+        register_bundle -u "$app_bundle"
+        rm -rf "$app_bundle"
+    fi
+
     # The data directory is not deleted: it can hold several GB of models
     # that a later installation uses again, and MIMORA_HOME can point to a
     # directory that also holds other files of the user.
@@ -367,6 +492,8 @@ main() {
     if [ "$(uname -s)" != Darwin ]; then
         die "This script is for macOS. On Linux, use install-linux.sh. On Windows, use install.ps1."
     fi
+
+    app_bundle="$HOME/Applications/Mimora.app"
 
     if [ "$action" = uninstall ]; then
         uninstall_mimora
